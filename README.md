@@ -26,11 +26,23 @@ The first production target is the `news` host on the local network. The public
 app URL is `http://news.home`, served through a host-networked nginx container
 on the same machine. Phoenix still listens on port `4000` behind nginx.
 
-Bootstrap the remote directory and environment once:
+Bootstrap the remote git checkout and environment once after pushing this repo
+to GitHub:
 
 ```sh
-ssh news 'mkdir -p ~/docker/news'
-rsync -az --exclude=/deps/ --exclude=/_build/ ./ news:~/docker/news/
+REPO_URL=git@github.com:ianwalther/news.git scripts/bootstrap-prod-git.sh
+```
+
+If `~/docker/news` already exists from a pre-git file-copy deploy, move it aside
+and preserve its `.env.prod` with:
+
+```sh
+REPO_URL=git@github.com:ianwalther/news.git REPLACE_EXISTING=1 scripts/bootstrap-prod-git.sh
+```
+
+Then create or update the prod env file on the host:
+
+```sh
 ssh news 'cd ~/docker/news && cp .env.prod.example .env.prod'
 # edit ~/docker/news/.env.prod on the host:
 # - set SECRET_KEY_BASE
@@ -45,8 +57,9 @@ Deploy from this checkout:
 scripts/deploy-prod.sh
 ```
 
-The deploy helper syncs source to `news:~/docker/news`, preserves remote env
-files, rebuilds/restarts the app container, and runs release migrations.
+The deploy helper SSHes to `news`, updates `~/docker/news` from `origin/master`
+with `git pull --ff-only`, rebuilds/restarts the app container, and runs release
+migrations.
 
 Run idempotent production seeds separately when desired:
 
