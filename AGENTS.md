@@ -10,7 +10,7 @@
    Do not force the pipe operator into every call site, but when two styles are similarly clear, prefer the pipe operator for readability and flow.
 
 4. Run the full test suite before finishing any task.
-   Always run `mix test` before declaring work complete. Fix any failures introduced by the change before closing out.
+   Always run `scripts/test.sh` from the repo root, or `mix test` from `newspaper/`, before declaring work complete. Fix any failures introduced by the change before closing out.
 
 5. Reproduce bugs with a failing test before fixing them.
    For bug fixes and regressions, first add or identify a test that fails because of the bug, confirm the failure, and only then add the fix. After the fix, rerun the focused test and the full suite to confirm the red-green cycle.
@@ -24,9 +24,15 @@
 
 This is a web application written using the Phoenix web framework.
 
+## Repository layout
+
+- `newspaper/` contains the Phoenix application, including `mix.exs`, `lib`, `config`, `assets`, `priv`, and tests.
+- `workers/` contains external pipeline step implementations invoked by the Phoenix control plane.
+- Run root-level helper scripts such as `scripts/test.sh`, `scripts/precommit.sh`, and `scripts/server-dev.sh` from the repository base instead of assuming Mix runs from the root.
+
 ## Project guidelines
 
-- Use `mix precommit` alias when you are done with all changes and fix any pending issues
+- Use `scripts/precommit.sh` when you are done with all changes and fix any pending issues
 - Use the already included and available `:req` (`Req`) library for HTTP requests, **avoid** `:httpoison`, `:tesla`, and `:httpc`. Req is included by default and is the preferred HTTP client for Phoenix apps
 
 ### Phoenix v1.8 guidelines

@@ -12,6 +12,25 @@ Job scheduling/orchestration should use ordinary supervised Elixir processes, su
 
 Worker executables may perform specialized transformations, but they should not own durable application state. The processing pipeline should support both internal implementations and external worker-backed implementations behind the same step interface.
 
+## Repository Layout
+
+Keep the repository root as the operator surface.
+
+```text
+news/
+  newspaper/      Phoenix application
+  workers/        external pipeline step implementations
+  planning/       forward-looking planning docs
+  scripts/        repo-level operational helpers
+  Dockerfile
+  docker-compose.dev.yml
+  docker-compose.prod.yml
+```
+
+Docker and Compose files should stay at the root so production and development commands can run without path arguments. The Docker build context should remain the repository root because production images need the Phoenix app and, as extraction work begins, worker code.
+
+The Phoenix app lives in `newspaper/`. Root-level scripts should wrap common Mix commands so day-to-day work can still begin from the repository base.
+
 ## Boundary Model
 
 Use one control plane with clear worker boundaries.

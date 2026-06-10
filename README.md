@@ -4,12 +4,11 @@ Local-first personal news intake and generated RSS pipeline.
 
 ## Local Development
 
-Run Postgres with Docker, then run Phoenix natively:
+Set up Postgres and the Phoenix app from the repo root:
 
 ```sh
-docker compose -f docker-compose.dev.yml up -d postgres
-mix setup
-mix phx.server
+scripts/setup-dev.sh
+scripts/server-dev.sh
 ```
 
 The dev database defaults to:
@@ -19,6 +18,14 @@ DATABASE_URL=ecto://postgres:postgres@localhost/newspaper_dev
 ```
 
 Visit http://localhost:4000.
+
+Root-level helper scripts run Mix commands from the Phoenix app in
+`newspaper/`:
+
+```sh
+scripts/test.sh
+scripts/precommit.sh
+```
 
 ## Production
 

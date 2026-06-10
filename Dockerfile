@@ -26,7 +26,7 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/*
 
 # prepare build dir
-WORKDIR /app
+WORKDIR /app/newspaper
 
 # install hex + rebar
 RUN mix local.hex --force \
@@ -36,34 +36,34 @@ RUN mix local.hex --force \
 ENV MIX_ENV="prod"
 
 # install mix dependencies
-COPY mix.exs mix.lock ./
+COPY newspaper/mix.exs newspaper/mix.lock ./
 RUN mix deps.get --only $MIX_ENV
 RUN mkdir config
 
 # copy compile-time config files before we compile dependencies
 # to ensure any relevant config change will trigger the dependencies
 # to be re-compiled.
-COPY config/config.exs config/${MIX_ENV}.exs config/
+COPY newspaper/config/config.exs newspaper/config/${MIX_ENV}.exs config/
 RUN mix deps.compile
 
 RUN mix assets.setup
 
-COPY priv priv
+COPY newspaper/priv priv
 
-COPY lib lib
+COPY newspaper/lib lib
 
 # Compile the release
 RUN mix compile
 
-COPY assets assets
+COPY newspaper/assets assets
 
 # compile assets
 RUN mix assets.deploy
 
 # Changes to config/runtime.exs don't require recompiling the code
-COPY config/runtime.exs config/
+COPY newspaper/config/runtime.exs config/
 
-COPY rel rel
+COPY newspaper/rel rel
 RUN mix release
 
 # start a new build stage so that the final image will only contain
@@ -89,7 +89,7 @@ RUN chown nobody /app
 ENV MIX_ENV="prod"
 
 # Only copy the final release from the build stage
-COPY --from=builder --chown=nobody:root /app/_build/${MIX_ENV}/rel/newspaper ./
+COPY --from=builder --chown=nobody:root /app/newspaper/_build/${MIX_ENV}/rel/newspaper ./
 
 USER nobody
 
