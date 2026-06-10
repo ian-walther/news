@@ -1,0 +1,213 @@
+defmodule Newspaper.Publishing do
+  import Ecto.Query
+
+  alias Newspaper.Content.Article
+  alias Newspaper.Intake.{InputFeed, IntakeGroup, RawItem}
+  alias Newspaper.Publishing.{GeneratedFeed, GeneratedFeedItem}
+  alias Newspaper.Repo
+
+  def list_generated_feeds do
+    GeneratedFeed
+    |> order_by([f], asc: f.title)
+    |> preload([:intake_groups, :input_feeds])
+    |> Repo.all()
+  end
+
+  def list_enabled_generated_feeds do
+    GeneratedFeed
+    |> where([f], f.enabled == true)
+    |> order_by([f], asc: f.title)
+    |> preload([:intake_groups, :input_feeds])
+    |> Repo.all()
+  end
+
+  def get_generated_feed!(id), do: Repo.get!(GeneratedFeed, id) |> preload_feed()
+
+  def get_generated_feed_by_guid(guid) do
+    GeneratedFeed
+    |> where([f], f.guid == ^guid and f.enabled == true)
+    |> Repo.one()
+  end
+
+  def create_generated_feed(attrs) do
+    %GeneratedFeed{}
+    |> GeneratedFeed.changeset(attrs)
+    |> put_memberships(attrs)
+    |> Repo.insert()
+    |> broadcast_on_ok(:publishing_changed)
+  end
+
+  def update_generated_feed(%GeneratedFeed{} = feed, attrs) do
+    feed
+    |> preload_feed()
+    |> GeneratedFeed.changeset(attrs)
+    |> put_memberships(attrs)
+    |> Repo.update()
+    |> broadcast_on_ok(:publishing_changed)
+  end
+
+  def delete_generated_feed(%GeneratedFeed{} = feed) do
+    feed
+    |> Repo.delete()
+    |> broadcast_on_ok(:publishing_changed)
+  end
+
+  def change_generated_feed(%GeneratedFeed{} = feed, attrs \\ %{}) do
+    feed
+    |> preload_feed()
+    |> GeneratedFeed.changeset(attrs)
+  end
+
+  def list_recent_items(arg \\ 100)
+
+  def list_recent_items(%GeneratedFeed{} = feed) do
+    limit = feed.item_limit || 500
+
+    GeneratedFeedItem
+    |> where([i], i.generated_feed_id == ^feed.id and i.publication_status == "published")
+    |> order_by([i],
+      desc_nulls_last: i.rendered_published_at,
+      desc_nulls_last: i.published_at,
+      desc: i.inserted_at
+    )
+    |> limit(^limit)
+    |> Repo.all()
+  end
+
+  def list_recent_items(limit) when is_integer(limit) do
+    GeneratedFeedItem
+    |> order_by([i],
+      desc_nulls_last: i.rendered_published_at,
+      desc_nulls_last: i.published_at,
+      desc: i.inserted_at
+    )
+    |> limit(^limit)
+    |> preload([:generated_feed, :article])
+    |> Repo.all()
+  end
+
+  def publish_article_to_eligible_feeds(%Article{} = article) do
+    article = Repo.preload(article, [:article_sources, :representative_raw_item])
+    source_ids = Enum.map(article.article_sources, & &1.input_feed_id)
+    feed_ids = eligible_generated_feed_ids(article.intake_group_id, source_ids)
+
+    Enum.map(feed_ids, fn feed_id ->
+      feed = Repo.get!(GeneratedFeed, feed_id)
+      create_item_if_missing(feed, article)
+    end)
+  end
+
+  def create_item_if_missing(%GeneratedFeed{} = feed, %Article{} = article) do
+    case Repo.get_by(GeneratedFeedItem, generated_feed_id: feed.id, article_id: article.id) do
+      nil -> create_item!(feed, article)
+      item -> {:ok, item}
+    end
+  end
+
+  def feed_url(%GeneratedFeed{guid: guid}), do: "/feeds/#{guid}.xml"
+
+  defp create_item!(feed, article) do
+    raw_item =
+      article.representative_raw_item || Repo.get!(RawItem, article.representative_raw_item_id)
+
+    now = DateTime.utc_now(:second)
+
+    attrs = %{
+      generated_feed_id: feed.id,
+      article_id: article.id,
+      representative_raw_item_id: raw_item && raw_item.id,
+      published_at:
+        raw_item && (raw_item.published_at || raw_item.feed_updated_at || raw_item.discovered_at),
+      item_url: raw_item && raw_item.url,
+      body_mode: "original_feed_body",
+      selection_metadata: %{"mode" => "v1_pass_through"},
+      rendered_title: raw_item && raw_item.title,
+      rendered_link_url: raw_item && raw_item.url,
+      rendered_author: raw_item && raw_item.author,
+      rendered_published_at: raw_item && (raw_item.published_at || raw_item.discovered_at),
+      rendered_updated_at: raw_item && raw_item.feed_updated_at,
+      rendered_summary: raw_item && raw_item.summary,
+      rendered_body: raw_item && raw_item.body,
+      rendered_source_name: raw_item && raw_item.source_name,
+      rendered_source_url: raw_item && raw_item.source_url,
+      rendered_categories: (raw_item && raw_item.categories) || [],
+      rendered_media: (raw_item && raw_item.media) || %{},
+      rendered_at: now,
+      render_source_metadata: %{"representative_raw_item_id" => raw_item && raw_item.id},
+      render_status: "rendered",
+      publication_status: "published",
+      first_eligible_at: now,
+      last_rendered_at: now
+    }
+
+    %GeneratedFeedItem{}
+    |> GeneratedFeedItem.changeset(attrs)
+    |> Repo.insert()
+    |> broadcast_on_ok(:publishing_changed)
+  end
+
+  defp eligible_generated_feed_ids(intake_group_id, source_ids) do
+    intake_group_feed_ids =
+      if is_nil(intake_group_id) do
+        []
+      else
+        Repo.all(
+          from gfig in "generated_feed_intake_groups",
+            join: gf in GeneratedFeed,
+            on: gf.id == gfig.generated_feed_id,
+            where: gf.enabled == true and gfig.intake_group_id == ^intake_group_id,
+            select: gfig.generated_feed_id
+        )
+      end
+
+    input_feed_feed_ids =
+      if source_ids == [] do
+        []
+      else
+        Repo.all(
+          from gfif in "generated_feed_input_feeds",
+            join: gf in GeneratedFeed,
+            on: gf.id == gfif.generated_feed_id,
+            where: gf.enabled == true and gfif.input_feed_id in ^source_ids,
+            select: gfif.generated_feed_id
+        )
+      end
+
+    Enum.uniq(intake_group_feed_ids ++ input_feed_feed_ids)
+  end
+
+  defp preload_feed(feed), do: Repo.preload(feed, [:intake_groups, :input_feeds])
+
+  defp put_memberships(changeset, attrs) do
+    intake_group_ids = list_ids(attrs, "intake_group_ids", :intake_group_ids)
+    input_feed_ids = list_ids(attrs, "input_feed_ids", :input_feed_ids)
+
+    changeset
+    |> Ecto.Changeset.put_assoc(
+      :intake_groups,
+      Repo.all(from g in IntakeGroup, where: g.id in ^intake_group_ids)
+    )
+    |> Ecto.Changeset.put_assoc(
+      :input_feeds,
+      Repo.all(from f in InputFeed, where: f.id in ^input_feed_ids)
+    )
+  end
+
+  defp list_ids(attrs, string_key, atom_key) do
+    attrs
+    |> Map.get(string_key, Map.get(attrs, atom_key, []))
+    |> List.wrap()
+    |> Enum.reject(&(&1 in [nil, ""]))
+    |> Enum.map(fn
+      id when is_integer(id) -> id
+      id when is_binary(id) -> String.to_integer(id)
+    end)
+  end
+
+  defp broadcast_on_ok({:ok, value}, event) do
+    Newspaper.Events.broadcast_data_changed(event)
+    {:ok, value}
+  end
+
+  defp broadcast_on_ok(result, _event), do: result
+end
