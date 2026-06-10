@@ -1,79 +1,44 @@
 # Implementation Roadmap
 
-## Phase 0: Planning And Scaffolding
+## Configurable Processing Pipeline
 
-- Create project planning docs.
-- Use Newspaper as the Phoenix app/repo/project name.
-- Use the spare Intel N150 Ubuntu Server machine as the initial production host.
-- Decide first intake groups and V1 output feed semantics.
-- Do a dedicated production architecture pass.
-- Initialize git after planning and scaffold are ready.
+- Add a first-class pipeline step model.
+- Add a pipeline step attempt/audit model.
+- Add an implementation registry owned by application code.
+- Add output-feed pipeline configuration UI.
+- Support adding, editing, enabling, disabling, deleting, and ordering steps.
+- Store implementation-specific config in a validated shape.
+- Keep step execution explicit; do not run processing during RSS requests.
 
-## Phase 1: Phoenix Foundation
+## Content Extraction
 
-- Create Phoenix app named Newspaper with LiveView.
-- Add Postgres database layer configured by database URL.
-- Add an empty seed mechanism for initial setup/dev fixtures.
-- Add basic admin shell with Failures / Recent Activity as the landing page.
-- Add `docker-compose.dev.yml` for local development Postgres.
-- Add production `Dockerfile`.
-- Add `docker-compose.prod.yml` for production app plus initial app-specific Postgres.
-- Keep local development native on Mac.
-- Document production environment variables and service boundaries.
+- Add the extraction step type.
+- Add at least one real extraction implementation.
+- Add host Chrome extraction for authenticated or JavaScript-heavy sites.
+- Add simpler extraction implementations where browser auth is unnecessary.
+- Store extracted content and extraction metadata as durable article state.
+- Record extraction attempts and failures through the pipeline attempt model.
+- Add local hosted article pages using stable article identifiers.
+- Re-render generated feed item snapshots after extraction succeeds when output feed settings use extracted content or hosted links.
 
-## Phase 2: Feed Aggregation
+## Semantic Filtering And Summarization
 
-- Add source feed configuration.
-- Add intake group configuration.
-- Keep V1 intake group and input feed forms minimal: group name, feed name, feed URL, group assignment, enabled flag.
-- Fetch RSS and Atom feeds.
-- Store raw feed items.
-- Record fetch runs and failures.
+- Add filtering step implementations after extraction produces reliable article content.
+- Add summarization step implementations after filtering and extraction are observable.
+- Store model, prompt/config, output, confidence, and rationale for LLM-backed steps.
+- Keep source-specific policies auditable and correctable.
+- Avoid automatic destructive filtering until review behavior is clear.
 
-## Phase 3: Canonicalization And Deduplication
+## Morning Newspaper
 
-- Normalize URLs.
-- Strip tracking parameters.
-- Resolve simple duplicate cases within intake groups.
-- Preserve source appearances.
-- Add operator visibility for dedupe decisions.
+- Define newspaper sections and selection policies on top of extracted and enriched article state.
+- Render an iPad-friendly HTML/PDF artifact.
+- Add email delivery once the PDF output is useful.
+- Add Home Assistant/MQTT controls and status sensors when newspaper runs exist.
+- Add print support only after the PDF workflow proves valuable.
 
-## Phase 4: Generated Feed Publishing
+## World Radar
 
-- Define generated feeds.
-- Select canonical articles from the article pool for output feeds.
-- Render RSS output.
-- Subscribe FreshRSS to generated feed endpoints for smoke testing.
-- Keep the feed-only loop functional, but do not treat sustained daily usage as the main validation milestone until content extraction works.
-
-## Phase 5: Content Extraction
-
-- Define extraction worker contract and separate-executable precedent.
-- Set up persistent host browser environment on the N150.
-- Add extraction status and failure UI.
-- Connect to headed host Chrome over secured local CDP.
-- Parse article content.
-- Replace generated feed item body when extraction succeeds.
-- Add hosted article pages and configurable link/body behavior for generated feeds.
-- Use extracted-content feeds as the first compelling daily-use milestone.
-
-## Phase 6: Semantic Enrichment
-
-- Add local LLM classification.
-- Store labels, confidence, rationale, and filter decisions.
-- Add review/correction flow.
-- Add summaries where useful.
-
-## Phase 7: Morning Newspaper
-
-- Plan paper sections and selection rules.
-- Render HTML/CSS to PDF.
-- Email PDF for iPad reading.
-- Add Home Assistant/MQTT controls and status sensors where useful.
-- Add optional print path only after PDF proves useful.
-
-## Phase 8: World Radar
-
-- Add larger source pool.
-- Cluster related stories.
+- Add broader source pools only after the personal reading pipeline is reliable.
+- Cluster related coverage across sources.
 - Summarize consensus, disagreement, and story movement.

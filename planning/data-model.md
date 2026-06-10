@@ -10,7 +10,7 @@ This is a planning sketch, not a final schema.
 
 The data model should support eager durable intake. Source feeds are discovery inputs; generated output feeds render from app-owned records.
 
-## Core V1 Tables
+## Core Tables
 
 ### sources
 
@@ -62,7 +62,7 @@ Items discovered from source feeds.
 
 Canonical article identity.
 
-- intake group ID for V1 dedupe ownership
+- intake group ID for dedupe ownership
 - stable app-generated article identifier
 - canonical URL
 - resolved URL
@@ -98,10 +98,11 @@ Definitions for output feeds published to FreshRSS.
 - boolean controlling whether links point to hosted article pages
 - boolean controlling whether items are processed/extracted
 - boolean controlling whether bodies use extracted content when available
+- configurable processing pipeline reference or scoped pipeline steps
 
 ### generated_feed_intake_groups
 
-Additive V1 membership rules that include all enabled input feeds in an intake group.
+Additive membership rules that include all enabled input feeds in an intake group.
 
 - generated feed ID
 - intake group ID
@@ -109,9 +110,9 @@ Additive V1 membership rules that include all enabled input feeds in an intake g
 
 Including an intake group applies to enabled input feeds currently in the group and enabled input feeds added later.
 
-### generated_feed_sources
+### generated_feed_input_feeds
 
-Additive V1 membership rules that include individual input feeds.
+Additive membership rules that include individual input feeds.
 
 - generated feed ID
 - source ID
@@ -182,6 +183,81 @@ Visible failure queue.
 - last attempted timestamp
 - related record/run references
 
+## Processing Pipeline Tables
+
+### pipeline_steps
+
+Configured processing steps.
+
+- scope type, initially output feed
+- scope ID
+- step type
+- implementation key
+- position
+- enabled flag
+- config
+- created/updated timestamps
+
+Step implementations are registered in code. Database rows select and configure those implementations.
+
+### pipeline_step_attempts
+
+Execution history for pipeline steps.
+
+- pipeline step ID
+- article ID when applicable
+- generated feed item ID when applicable
+- status
+- input snapshot
+- output snapshot
+- error type/message/debug data
+- started timestamp
+- finished timestamp
+
+Attempts are audit/debug records. Durable current outputs should be stored in domain tables.
+
+### article_extractions
+
+Durable extraction results.
+
+- article ID
+- implementation key
+- status
+- final URL
+- extracted title
+- extracted byline
+- extracted publication timestamp
+- extracted content
+- quality/debug metadata
+- created/updated timestamps
+
+The first implementation can store extraction state directly on articles if that keeps the change small, but the model should be ready to move extraction output into a first-class table if multiple extraction attempts or revisions become important.
+
+### article_summaries
+
+Future summarization outputs.
+
+- article ID
+- implementation key
+- model/prompt/config metadata
+- summary text or structured summary
+- confidence/quality metadata
+- created timestamp
+
+### article_filter_decisions
+
+Future filtering outputs.
+
+- article ID
+- output feed or policy scope
+- implementation key
+- decision
+- labels
+- confidence
+- rationale
+- model/prompt/config metadata
+- created timestamp
+
 ### retention_policies
 
 Future explicit retention/autopurge policies.
@@ -196,7 +272,7 @@ Future explicit retention/autopurge policies.
 ### classifications
 
 - article ID
-- model/version
+- model identity
 - labels
 - confidence
 - filter decision
@@ -211,14 +287,14 @@ Future configurable policies for generated feed selection, filtering, and routin
 - generated feed ID or reusable policy scope
 - policy name
 - source/intake/topic/filter rules
-- LLM prompt/schema/version references when semantic filtering exists
+- LLM prompt/schema revision references when semantic filtering exists
 - enabled flag
 - created/updated timestamps
 
 ### summaries
 
 - article ID
-- model/version
+- model identity
 - summary type
 - summary text
 - created timestamp

@@ -56,9 +56,34 @@ Output feeds should have stable app-generated identities for feed URLs and feed-
 
 A policy controls output-feed eligibility, filtering, routing, body mode, or review behavior.
 
-V1 policies can be deterministic source/intake/category rules. Later policies can use extracted article content and local LLM classification.
+Current policies can be deterministic source/intake/category rules. Later policies can use extracted article content and local LLM classification.
 
-V1 output feed rules should be additive-only. Output feeds can include whole intake groups and/or individual input feeds. Excludes should wait for later policy work.
+Output feed rules should remain additive until explicit excludes are introduced through later policy work.
+
+### Pipeline Step Type
+
+A pipeline step type is the conceptual operation being performed.
+
+Examples:
+
+- extraction
+- summarization
+- filtering
+- rendering
+
+### Pipeline Step Implementation
+
+A pipeline step implementation is the concrete strategy for a step type.
+
+Examples:
+
+- `extraction.simple_http`
+- `extraction.headless_browser`
+- `extraction.host_chrome`
+- `summarization.local_llm.brief`
+- `filtering.local_llm.topic_policy`
+
+Implementations should be registered in code with metadata for labels, config schema, validation, and runtime behavior. The database should store selected implementation keys and config, not arbitrary executable behavior.
 
 ## Pipeline Shape
 
@@ -99,9 +124,9 @@ This keeps output behavior stable when:
 
 Retention and autopurge can be added later. Purging old content should be an explicit retention policy, not an accidental side effect of upstream feed churn.
 
-## V1 Pipeline
+## Feed Foundation
 
-V1 should implement the feed-only version:
+The feed foundation is:
 
 ```text
 input feed configured
@@ -116,33 +141,60 @@ input feed configured
   -> generated RSS published
 ```
 
-V1 does not require extraction, classification, summarization, or semantic filtering.
+Extraction, classification, summarization, and semantic filtering should be added as explicit pipeline steps on top of this foundation.
 
-## Later Extraction And Filtering
+## Configurable Processing Pipeline
 
-Content extraction comes before semantic filtering.
+Output feeds should have configurable processing pipelines from the start of extraction work.
+
+The first configurable scope should be the output feed. This allows different generated feeds to choose different extraction, filtering, summarization, and rendering behavior without changing source intake.
+
+Pipeline steps should have:
+
+- scope
+- step type
+- implementation key
+- position
+- enabled flag
+- config
+
+Pipeline step attempts should record:
+
+- article and generated feed item references when applicable
+- input snapshot
+- output snapshot
+- status
+- error
+- started and finished timestamps
+
+Domain tables should hold durable current results. Attempt records should explain how those results were produced.
+
+## Extraction, Filtering, And Summarization
+
+Content extraction comes before semantic filtering and summarization.
 
 ```text
 article in pool
-  -> extraction attempted when enabled
+  -> extraction step attempted when enabled
   -> extracted article content stored
-  -> local LLM classification/filtering attempted when enabled
-  -> output policies decide inclusion, exclusion, or review routing
+  -> filtering step attempted when enabled
+  -> summarization step attempted when enabled
+  -> output policies decide inclusion, exclusion, rendering, or review routing
 ```
 
 Feed metadata can provide cheap hints, but content-aware filtering should rely on extracted article content when possible.
 
 ## Deduplication Boundary
 
-V1 deduplication should focus on duplicates within an intake group, especially repeated articles published to multiple feeds from the same outlet.
+Deduplication should focus on duplicates within an intake group, especially repeated articles published to multiple feeds from the same outlet.
 
-V1 dedupe should use normalized URL and feed-provided stable ID as its initial signals. The dedupe engine should be extensible, but title/date similarity, canonical link metadata from extracted pages, redirects, and semantic clustering should wait until real feed behavior shows they are needed.
+Current dedupe should use normalized URL and feed-provided stable ID as its initial signals. The dedupe engine should be extensible, but title/date similarity, canonical link metadata from extracted pages, redirects, and semantic clustering should wait until real feed behavior shows they are needed.
 
-Cross-outlet semantic clustering is a later capability. It may matter for the morning newspaper or World Radar, but it should not be treated as required V1 feed dedupe.
+Cross-outlet semantic clustering is a later capability. It may matter for the morning newspaper or World Radar, but it should not block feed-level dedupe.
 
-In unprocessed/pass-through output, dedupe should select one representative raw entry for the generated feed item snapshot. V1 does not need to merge duplicate item bodies.
+In unprocessed/pass-through output, dedupe should select one representative raw entry for the generated feed item snapshot. The app does not need to merge duplicate item bodies.
 
-Representative selection should use the earliest timestamp, with a deterministic arbitrary tie-break when needed. The exact duplicate winner is not product-critical because extraction is expected to become the meaningful content source later; V1 mostly needs a usable article URL and stable identity.
+Representative selection should use the earliest timestamp, with a deterministic arbitrary tie-break when needed. The exact duplicate winner is not product-critical because extraction is expected to become the meaningful content source; feed output mostly needs a usable article URL and stable identity.
 
 Representative timestamp hierarchy:
 
@@ -165,18 +217,18 @@ Configuration changes should apply to newly processed articles by default. Backf
 
 Backfill and re-render are separate operations. Backfill creates missing generated feed item records from existing articles. Re-render updates stored RSS snapshots for existing generated feed items using app-owned stored data. Re-render does not fetch upstream RSS, mutate raw intake records, or change generated feed item GUIDs.
 
-Each output feed should render a configurable rolling window of recent generated feed item snapshots. V1 default item limit is `500`.
+Each output feed should render a configurable rolling window of recent generated feed item snapshots. The default item limit is `500`.
 
-## V1 Output Feed Rule Model
+## Output Feed Rule Model
 
-V1 output feed membership should be represented natively rather than as an opaque JSON rule engine.
+Output feed membership should be represented natively rather than as an opaque JSON rule engine.
 
-Supported V1 inclusion rules:
+Supported inclusion rules:
 
 - include an intake group
 - include an individual input feed
 
-V1 rules are additive only. There are no explicit excludes in V1.
+Current rules are additive only. Explicit excludes should wait for later policy work.
 
 Including an intake group means all enabled input feeds currently in that intake group, plus enabled input feeds added to that intake group later. Individual input feed inclusion exists for precision when an output feed should include only selected feeds from an intake group.
 

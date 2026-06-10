@@ -2,13 +2,13 @@
 
 ## Direction
 
-Use explicit workflow state, but keep the first implementation lightweight.
+Use explicit workflow state, but keep the implementation lightweight.
 
-The system should not need a full workflow engine for V1. It should have enough durable state to explain what happened to a feed item, why it did or did not appear downstream, and what failed.
+The system should not need a full workflow engine. It should have enough durable state to explain what happened to a feed item, why it did or did not appear downstream, and what failed.
 
 Use eager durable evaluation. Fetching and processing input feeds should create durable raw item, article, source appearance, generated feed item records, and rendered RSS snapshots. Output feeds should render from app-owned snapshots rather than lazily mirroring current upstream feed contents or live-rendering current article state.
 
-## V1 Flow
+## Feed Flow
 
 ```text
 source enabled
@@ -24,15 +24,16 @@ source enabled
   -> generated RSS published
 ```
 
-## Later Extraction Flow
+## Extraction Flow
 
 ```text
 generated feed item available
-  -> extraction queued
-  -> page fetched
-  -> article content parsed
-  -> generated feed item upgraded
-  -> extraction failure recorded when needed
+  -> configured extraction step selected
+  -> step attempt recorded
+  -> extraction implementation runs
+  -> article content stored
+  -> generated feed item re-rendered when configured
+  -> failure recorded when needed
 ```
 
 ## State Strategy
@@ -48,7 +49,9 @@ Likely useful concepts:
 - Generated feed publication state.
 - Generated feed item eligibility/publication state.
 - Generated feed item render snapshot state.
-- Extraction status, even if unused in V1.
+- Pipeline step configuration.
+- Pipeline step attempt status.
+- Extraction status.
 - Failure type, message, retry count, and last attempt timestamp.
 
 ## Event Framing
@@ -62,11 +65,19 @@ control plane = validates event and mutates owned state
 
 This framing can guide contracts without requiring event sourcing from day one.
 
+## Configurable Steps
+
+Processing steps should be user-configurable in the admin UI.
+
+Each step should have a type, implementation key, enabled flag, position, and config. The available implementations should come from a code-owned registry so the UI can be configurable without allowing arbitrary executable behavior from the database.
+
+The first configurable scope should be output feeds. Additional scope inheritance should wait until output-feed pipelines are useful.
+
 ## Failure Handling
 
 Failures should be visible and retryable where practical.
 
-V1 failure handling should be minimal: show failures, link them to related records/runs where possible, and allow manual retry for retryable failures. Do not add automatic retry/backoff behavior or manual resolved/ignored/dismissed lifecycle states until real usage clarifies what is needed.
+Failure handling should stay minimal: show failures, link them to related records/runs where possible, and allow manual retry for retryable failures. Do not add automatic retry/backoff behavior or manual resolved/ignored/dismissed lifecycle states until real usage clarifies what is needed.
 
 Examples:
 
@@ -78,7 +89,7 @@ Examples:
 - Extraction failed.
 - Classifier output failed schema validation.
 
-V1 only needs the feed-related failures, but the model should not block later extraction failures.
+The model should support feed, extraction, filtering, summarization, rendering, and worker contract failures.
 
 Re-rendering should be explicit. When extraction succeeds or settings change later, the system should update generated feed item snapshots through a deliberate reprocess path rather than changing output implicitly on every RSS request.
 
@@ -90,7 +101,7 @@ Changing output feed membership, source settings, or rendering settings should n
 
 ## Enabled / Disabled Semantics
 
-Keep enabled/disabled behavior simple in V1.
+Keep enabled/disabled behavior simple.
 
 - Disabled input feeds are not fetched.
 - Disabled intake groups make their child input feeds inactive for fetching.
@@ -111,13 +122,13 @@ Fetch gets new raw feed entries from configured input feeds.
 
 Fetch may create raw items, but it should not rewrite generated feed item history directly.
 
-V1 fetch triggering should include manual fetch and a global scheduled fetch interval. The default interval is 60 minutes and should be configurable in the admin UI. Per-feed schedules are deferred.
+Fetch triggering should stay simple: manual fetch and a global scheduled fetch interval. Per-feed schedules remain deferred.
 
-Use supervised GenServer-style orchestration in V1. Do not introduce Oban unless later job complexity makes it worthwhile.
+Use supervised GenServer-style orchestration for now. Do not introduce Oban unless later job complexity makes it worthwhile.
 
-Persist run records for meaningful operations even though orchestration is GenServer-based. V1 should favor verbose debugging history over minimal storage. Run logging can become configurable or disabled later if it becomes noisy.
+Persist run records for meaningful operations even though orchestration is GenServer-based. Favor verbose debugging history over minimal storage while the pipeline shape is still evolving. Run logging can become configurable or disabled later if it becomes noisy.
 
-Initial V1 run types:
+Run types to preserve or extend:
 
 - `fetch_all`
 - `fetch_input_feed`
@@ -135,25 +146,39 @@ Dedupe/canonicalize resolves raw items into canonical article records and source
 
 Backfill creates missing generated feed items from already-ingested articles.
 
-Use backfill when output feed rules change and the user explicitly wants older matching articles to appear in an output feed. Backfill is scoped to an output feed in the first implementation. It should not delete, replace, or rewrite existing generated feed items.
+Use backfill when output feed rules change and the user explicitly wants older matching articles to appear in an output feed. Backfill should remain explicit and scoped. It should not delete, replace, or rewrite existing generated feed items.
 
 ### Re-render
 
 Re-render updates rendered RSS snapshots for existing generated feed items.
 
-Re-render is scoped to an output feed in the first implementation. It uses app-owned stored data, such as raw item data, article data, extraction data, and output feed rendering settings. It should not fetch upstream RSS again, mutate raw intake records, or change generated feed item GUIDs.
+Re-render uses app-owned stored data, such as raw item data, article data, extraction data, and output feed rendering settings. It should not fetch upstream RSS again, mutate raw intake records, or change generated feed item GUIDs.
 
 ### Extract
 
 Extract fetches and parses article pages, then stores extracted article content and extraction metadata.
 
+Extraction is a pipeline step type. Simple HTTP extraction, headless browser extraction, and host Chrome extraction are separate implementations of that type.
+
 Extraction is separate from re-rendering. A later re-render may use extracted content if it exists.
+
+### Filter
+
+Filter decides whether an article should remain eligible for an output feed, be excluded, or route to review.
+
+Filtering is a pipeline step type. Source-policy filtering and local-LLM topic filtering are separate implementations of that type.
+
+### Summarize
+
+Summarize produces durable summaries for reading, feed output, or newspaper sections.
+
+Summarization is a pipeline step type. Different models, prompts, and output formats should be represented as separate implementations or implementation configs.
 
 ### Rebuild
 
 Rebuild is a broader and potentially dangerous administrative action that recomputes generated feed item state for a scope.
 
-Rebuild may delete, archive, replace, or mark stale existing generated feed items depending on the chosen mode. It should not be the default V1 path. Prefer safer explicit actions such as backfill missing items and re-render existing items.
+Rebuild may delete, archive, replace, or mark stale existing generated feed items depending on the chosen mode. It should not be the default path. Prefer safer explicit actions such as backfill missing items and re-render existing items.
 
 ## Retention
 

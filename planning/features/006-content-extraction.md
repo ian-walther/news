@@ -8,13 +8,15 @@ This is designed into the architecture from the start. It is not required for th
 
 ## Non-Goals
 
-- Do not block V1 generated feed publishing on extraction.
+- Do not block generated feed publishing on extraction.
 - Do not make extracted content publicly available.
 - Do not use extraction workers as durable state owners.
 
 ## User / Operator Flow
 
-The operator enables extraction for selected sources, intake groups, or generated output feeds. When extraction succeeds, generated feed entries can include extracted article content. When extraction fails, the generated feed can continue using original feed content and the failure becomes visible.
+The operator configures extraction as a pipeline step in the admin UI.
+
+The first scope should be output feeds. When extraction succeeds, generated feed entries can include extracted article content or link to hosted article pages according to output-feed rendering settings. When extraction fails, the generated feed can continue using original feed content and the failure becomes visible.
 
 ## Data Model Impact
 
@@ -33,11 +35,11 @@ Likely fields or tables:
 
 Content extraction is the first feature that should force a real decision about separate executable boundaries.
 
-The current working assumption is that the extraction worker receives JSON input and returns JSON output, but this is provisional until the feature is designed in detail.
+The current working assumption is that worker-backed extraction implementations receive JSON input and return JSON output, but this is provisional until the feature is designed in detail.
 
 Input should include:
 
-- schema version
+- schema revision
 - article URL
 - source metadata
 - browser/profile/CDP configuration reference
@@ -45,7 +47,7 @@ Input should include:
 
 Output should include:
 
-- schema version
+- schema revision
 - final URL
 - success/failure status
 - extracted title
@@ -57,6 +59,14 @@ Output should include:
 If the JSON contract is kept, stderr is for human-readable logs and stdout or an output file is for JSON only.
 
 ## Implementation Notes
+
+Extraction should be represented as a pipeline step type with multiple implementations.
+
+Likely implementations:
+
+- `extraction.simple_http`
+- `extraction.headless_browser`
+- `extraction.host_chrome`
 
 Preferred browser strategy:
 
@@ -78,15 +88,15 @@ Preferred browser strategy:
 
 ## Acceptance Criteria
 
-- Extraction can be attempted for an article.
+- Extraction can be configured from the admin UI as an output-feed pipeline step.
+- Extraction can be attempted for an article through a pipeline step implementation.
 - Successful extraction stores article content.
 - Generated feed body can use extracted content when available.
 - Generated feed links can point to hosted article pages when configured.
-- Failed extraction records a visible failure.
+- Failed extraction records a visible failure and a step attempt.
 - Failure does not prevent the article from appearing in generated feeds with original feed content.
 
 ## Open Questions
 
-- Should extraction be configured per source, per intake group, per generated feed, or some combination?
 - Which parser library should be used after browser fetch?
 - How should low-quality extraction be detected?

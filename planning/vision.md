@@ -8,9 +8,9 @@ The morning newspaper is the long-term product goal. The intermediate feed featu
 
 ## First Useful Product
 
-The first infrastructure milestone is generated RSS feeds.
+The feed foundation is generated RSS feeds.
 
-V1 should configure input feeds into intake groups, deduplicate repeated articles within those intake groups, and publish generated output feeds that FreshRSS can subscribe to. Reeder Classic remains the primary reading client through FreshRSS for the bulk of news consumption.
+The app should keep input feeds, intake groups, canonical articles, and generated output feeds as separate concepts. Reeder Classic remains the primary reading client through FreshRSS for the bulk of news consumption.
 
 Content extraction is the first compelling product milestone. The feed-only loop should work as the foundation, but the app is not expected to become a daily-use product until generated feed entries can optionally use extracted article content and hosted article pages.
 
@@ -34,6 +34,7 @@ Generated feed curation is the initial product mode.
 
 Content extraction is the first major enhancement after generated feeds work and the main reason to begin using the app in earnest.
 
+- Configure extraction as a pipeline step from the admin UI.
 - Fetch linked article pages.
 - Reuse authenticated browser sessions where needed.
 - Parse full article content where possible.
@@ -47,7 +48,7 @@ Semantic filtering and enrichment come after the feed pipeline and extraction pa
 - Classify articles into durable labels and categories.
 - Filter unwanted coverage based on meaning, topic, and framing, not brittle keywords.
 - Support source-specific content policies, such as excluding political-topic coverage from otherwise useful sources whose political coverage is not trusted.
-- Store confidence, rationale, model/version, and review state.
+- Store confidence, rationale, model identity, prompt/config metadata, and review state.
 - Make bad decisions auditable and correctable.
 
 ### Morning Newspaper
@@ -69,6 +70,7 @@ World Radar is a future mode that summarizes broad world events from a larger so
 - Keep FreshRSS and Reeder as the downstream reading workflow.
 - Make generated RSS feeds valuable before adding AI-dependent behavior.
 - Keep intake grouping/dedupe separate from output feed categorization/filtering.
+- Make processing steps configurable in the UI from the beginning.
 - Treat each intermediate feature as a useful standalone capability and as progress toward the morning newspaper.
 - Use the app as the owner of durable state, orchestration, and operator visibility.
 - Treat worker tools as replaceable transforms with explicit contracts when a separate executable boundary is justified.

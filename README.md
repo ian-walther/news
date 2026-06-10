@@ -58,7 +58,7 @@ scripts/deploy-prod.sh
 ```
 
 The deploy helper SSHes to `news`, updates `~/docker/news` from `origin/master`
-with `git pull --ff-only`, rebuilds/restarts the app container, and runs release
+with `git pull --ff-only`, rebuilds/restarts the app container, and runs database
 migrations.
 
 Run idempotent production seeds separately when desired:
@@ -77,7 +77,7 @@ docker compose --env-file .env.prod -f docker-compose.prod.yml exec app /app/bin
 Later, production can point at a shared network Postgres instance by changing
 `DATABASE_URL`.
 
-## V1 Surface
+## Current Surface
 
 - Intake groups and input feed configuration
 - Output feed configuration

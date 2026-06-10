@@ -8,9 +8,9 @@ Phoenix and LiveView are intentional choices. They match the user's work stack a
 
 The Phoenix control plane owns configuration, orchestration, durable data, workflow state, generated RSS endpoints, local article pages, and later PDF/email/print outputs.
 
-V1 job scheduling/orchestration should use ordinary supervised Elixir processes, such as GenServers, rather than introducing Oban. This matches the user's existing experience and keeps the first implementation familiar. A Postgres-backed job system can be reconsidered later if the job surface grows enough to justify it.
+Job scheduling/orchestration should use ordinary supervised Elixir processes, such as GenServers, rather than introducing Oban. This matches the user's existing experience and keeps the system familiar. A Postgres-backed job system can be reconsidered later if the job surface grows enough to justify it.
 
-Worker executables may perform specialized transformations, but they should not own durable application state. The exact separate-executable boundary is provisional until the content extraction feature is designed in detail.
+Worker executables may perform specialized transformations, but they should not own durable application state. The processing pipeline should support both internal implementations and external worker-backed implementations behind the same step interface.
 
 ## Boundary Model
 
@@ -55,9 +55,24 @@ The current assumption is JSON request/response contracts, but this is not final
 
 Workers should write logs to stderr, return machine-readable output on stdout or an output file, and avoid mutating durable app state directly.
 
+## Pipeline Implementation Registry
+
+Pipeline step implementations should be registered in application code.
+
+The registry should provide:
+
+- implementation key
+- step type
+- label and description
+- config schema
+- validation rules
+- runtime module or worker command
+
+The admin UI should use registry metadata to render configurable pipeline step forms. The database should store selected implementation keys and config, while code controls which implementations are available.
+
 ## Browser And Auth Strategy
 
-Authenticated extraction is important, but not required for V1 feed aggregation.
+Authenticated extraction is important, but not required for feed aggregation.
 
 Preferred extraction approach:
 
@@ -111,6 +126,6 @@ See `planning/prod-topology.md` for the current production topology decision.
 
 ## Home Assistant And MQTT
 
-Home Assistant and MQTT belong in the project, but not in V1.
+Home Assistant and MQTT belong in the project, but not in the immediate pipeline/extraction work.
 
 The user already runs an MQTT server and has another side project that publishes Home Assistant entities. This integration should be treated as a normal later system integration, not an exotic add-on. It becomes relevant when the morning newspaper, email, print controls, and run-status sensors are underway.

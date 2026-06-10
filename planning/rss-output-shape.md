@@ -4,7 +4,7 @@
 
 Generated output feeds should be configurable, but the defaults should be conservative and FreshRSS/Reeder-friendly.
 
-V1 should publish feed items that link to the original article and pass through the selected original upstream feed entry body exactly. After content extraction exists, each output feed can choose whether to process/extract items. Only processed/extracted output should change links, bodies, or article content.
+Unprocessed feed items should link to the original article and pass through the selected original upstream feed entry body exactly. After content extraction exists, each output feed can choose whether to process/extract items. Only processed/extracted output should change links, bodies, or article content.
 
 Output feeds should render from durable generated feed item records created by the pipeline. They should not be lazy mirrors of whatever is currently present in upstream source feeds.
 
@@ -67,15 +67,15 @@ Generated feed items are first-class durable publication records, not just compu
 
 ## Link Target
 
-V1 link behavior:
+Unprocessed link behavior:
 
 - Feed item links point to the original article URL.
 
-V1 output ordering should use the published timestamp snapshot copied from the representative raw item. If no usable published timestamp exists, fall back to discovered time.
+Output ordering should use the published timestamp snapshot copied from the representative raw item. If no usable published timestamp exists, fall back to discovered time.
 
 ## Feed Window
 
-Each output feed should have a configurable item limit in V1.
+Each output feed should have a configurable item limit.
 
 Default item limit:
 
@@ -97,7 +97,7 @@ When false, RSS item links point to the original article. When true and extracte
 
 ## Body Source
 
-V1 body behavior:
+Unprocessed body behavior:
 
 - Feed item bodies pass through the selected original upstream feed body/content exactly.
 - No source attribution, dedupe explanation, summaries, or other app-added content should be injected into the RSS item body in unprocessed mode.
@@ -115,7 +115,7 @@ When processing/extraction is false, generated feed items pass along the selecte
 
 ## Configurability
 
-Start with booleans rather than a complex rendering policy engine.
+Keep rendering settings simple while processing pipeline steps are introduced.
 
 Useful output-feed settings:
 
@@ -123,7 +123,7 @@ Useful output-feed settings:
 - `link_to_hosted_article`
 - `use_extracted_content_body`
 
-Additional rendering options can be added later for processed/extracted output, such as source attribution, summary-first bodies, excerpts, or original-plus-local link blocks.
+Additional rendering options can be added later for processed/extracted output, such as source attribution, summary-first bodies, excerpts, or original-plus-local link blocks. More advanced choices should eventually be represented as rendering pipeline step implementations rather than ad hoc conditionals.
 
 ## Render Snapshots
 

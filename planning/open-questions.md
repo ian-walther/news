@@ -8,18 +8,15 @@
 
 ## Intake And Output Feed Semantics
 
-- What are the first intake groups and which input feeds do they contain?
-- Should V1 output feeds be category feeds, review feeds, source bundles, or a mix?
-- What are the first 3 to 5 generated feeds FreshRSS should subscribe to?
 - How much source metadata should be visible in the generated feed body?
-- When should explicit output-feed excludes be introduced after V1?
+- When should explicit output-feed excludes be introduced?
 
 ## RSS Output Shape
 
 - Are there source-specific metadata fields that should be preserved specially during raw capture?
-- Should source attribution be added to generated feed bodies in V1?
+- Should source attribution be added to generated feed bodies?
 - What exact local hosted article URL shape should use the stable article identifier?
-- What exact generated feed URL shape should use the stable feed identifier?
+- Does hosted article routing need human-friendly URLs, or are GUID-only article URLs still sufficient?
 
 ## Retention
 
@@ -37,14 +34,14 @@
 
 - What URL parameters should always be stripped?
 - When should title/date/source similarity override different URLs within an intake group?
-- Should any V1 dedupe happen across intake groups, or should that wait for later semantic clustering?
+- Should any dedupe happen across intake groups, or should that wait for semantic clustering?
 - How should ambiguous dedupe matches be reviewed?
 - What feed-provided ID patterns are reliable enough to use across feeds from the same publisher?
 
 ## Workflow
 
-- Which state fields are enough for V1 without overbuilding a workflow engine?
-- What failure types need a first-class queue in V1?
+- Which pipeline attempt states are enough without overbuilding a workflow engine?
+- What failure types need a first-class queue?
 - What automatic retry/backoff behavior is needed after real usage?
 - What failure lifecycle states are needed after real usage?
 - When, if ever, does the job surface justify moving from supervised GenServers to Oban or another job system?
@@ -55,7 +52,7 @@
 
 ## Production Architecture
 
-- Which services run in Docker and which stay on the host beyond the already-decided host Chrome/desktop stack?
+- Which future services should run in Docker and which should stay on the host alongside the Chrome/desktop stack?
 - Should workers run inside the main app container, as separate containers, or as host-level executables?
 - How should deploy, backup, restore, logs, and upgrades work?
 - What exact systemd unit structure should manage Xorg, the desktop session, Chrome, and x11vnc?
@@ -63,12 +60,20 @@
 
 ## Extraction
 
-- When extraction is added, should feed body replacement be global or configurable per generated feed?
-- Should generated feeds include full extracted article text, summaries, excerpts, or a per-feed setting beyond the initial extracted-body boolean?
+- Which extraction implementation should be built first: simple HTTP, headless browser, or host Chrome?
+- What config fields should `extraction.host_chrome` expose in the first UI?
+- Should generated feeds include full extracted article text, summaries, excerpts, or a rendering pipeline setting beyond the initial extracted-body boolean?
 - How should paid-site auth expiration be detected and surfaced?
 - How should the Dockerized app reach host Chrome/CDP securely when CDP is bound narrowly?
 - Is JSON over stdin/stdout the right worker contract, or should extraction use another boundary?
-- What precedent should extraction set for later classifier, summarizer, and PDF renderer workers?
+- What shared worker contract should extraction set for later classifier, summarizer, and PDF renderer workers?
+
+## Pipeline Configuration
+
+- Should pipeline step ordering support move up/down controls immediately?
+- Should the initial implementation support only output-feed scoped steps, or also global defaults?
+- How much implementation config should be editable as typed fields versus raw JSON?
+- Should pipeline attempts be retained forever until retention policies exist?
 
 ## Home Assistant
 
