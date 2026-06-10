@@ -28,12 +28,10 @@
 - What should be protected from autopurge once extraction, summaries, or newspaper history exist?
 - How long should verbose run/debug history be retained?
 
-## Rebuild And Backfill
+## Rebuild
 
-- What manual rebuild/backfill actions should exist in V1?
-- Should backfill operate by output feed, intake group, date range, item count, or a mix?
-- Should re-rendering and backfilling be separate actions?
 - Should full rebuild be deferred as an admin-danger-zone action?
+- If full rebuild is added later, should it operate by output feed, intake group, date range, item count, or a mix?
 
 ## Deduplication
 

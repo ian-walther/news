@@ -122,7 +122,6 @@ Initial V1 run types:
 - `fetch_all`
 - `fetch_input_feed`
 - `process_intake_group`
-- `publish_output_feed`
 - `backfill_output_feed`
 - `rerender_output_feed`
 
@@ -136,13 +135,13 @@ Dedupe/canonicalize resolves raw items into canonical article records and source
 
 Backfill creates missing generated feed items from already-ingested articles.
 
-Use backfill when output feed rules change and the user explicitly wants older matching articles to appear in an output feed. Backfill should not delete, replace, or rewrite existing generated feed items.
+Use backfill when output feed rules change and the user explicitly wants older matching articles to appear in an output feed. Backfill is scoped to an output feed in the first implementation. It should not delete, replace, or rewrite existing generated feed items.
 
 ### Re-render
 
 Re-render updates rendered RSS snapshots for existing generated feed items.
 
-Re-render uses app-owned stored data, such as raw item data, article data, extraction data, and output feed rendering settings. It should not fetch upstream RSS again, mutate raw intake records, or change generated feed item GUIDs.
+Re-render is scoped to an output feed in the first implementation. It uses app-owned stored data, such as raw item data, article data, extraction data, and output feed rendering settings. It should not fetch upstream RSS again, mutate raw intake records, or change generated feed item GUIDs.
 
 ### Extract
 

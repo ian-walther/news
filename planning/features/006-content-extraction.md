@@ -4,7 +4,7 @@
 
 Optionally extract full article content and use it to replace or enrich generated feed item bodies.
 
-This is designed into the architecture from the start, but is not required for V1.
+This is designed into the architecture from the start. It is not required for the feed-only foundation to work, but it is the first compelling product milestone and should happen before expecting the app to become part of daily reading.
 
 ## Non-Goals
 
@@ -27,6 +27,7 @@ Likely fields or tables:
 - hosted article URL based on stable article identifier
 - generated output feed link/body booleans
 - generated output feed process/extract boolean
+- explicit re-render path for generated feed items after extraction succeeds
 
 ## Worker Contract
 

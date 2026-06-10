@@ -15,6 +15,14 @@ defmodule NewspaperWeb.AdminLive.Dashboard do
     {:noreply, put_flash(assign_data(socket), :info, "Fetch started")}
   end
 
+  def handle_event("retry_failure", %{"id" => id}, socket) do
+    failure_id = String.to_integer(id)
+
+    Task.start(fn -> Pipeline.retry_failure(failure_id) end)
+
+    {:noreply, socket |> put_flash(:info, "Failure retry started") |> assign_data()}
+  end
+
   def handle_info({:newspaper_data_changed, _event}, socket) do
     {:noreply, assign_data(socket)}
   end
@@ -37,7 +45,21 @@ defmodule NewspaperWeb.AdminLive.Dashboard do
           <:col :let={failure} label="Type">{failure.failure_type}</:col>
           <:col :let={failure} label="Message">{failure.message}</:col>
           <:col :let={failure} label="Retryable">{if failure.retryable, do: "yes", else: "no"}</:col>
+          <:col :let={failure} label="Retries">{failure.retry_count}</:col>
+          <:col :let={failure} label="Last Attempt">{failure.last_attempted_at}</:col>
+          <:col :let={failure} label="Related">{inspect(failure.related)}</:col>
           <:col :let={failure} label="At">{failure.inserted_at}</:col>
+          <:action :let={failure}>
+            <button
+              :if={failure.retryable}
+              class="btn btn-sm"
+              phx-click="retry_failure"
+              phx-value-id={failure.id}
+              id={"retry-failure-#{failure.id}"}
+            >
+              Retry
+            </button>
+          </:action>
         </.table>
       </section>
 

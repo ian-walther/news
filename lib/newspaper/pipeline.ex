@@ -133,22 +133,76 @@ defmodule Newspaper.Pipeline do
   end
 
   def publish_output_feed(generated_feed_id, trigger \\ "manual") do
+    backfill_output_feed(generated_feed_id, trigger)
+  end
+
+  def backfill_output_feed(generated_feed_id, trigger \\ "manual") do
     {:ok, run} =
-      Operations.start_run("publish_output_feed", trigger, %{
+      Operations.start_run("backfill_output_feed", trigger, %{
         "generated_feed_id" => generated_feed_id
       })
 
     feed = Newspaper.Publishing.get_generated_feed!(generated_feed_id)
 
-    articles =
-      Content.list_articles(5_000)
-      |> Enum.filter(&eligible_for_feed?(&1, feed))
+    if feed.enabled do
+      articles =
+        Content.list_articles(5_000)
+        |> Enum.filter(&eligible_for_feed?(&1, feed))
 
-    Enum.each(articles, &Publishing.create_item_if_missing(feed, &1))
+      results = Enum.map(articles, &Publishing.ensure_item_for_feed(feed, &1))
 
-    Operations.finish_run(run, "succeeded", %{
-      summary_counts: %{"articles_considered" => length(articles)}
+      Operations.finish_run(run, "succeeded", %{
+        summary_counts: %{
+          "articles_considered" => length(articles),
+          "items_created" => Enum.count(results, &match?({:created, _}, &1)),
+          "items_existing" => Enum.count(results, &match?({:existing, _}, &1))
+        }
+      })
+    else
+      Operations.finish_run(run, "succeeded", %{
+        summary_counts: %{
+          "articles_considered" => 0,
+          "items_created" => 0,
+          "items_existing" => 0,
+          "skipped_disabled_feed" => 1
+        }
+      })
+    end
+  end
+
+  def rerender_output_feed(generated_feed_id, trigger \\ "manual") do
+    {:ok, run} =
+      Operations.start_run("rerender_output_feed", trigger, %{
+        "generated_feed_id" => generated_feed_id
+      })
+
+    feed = Newspaper.Publishing.get_generated_feed!(generated_feed_id)
+    items = Publishing.list_items_for_feed(feed)
+    results = Enum.map(items, &Publishing.rerender_item/1)
+    errors = Enum.filter(results, &match?({:error, _}, &1))
+
+    status = if errors == [], do: "succeeded", else: "failed"
+
+    Operations.finish_run(run, status, %{
+      summary_counts: %{
+        "items_considered" => length(items),
+        "items_rendered" => Enum.count(results, &match?({:ok, _}, &1)),
+        "items_failed" => length(errors)
+      },
+      error_summary: if(errors == [], do: nil, else: "#{length(errors)} item(s) failed")
     })
+  end
+
+  def retry_failure(failure_id, trigger \\ "manual_retry") do
+    failure = Operations.get_failure!(failure_id)
+
+    with true <- failure.retryable,
+         {:ok, _failure} <- Operations.increment_failure_retry(failure) do
+      retry_failure_type(failure, trigger)
+    else
+      false -> {:error, :not_retryable}
+      {:error, _changeset} = error -> error
+    end
   end
 
   defp ensure_success(%Req.Response{status: status}) when status in 200..299, do: :ok
@@ -169,7 +223,7 @@ defmodule Newspaper.Pipeline do
     uri = URI.parse(url)
 
     query =
-      uri.query
+      (uri.query || "")
       |> URI.decode_query()
       |> Enum.reject(fn {key, _value} -> tracking_param?(key) end)
       |> Enum.sort()
@@ -215,6 +269,24 @@ defmodule Newspaper.Pipeline do
 
     article.intake_group_id in intake_group_ids or Enum.any?(source_ids, &(&1 in input_feed_ids))
   end
+
+  defp retry_failure_type(%{failure_type: "fetch_input_feed_failed", related: related}, trigger) do
+    case Map.get(related || %{}, "input_feed_id") do
+      nil ->
+        {:error, :missing_input_feed_id}
+
+      input_feed_id ->
+        input_feed_id
+        |> to_id()
+        |> Intake.get_input_feed!()
+        |> fetch_input_feed(trigger)
+    end
+  end
+
+  defp retry_failure_type(_failure, _trigger), do: {:error, :unsupported_failure_type}
+
+  defp to_id(id) when is_integer(id), do: id
+  defp to_id(id) when is_binary(id), do: String.to_integer(id)
 
   defp process_feed_boundary(%InputFeed{intake_group_id: nil, id: id}, trigger) do
     process_input_feed(id, trigger)

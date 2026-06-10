@@ -8,11 +8,11 @@ The morning newspaper is the long-term product goal. The intermediate feed featu
 
 ## First Useful Product
 
-The first useful product is generated RSS feeds.
+The first infrastructure milestone is generated RSS feeds.
 
 V1 should configure input feeds into intake groups, deduplicate repeated articles within those intake groups, and publish generated output feeds that FreshRSS can subscribe to. Reeder Classic remains the primary reading client through FreshRSS for the bulk of news consumption.
 
-Content extraction should be designed into the architecture from the start, but it is not required for the first useful V1. The next slice after V1 should optionally replace each republished feed entry body with extracted article content when extraction succeeds.
+Content extraction is the first compelling product milestone. The feed-only loop should work as the foundation, but the app is not expected to become a daily-use product until generated feed entries can optionally use extracted article content and hosted article pages.
 
 ## Product Modes
 
@@ -32,7 +32,7 @@ Generated feed curation is the initial product mode.
 
 ### Content Extraction
 
-Content extraction is the first major enhancement after generated feeds work.
+Content extraction is the first major enhancement after generated feeds work and the main reason to begin using the app in earnest.
 
 - Fetch linked article pages.
 - Reuse authenticated browser sessions where needed.

@@ -97,10 +97,21 @@ defmodule NewspaperWeb.AdminLive.OutputFeeds do
   end
 
   def handle_event("publish_feed", %{"id" => id}, socket) do
-    id = to_id(id)
-    Task.start(fn -> Newspaper.Pipeline.publish_output_feed(id, "manual") end)
+    handle_event("backfill_feed", %{"id" => id}, socket)
+  end
 
-    {:noreply, socket |> put_flash(:info, "Output feed publish started") |> assign_data()}
+  def handle_event("backfill_feed", %{"id" => id}, socket) do
+    id = to_id(id)
+    Task.start(fn -> Newspaper.Pipeline.backfill_output_feed(id, "manual") end)
+
+    {:noreply, socket |> put_flash(:info, "Output feed backfill started") |> assign_data()}
+  end
+
+  def handle_event("rerender_feed", %{"id" => id}, socket) do
+    id = to_id(id)
+    Task.start(fn -> Newspaper.Pipeline.rerender_output_feed(id, "manual") end)
+
+    {:noreply, socket |> put_flash(:info, "Output feed re-render started") |> assign_data()}
   end
 
   def handle_info({:newspaper_data_changed, _event}, socket) do
@@ -168,8 +179,23 @@ defmodule NewspaperWeb.AdminLive.OutputFeeds do
           </button>
         </:action>
         <:action :let={feed}>
-          <button class="btn btn-sm" phx-click="publish_feed" phx-value-id={feed.id}>
-            Publish
+          <button
+            class="btn btn-sm"
+            phx-click="backfill_feed"
+            phx-value-id={feed.id}
+            id={"backfill-output-feed-#{feed.id}"}
+          >
+            Backfill
+          </button>
+        </:action>
+        <:action :let={feed}>
+          <button
+            class="btn btn-sm"
+            phx-click="rerender_feed"
+            phx-value-id={feed.id}
+            id={"rerender-output-feed-#{feed.id}"}
+          >
+            Re-render
           </button>
         </:action>
         <:action :let={feed}>

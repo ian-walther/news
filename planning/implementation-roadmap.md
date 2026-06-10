@@ -43,10 +43,10 @@
 - Define generated feeds.
 - Select canonical articles from the article pool for output feeds.
 - Render RSS output.
-- Subscribe FreshRSS to generated feed endpoints.
-- Confirm Reeder workflow.
+- Subscribe FreshRSS to generated feed endpoints for smoke testing.
+- Keep the feed-only loop functional, but do not treat sustained daily usage as the main validation milestone until content extraction works.
 
-## Phase 5: Optional Content Extraction
+## Phase 5: Content Extraction
 
 - Define extraction worker contract and separate-executable precedent.
 - Set up persistent host browser environment on the N150.
@@ -54,6 +54,8 @@
 - Connect to headed host Chrome over secured local CDP.
 - Parse article content.
 - Replace generated feed item body when extraction succeeds.
+- Add hosted article pages and configurable link/body behavior for generated feeds.
+- Use extracted-content feeds as the first compelling daily-use milestone.
 
 ## Phase 6: Semantic Enrichment
 

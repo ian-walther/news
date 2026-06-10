@@ -23,8 +23,8 @@ defmodule NewspaperWeb.AdminLive.OutputFeedsCrudTest do
     view
     |> form("#new-output-feed-form", %{
       "generated_feed" => %{
-        "title" => "Output Feed",
-        "description" => "Original output feed",
+        "title" => "Cars",
+        "description" => "Seeded from the FreshRSS Cars category.",
         "item_limit" => "25",
         "process_items" => "false",
         "link_to_hosted_article" => "false",
@@ -35,7 +35,7 @@ defmodule NewspaperWeb.AdminLive.OutputFeedsCrudTest do
     })
     |> render_submit()
 
-    output_feed = Repo.get_by!(GeneratedFeed, title: "Output Feed") |> Repo.preload(:input_feeds)
+    output_feed = Repo.get_by!(GeneratedFeed, title: "Cars") |> Repo.preload(:input_feeds)
     assert output_feed.item_limit == 25
     assert Enum.map(output_feed.input_feeds, & &1.id) == [input_feed.id]
 
@@ -78,5 +78,30 @@ defmodule NewspaperWeb.AdminLive.OutputFeedsCrudTest do
     |> render_click()
 
     refute Repo.get(GeneratedFeed, output_feed.id)
+  end
+
+  test "exposes manual backfill and re-render controls", %{conn: conn} do
+    {:ok, input_feed} =
+      Intake.create_input_feed(%{
+        name: "The Autopian",
+        outlet_name: "The Autopian",
+        url: "https://www.theautopian.com/feed/"
+      })
+
+    {:ok, output_feed} =
+      Publishing.create_generated_feed(%{
+        "title" => "Cars",
+        "guid" => "feed_freshrss_cars_test",
+        "description" => "Seeded from the FreshRSS Cars category.",
+        "input_feed_ids" => [input_feed.id]
+      })
+
+    {:ok, view, _html} = live(conn, ~p"/output-feeds")
+
+    assert has_element?(view, "#backfill-output-feed-#{output_feed.id}")
+    assert has_element?(view, "#rerender-output-feed-#{output_feed.id}")
+
+    assert render(view) =~ "Backfill"
+    assert render(view) =~ "Re-render"
   end
 end

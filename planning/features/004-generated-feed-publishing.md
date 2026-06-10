@@ -41,7 +41,7 @@ Primary tables:
 - `generated_feeds`
 - `generated_feed_items`
 - `generated_feed_intake_groups`
-- `generated_feed_sources`
+- `generated_feed_input_feeds`
 - `articles`
 - `article_sources`
 
@@ -74,6 +74,8 @@ Generated feed item snapshots should be comprehensive. Store the rendered RSS-is
 Output feed membership and rendering changes should be future-only by default. Existing generated feed items should not be changed or backfilled unless the user explicitly runs a rebuild/backfill/re-render action.
 
 Backfill and re-render should be separate actions. Backfill creates missing generated feed items from existing articles. Re-render updates snapshots for existing generated feed items without fetching upstream RSS, mutating raw intake data, or changing generated feed item GUIDs.
+
+The first implementation should scope both actions to one output feed at a time. Broader rebuild operations can wait until real usage shows they are necessary.
 
 Potential body modes:
 
@@ -119,9 +121,7 @@ Future filtering policies should support use cases such as excluding political-t
 
 ## Open Questions
 
-- What is the minimum V1 rule model for defining generated output feed membership?
 - How should later filtering policies attach to generated feeds?
 - When should explicit excludes be added?
-- What manual rebuild/backfill controls should exist in the admin UI?
 - Should full rebuild be deferred as a later admin-danger-zone action?
 - Are there source-specific metadata fields that should be preserved specially during raw capture?

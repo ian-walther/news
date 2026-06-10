@@ -14,6 +14,7 @@
 
 5. Reproduce bugs with a failing test before fixing them.
    For bug fixes and regressions, first add or identify a test that fails because of the bug, confirm the failure, and only then add the fix. After the fix, rerun the focused test and the full suite to confirm the red-green cycle.
+   Cosmetic copy, title, spacing, or visual polish tweaks do not need dedicated regression tests unless they fix a recurring regression or encode behavior that should remain stable.
 
 6. Do not deploy to production without explicit approval.
    The user has final say on what gets deployed. Prepare, test, and explain deployable changes, but wait for explicit approval before running production deployment commands.

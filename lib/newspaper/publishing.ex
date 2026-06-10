@@ -86,6 +86,18 @@ defmodule Newspaper.Publishing do
     |> Repo.all()
   end
 
+  def list_items_for_feed(%GeneratedFeed{} = feed) do
+    GeneratedFeedItem
+    |> where([i], i.generated_feed_id == ^feed.id)
+    |> order_by([i],
+      desc_nulls_last: i.rendered_published_at,
+      desc_nulls_last: i.published_at,
+      desc: i.inserted_at
+    )
+    |> preload([:generated_feed, article: :representative_raw_item])
+    |> Repo.all()
+  end
+
   def publish_article_to_eligible_feeds(%Article{} = article) do
     article = Repo.preload(article, [:article_sources, :representative_raw_item])
     source_ids = Enum.map(article.article_sources, & &1.input_feed_id)
@@ -98,10 +110,33 @@ defmodule Newspaper.Publishing do
   end
 
   def create_item_if_missing(%GeneratedFeed{} = feed, %Article{} = article) do
-    case Repo.get_by(GeneratedFeedItem, generated_feed_id: feed.id, article_id: article.id) do
-      nil -> create_item!(feed, article)
-      item -> {:ok, item}
+    case ensure_item_for_feed(feed, article) do
+      {:created, item} -> {:ok, item}
+      {:existing, item} -> {:ok, item}
     end
+  end
+
+  def ensure_item_for_feed(%GeneratedFeed{} = feed, %Article{} = article) do
+    case Repo.get_by(GeneratedFeedItem, generated_feed_id: feed.id, article_id: article.id) do
+      nil ->
+        {:ok, item} = create_item!(feed, article)
+        {:created, item}
+
+      item ->
+        {:existing, item}
+    end
+  end
+
+  def rerender_item(%GeneratedFeedItem{} = item) do
+    item = Repo.preload(item, [:generated_feed, article: :representative_raw_item])
+
+    raw_item =
+      item.article.representative_raw_item || Repo.get(RawItem, item.representative_raw_item_id)
+
+    item
+    |> GeneratedFeedItem.changeset(render_attrs(item.generated_feed, item.article, raw_item))
+    |> Repo.update()
+    |> broadcast_on_ok(:publishing_changed)
   end
 
   def feed_url(%GeneratedFeed{guid: guid}), do: "/feeds/#{guid}.xml"
@@ -112,9 +147,24 @@ defmodule Newspaper.Publishing do
 
     now = DateTime.utc_now(:second)
 
-    attrs = %{
-      generated_feed_id: feed.id,
-      article_id: article.id,
+    attrs =
+      %{
+        generated_feed_id: feed.id,
+        article_id: article.id,
+        representative_raw_item_id: raw_item && raw_item.id,
+        publication_status: "published",
+        first_eligible_at: now
+      }
+      |> Map.merge(render_attrs(feed, article, raw_item, now))
+
+    %GeneratedFeedItem{}
+    |> GeneratedFeedItem.changeset(attrs)
+    |> Repo.insert()
+    |> broadcast_on_ok(:publishing_changed)
+  end
+
+  defp render_attrs(_feed, _article, raw_item, now \\ DateTime.utc_now(:second)) do
+    %{
       representative_raw_item_id: raw_item && raw_item.id,
       published_at:
         raw_item && (raw_item.published_at || raw_item.feed_updated_at || raw_item.discovered_at),
@@ -135,15 +185,9 @@ defmodule Newspaper.Publishing do
       rendered_at: now,
       render_source_metadata: %{"representative_raw_item_id" => raw_item && raw_item.id},
       render_status: "rendered",
-      publication_status: "published",
-      first_eligible_at: now,
+      render_error: nil,
       last_rendered_at: now
     }
-
-    %GeneratedFeedItem{}
-    |> GeneratedFeedItem.changeset(attrs)
-    |> Repo.insert()
-    |> broadcast_on_ok(:publishing_changed)
   end
 
   defp eligible_generated_feed_ids(intake_group_id, source_ids) do

@@ -61,6 +61,12 @@ defmodule Newspaper.Operations do
     |> Repo.all()
   end
 
+  def get_failure!(id) do
+    Failure
+    |> Repo.get!(id)
+    |> Repo.preload(:run)
+  end
+
   def create_failure(attrs) do
     %Failure{}
     |> Failure.changeset(attrs)
