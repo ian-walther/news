@@ -12,6 +12,8 @@ Job scheduling/orchestration should use ordinary supervised Elixir processes, su
 
 Worker executables may perform specialized transformations, but they should not own durable application state. The processing pipeline should support both internal implementations and external worker-backed implementations behind the same step interface.
 
+For extraction, the Phoenix control plane should own the escalation chain. Worker executables expose individual extraction strategies; the app decides which strategy to try, when to escalate, and what site-level policy to persist for future articles.
+
 ## Repository Layout
 
 Keep the repository root as the operator surface.
@@ -67,12 +69,16 @@ Workers should receive explicit structured input and return explicit structured 
 
 The current assumption is JSON request/response contracts, but this is not final. Content extraction is the first feature that should force a real decision about worker execution, schema contracts, process boundaries, and precedent for later classifier, summarizer, and renderer workers.
 
-- `news-extract`: browser/page fetch and extraction evidence.
+- `news-extract-simple`: direct HTML fetch and extraction evidence.
+- `news-extract-headless`: isolated headless browser rendering and extraction evidence.
+- `news-extract-headed`: headed host Chrome extraction evidence.
 - `news-classify`: semantic labels, confidence, routing/filter decision, rationale.
 - `news-summarize`: structured summaries in requested formats.
 - `news-render-paper`: PDF rendering from a complete layout model.
 
 Workers should write logs to stderr, return machine-readable output on stdout or an output file, and avoid mutating durable app state directly.
+
+Extraction workers should share the same app-facing interface. The implementation key should be part of the request and response, but the response shape should stay stable across simple HTML, headless browser, and headed browser extraction.
 
 ## Pipeline Implementation Registry
 
@@ -88,6 +94,14 @@ The registry should provide:
 - runtime module or worker command
 
 The admin UI should use registry metadata to render configurable pipeline step forms. The database should store selected implementation keys and config, while code controls which implementations are available.
+
+The extraction registry should include at least:
+
+- `extraction.simple_html`
+- `extraction.headless_browser`
+- `extraction.headed_browser`
+
+The registry describes available implementations. Site extraction policy describes where in the chain a site should start.
 
 ## Browser And Auth Strategy
 

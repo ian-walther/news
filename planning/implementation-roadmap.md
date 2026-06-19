@@ -13,9 +13,11 @@
 ## Content Extraction
 
 - Add the extraction step type.
-- Add at least one real extraction implementation.
-- Add host Chrome extraction for authenticated or JavaScript-heavy sites.
-- Add simpler extraction implementations where browser auth is unnecessary.
+- Add a shared worker/executable contract for extraction.
+- Wire the simple HTML extraction executable into the app.
+- Add headless browser and headed browser extraction executables behind the same contract.
+- Add app-owned escalation across extraction implementations.
+- Store site-level minimum extractor policy so known hard sites can skip lower-cost extractors that do not work.
 - Store extracted content and extraction metadata as durable article state.
 - Record extraction attempts and failures through the pipeline attempt model.
 - Add local hosted article pages using stable article identifiers.

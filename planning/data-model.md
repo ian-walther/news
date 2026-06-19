@@ -233,6 +233,29 @@ Durable extraction results.
 
 The first implementation can store extraction state directly on articles if that keeps the change small, but the model should be ready to move extraction output into a first-class table if multiple extraction attempts or revisions become important.
 
+### site_extraction_policies
+
+Per-site extraction escalation memory.
+
+- site host
+- optional input feed ID override
+- minimum implementation key
+- last successful implementation key
+- last failure kind
+- escalation enabled flag
+- notes
+- created/updated timestamps
+
+The Elixir app owns this policy. Extractor executables should report normalized results and failure kinds, but they should not persist or decide long-term site policy.
+
+Initial implementation keys:
+
+- `extraction.simple_html`
+- `extraction.headless_browser`
+- `extraction.headed_browser`
+
+New sites should start with `extraction.simple_html` unless an operator policy says otherwise. If lower-cost extractors fail in escalation-worthy ways and a higher extractor succeeds, the app can record the higher extractor as the site's minimum implementation.
+
 ### article_summaries
 
 Future summarization outputs.

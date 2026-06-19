@@ -13,7 +13,9 @@ The feed-only path is the foundation. The app becomes compelling when generated 
 - Code-owned implementation registry.
 - Output-feed pipeline configuration UI.
 - Extraction step type.
-- Multiple extraction implementation slots, starting with simple and host-Chrome options.
+- Three extraction implementation slots with a shared contract: simple HTML, headless browser, and headed browser.
+- App integration for the simple HTML extraction executable.
+- App-owned extraction escalation and site-level minimum extractor policy.
 - Durable extraction output state.
 - Extraction failure visibility.
 - Hosted article pages using stable article identifiers.

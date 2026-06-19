@@ -60,13 +60,13 @@
 
 ## Extraction
 
-- Which extraction implementation should be built first: simple HTTP, headless browser, or host Chrome?
-- What config fields should `extraction.host_chrome` expose in the first UI?
+- What config fields should `extraction.headed_browser` expose in the first UI?
 - Should generated feeds include full extracted article text, summaries, excerpts, or a rendering pipeline setting beyond the initial extracted-body boolean?
 - How should paid-site auth expiration be detected and surfaced?
 - How should the Dockerized app reach host Chrome/CDP securely when CDP is bound narrowly?
 - Is JSON over stdin/stdout the right worker contract, or should extraction use another boundary?
 - What shared worker contract should extraction set for later classifier, summarizer, and PDF renderer workers?
+- What failure kinds and thresholds should teach a site-level minimum extractor?
 
 ## Pipeline Configuration
 

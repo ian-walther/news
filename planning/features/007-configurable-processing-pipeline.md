@@ -34,9 +34,9 @@ Implementation describes how that work is done.
 
 Examples:
 
-- `extraction.simple_http`
+- `extraction.simple_html`
 - `extraction.headless_browser`
-- `extraction.host_chrome`
+- `extraction.headed_browser`
 - `summarization.local_llm.brief`
 - `summarization.local_llm.section_digest`
 - `filtering.local_llm.topic_policy`
@@ -96,15 +96,25 @@ Example registry metadata:
 
 ```elixir
 %{
-  key: "extraction.host_chrome",
+  key: "extraction.headed_browser",
   type: :extraction,
-  label: "Host Chrome extraction",
+  label: "Headed browser extraction",
   config_schema: [
     %{name: :timeout_seconds, type: :integer, default: 45},
     %{name: :chrome_profile, type: :string, default: "newspaper"}
   ]
 }
 ```
+
+Extraction should use an app-owned escalation chain:
+
+```text
+extraction.simple_html
+  -> extraction.headless_browser
+  -> extraction.headed_browser
+```
+
+The pipeline step enables extraction for a scope, while site extraction policy determines the minimum implementation to try for a given site. Worker implementations should return normalized results and failure kinds; the app should decide whether to escalate and whether to remember a higher minimum implementation for future articles.
 
 ## Attempts And Outputs
 

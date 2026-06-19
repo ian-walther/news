@@ -158,7 +158,9 @@ Re-render uses app-owned stored data, such as raw item data, article data, extra
 
 Extract fetches and parses article pages, then stores extracted article content and extraction metadata.
 
-Extraction is a pipeline step type. Simple HTTP extraction, headless browser extraction, and host Chrome extraction are separate implementations of that type.
+Extraction is a pipeline step type. Simple HTML extraction, headless browser extraction, and headed browser extraction are separate implementations of that type behind a shared contract.
+
+The Elixir app owns escalation. It should decide whether to try the next extractor in the chain and should persist site-level minimum extractor policy when a site is known to require a more capable implementation.
 
 Extraction is separate from re-rendering. A later re-render may use extracted content if it exists.
 

@@ -77,9 +77,9 @@ A pipeline step implementation is the concrete strategy for a step type.
 
 Examples:
 
-- `extraction.simple_http`
+- `extraction.simple_html`
 - `extraction.headless_browser`
-- `extraction.host_chrome`
+- `extraction.headed_browser`
 - `summarization.local_llm.brief`
 - `filtering.local_llm.topic_policy`
 
@@ -183,6 +183,20 @@ article in pool
 ```
 
 Feed metadata can provide cheap hints, but content-aware filtering should rely on extracted article content when possible.
+
+Extraction should use an app-owned escalation chain. The extractor implementations are separate executables with a shared contract, but the Elixir app decides which implementation to try, when to escalate, and what to remember for a site.
+
+Initial extraction chain:
+
+```text
+extraction.simple_html
+  -> extraction.headless_browser
+  -> extraction.headed_browser
+```
+
+The app should store site-level extraction policy so future articles can skip extractors that are known not to work for that site. For example, if a site consistently requires a real logged-in browser session, future extraction should begin at the headed-browser implementation rather than wasting time on simple HTML or isolated headless rendering.
+
+Workers should return normalized success, quality, and failure information. Failure kinds such as JavaScript required, auth required, paywall, blocking, or repeated insufficient content can trigger escalation. Network errors and timeouts should remain ordinary transient failures unless repeated real usage proves otherwise.
 
 ## Deduplication Boundary
 
