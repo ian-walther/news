@@ -8,3 +8,6 @@ docker compose -f docker-compose.dev.yml up -d postgres
 
 cd "${ROOT_DIR}/newspaper"
 mix setup
+
+cd "${ROOT_DIR}"
+npm ci --prefix workers/extraction-simple-html
