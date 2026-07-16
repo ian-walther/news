@@ -50,7 +50,7 @@ defmodule NewspaperWeb.CoreComponents do
       datetime={@iso_value}
       data-timestamp={@iso_value}
       class={@class}
-      phx-hook=".LocalTime"
+      phx-hook="LocalTime"
       phx-update="ignore"
     >
       {@fallback}

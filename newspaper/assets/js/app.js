@@ -26,10 +26,23 @@ import {hooks as colocatedHooks} from "phoenix-colocated/newspaper"
 import topbar from "../vendor/topbar"
 
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
+
+const LocalTime = {
+  mounted() {
+    const value = this.el.dataset.timestamp
+    if (!value) return
+
+    this.el.textContent = new Intl.DateTimeFormat(undefined, {
+      dateStyle: "medium",
+      timeStyle: "short",
+    }).format(new Date(value))
+  },
+}
+
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken},
-  hooks: {...colocatedHooks},
+  hooks: {...colocatedHooks, LocalTime},
 })
 
 // Show progress bar on live navigation and form submits
@@ -80,4 +93,3 @@ if (process.env.NODE_ENV === "development") {
     window.liveReloader = reloader
   })
 }
-
