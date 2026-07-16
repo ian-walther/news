@@ -129,8 +129,8 @@ defmodule Newspaper.Processing do
   def create_step(%GeneratedFeed{} = feed, attrs) do
     implementation_key = attr(attrs, "implementation_key")
 
-    with {:ok, implementation} <- Registry.fetch(implementation_key),
-         {:ok, config} <- Registry.normalize_config(implementation_key, config_attrs(attrs)) do
+    with {:ok, implementation} <- Registry.fetch_step(implementation_key),
+         {:ok, config} <- Registry.normalize_step_config(implementation_key, config_attrs(attrs)) do
       %PipelineStep{}
       |> PipelineStep.changeset(%{
         generated_feed_id: feed.id,
@@ -145,9 +145,16 @@ defmodule Newspaper.Processing do
     end
   end
 
+  def create_extraction_step(%GeneratedFeed{} = feed) do
+    create_step(feed, %{"implementation_key" => Registry.site_policy_step_key()})
+  end
+
   def update_step(%PipelineStep{} = step, attrs) do
     with {:ok, config} <-
-           Registry.normalize_config(step.implementation_key, config_attrs(attrs, step.config)) do
+           Registry.normalize_step_config(
+             step.implementation_key,
+             config_attrs(attrs, step.config)
+           ) do
       step
       |> PipelineStep.changeset(%{
         enabled: boolean_attr(attrs, "enabled", step.enabled),
@@ -488,7 +495,6 @@ defmodule Newspaper.Processing do
 
     fallback
     |> Map.merge(stringify_keys(nested))
-    |> Map.merge(Map.take(stringify_keys(attrs), ["timeout_ms", "minimum_text_length"]))
   end
 
   defp attr(attrs, key), do: Map.get(attrs, key) || Map.get(attrs, String.to_existing_atom(key))

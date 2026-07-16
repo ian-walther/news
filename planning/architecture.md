@@ -97,6 +97,8 @@ The registry should provide:
 
 The admin UI should use registry metadata to render configurable pipeline step forms. The database should store selected implementation keys and config, while code controls which implementations are available.
 
+Extraction has two distinct registry roles. An output feed selects the `extraction.site_policy` pipeline coordinator to participate in extraction; it does not select an extractor. The host-keyed site policy selects the starting extractor and owns escalation, pacing, timeout, and content-quality thresholds.
+
 The extraction registry should include at least:
 
 - `extraction.simple_html`

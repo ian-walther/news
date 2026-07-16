@@ -45,17 +45,13 @@ defmodule Newspaper.Extraction do
   end
 
   defp run_implementation_chain(url, article, policy, attempt) do
-    candidates =
-      Registry.extraction_candidates(
-        attempt.implementation_key,
-        policy.minimum_implementation
-      )
+    candidates = Registry.extraction_candidates(policy.minimum_implementation)
 
     candidates
     |> Enum.with_index()
     |> Enum.reduce_while({:error, :no_available_implementation}, fn
       {implementation_key, index}, _result ->
-        implementation = Registry.fetch!(implementation_key)
+        implementation = Registry.fetch_extractor!(implementation_key)
 
         {result, input_snapshot, started_at, finished_at} =
           run_implementation(implementation, url, article, policy, attempt)
@@ -85,7 +81,6 @@ defmodule Newspaper.Extraction do
   end
 
   defp run_implementation(implementation, url, article, policy, attempt) do
-    config = attempt.pipeline_step.config
     started_at = DateTime.utc_now(:second)
 
     metadata = %{
@@ -96,8 +91,8 @@ defmodule Newspaper.Extraction do
 
     opts = [
       metadata: metadata,
-      timeout_ms: config["timeout_ms"],
-      minimum_text_length: config["minimum_text_length"]
+      timeout_ms: policy.timeout_ms,
+      minimum_text_length: policy.minimum_text_length
     ]
 
     {result, input_snapshot} =

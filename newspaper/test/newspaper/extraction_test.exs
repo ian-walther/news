@@ -42,6 +42,16 @@ defmodule Newspaper.ExtractionTest do
 
     attempt = Repo.one!(PipelineStepAttempt)
     assert attempt.status == "queued"
+    assert attempt.implementation_key == "extraction.site_policy"
+
+    {:ok, policy} = Content.get_site_extraction_policy_for_url(article.canonical_url)
+
+    {:ok, _policy} =
+      Content.update_site_extraction_policy(policy, %{
+        timeout_ms: 45_000,
+        minimum_text_length: 750
+      })
+
     assert {:ok, attempt} = Extraction.execute_attempt(attempt.id)
     assert attempt.status == "succeeded"
 
@@ -57,6 +67,11 @@ defmodule Newspaper.ExtractionTest do
     assert worker_attempt.status == "ok"
     assert worker_attempt.implementation == "extraction.simple_html"
     assert worker_attempt.pipeline_step_attempt_id == attempt.id
+
+    assert worker_attempt.input_snapshot["options"] == %{
+             "minimum_text_length" => 750,
+             "timeout_ms" => 45_000
+           }
 
     policy = Repo.one!(SiteExtractionPolicy)
     assert policy.site_host == "arstechnica.com"
@@ -171,11 +186,7 @@ defmodule Newspaper.ExtractionTest do
       })
 
     {:ok, _step} =
-      Processing.create_step(output_feed, %{
-        "implementation_key" => "extraction.simple_html",
-        "timeout_ms" => 20_000,
-        "minimum_text_length" => 500
-      })
+      Processing.create_extraction_step(output_feed)
 
     assert {:ok, _run} = Pipeline.backfill_output_feed(output_feed.id, "test")
     assert Repo.aggregate(PipelineStepAttempt, :count) == 0
@@ -223,11 +234,7 @@ defmodule Newspaper.ExtractionTest do
       })
 
     {:ok, _step} =
-      Processing.create_step(output_feed, %{
-        "implementation_key" => "extraction.simple_html",
-        "timeout_ms" => 20_000,
-        "minimum_text_length" => 500
-      })
+      Processing.create_extraction_step(output_feed)
 
     assert {:ok, _run} = Pipeline.backfill_output_feed(output_feed.id, "test")
     output_feed

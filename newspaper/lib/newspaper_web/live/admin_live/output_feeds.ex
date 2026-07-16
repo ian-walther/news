@@ -437,7 +437,7 @@ defmodule NewspaperWeb.AdminLive.OutputFeeds do
 
     case extraction_steps do
       0 -> "No extraction pipeline"
-      1 -> "1 extraction step"
+      1 -> "Extraction enabled"
       count -> "#{count} extraction steps"
     end
   end

@@ -200,6 +200,8 @@ Configured processing steps.
 
 Step implementations are registered in code. Database rows select and configure those implementations.
 
+An output-feed extraction row selects the site-policy coordinator. It does not store a concrete extractor choice or extractor-specific configuration.
+
 ### pipeline_step_attempts
 
 Execution history for pipeline steps.
@@ -240,11 +242,13 @@ Attempt snapshots preserve execution history. Future revision history can become
 Per-site extraction escalation memory.
 
 - site host
-- optional input feed ID override
 - minimum implementation key
 - last successful implementation key
 - last failure kind
 - escalation enabled flag
+- minimum request interval and adaptive backoff state
+- extraction timeout
+- minimum acceptable text length
 - notes
 - created/updated timestamps
 

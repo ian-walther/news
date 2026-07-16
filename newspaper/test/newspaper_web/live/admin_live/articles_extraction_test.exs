@@ -65,11 +65,7 @@ defmodule NewspaperWeb.AdminLive.ArticlesExtractionTest do
       })
 
     {:ok, _step} =
-      Processing.create_step(output_feed, %{
-        "implementation_key" => "extraction.simple_html",
-        "timeout_ms" => 20_000,
-        "minimum_text_length" => 500
-      })
+      Processing.create_extraction_step(output_feed)
 
     assert {:ok, _run} = Pipeline.backfill_output_feed(output_feed.id, "test")
     refute output_feed.process_items

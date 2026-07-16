@@ -77,13 +77,13 @@ A pipeline step implementation is the concrete strategy for a step type.
 
 Examples:
 
-- `extraction.simple_html`
-- `extraction.headless_browser`
-- `extraction.headed_browser`
+- `extraction.site_policy`
 - `summarization.local_llm.brief`
 - `filtering.local_llm.topic_policy`
 
 Implementations should be registered in code with metadata for labels, config schema, validation, and runtime behavior. The database should store selected implementation keys and config, not arbitrary executable behavior.
+
+The output-scoped extraction implementation is `extraction.site_policy`. Simple HTML, headless browser, and headed browser are extractor strategies selected by host policy rather than independent output-feed pipeline choices.
 
 ## Pipeline Shape
 
@@ -147,7 +147,7 @@ Extraction, classification, summarization, and semantic filtering should be adde
 
 Future processing capabilities should extend the output-feed pipeline rather than adding one-off execution paths.
 
-The initial scope remains the output feed. This allows different generated feeds to choose different extraction, filtering, summarization, and rendering behavior without changing source intake.
+The initial scope remains the output feed. This allows different generated feeds to enable extraction and choose filtering, summarization, and rendering behavior without changing source intake. Extractor selection itself remains host-scoped so one article is fetched consistently and its extraction artifact can be reused across outputs.
 
 Pipeline steps should have:
 
@@ -168,7 +168,7 @@ Pipeline step attempts should record:
 - error
 - started and finished timestamps
 
-Domain tables hold durable current results. Attempt records explain how those results were produced. Extraction artifacts are article-level reusable state; the output-feed step records why processing was requested and how its result was produced.
+Domain tables hold durable current results. Attempt records explain how those results were produced. Extraction artifacts are article-level reusable state; the output-feed step records why processing was requested, while site extraction policy and worker attempts record how extraction was performed.
 
 Bulk processing should create a durable run before attempts are queued. The run owns aggregate progress and completion state; individual attempts remain the deterministic execution history. Manual processing of existing items should skip articles with a successful current artifact unless the operator explicitly requests reprocessing.
 

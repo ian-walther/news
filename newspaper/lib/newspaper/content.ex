@@ -252,6 +252,40 @@ defmodule Newspaper.Content do
     |> get_or_create_site_extraction_policy()
   end
 
+  def list_site_extraction_policies do
+    SiteExtractionPolicy
+    |> order_by([policy], asc: policy.site_host)
+    |> Repo.all()
+  end
+
+  def get_site_extraction_policy!(id), do: Repo.get!(SiteExtractionPolicy, id)
+
+  def change_site_extraction_policy(%SiteExtractionPolicy{} = policy, attrs \\ %{}) do
+    policy
+    |> SiteExtractionPolicy.changeset(normalize_policy_attrs(attrs))
+    |> validate_policy_implementation()
+  end
+
+  def create_site_extraction_policy(attrs) do
+    %SiteExtractionPolicy{}
+    |> change_site_extraction_policy(attrs)
+    |> Repo.insert()
+    |> broadcast_policy_change()
+  end
+
+  def update_site_extraction_policy(%SiteExtractionPolicy{} = policy, attrs) do
+    policy
+    |> change_site_extraction_policy(attrs)
+    |> Repo.update()
+    |> broadcast_policy_change()
+  end
+
+  def delete_site_extraction_policy(%SiteExtractionPolicy{} = policy) do
+    policy
+    |> Repo.delete()
+    |> broadcast_policy_change()
+  end
+
   def get_or_create_site_extraction_policy(nil), do: {:error, :missing_site_host}
 
   def get_or_create_site_extraction_policy(site_host) do
@@ -266,8 +300,11 @@ defmodule Newspaper.Content do
           {:ok, %SiteExtractionPolicy{id: nil}} ->
             {:ok, Repo.get_by!(SiteExtractionPolicy, site_host: site_host)}
 
-          result ->
-            result
+          {:ok, %SiteExtractionPolicy{} = policy} ->
+            broadcast_policy_change({:ok, policy})
+
+          error ->
+            error
         end
 
       %SiteExtractionPolicy{} = policy ->
@@ -430,7 +467,7 @@ defmodule Newspaper.Content do
 
   defp learned_minimum_implementation(policy, implementation) do
     if policy.escalation_enabled and
-         Registry.harder_than?(implementation, policy.minimum_implementation) do
+         Registry.harder_extractor_than?(implementation, policy.minimum_implementation) do
       implementation
     else
       policy.minimum_implementation
@@ -521,4 +558,43 @@ defmodule Newspaper.Content do
     |> String.downcase()
     |> String.trim_leading("www.")
   end
+
+  defp normalize_policy_attrs(attrs) do
+    cond do
+      Map.has_key?(attrs, "site_host") ->
+        Map.update!(attrs, "site_host", &normalize_policy_host/1)
+
+      Map.has_key?(attrs, :site_host) ->
+        Map.update!(attrs, :site_host, &normalize_policy_host/1)
+
+      true ->
+        attrs
+    end
+  end
+
+  defp normalize_policy_host(site_host) do
+    site_host = String.trim(site_host)
+
+    if String.contains?(site_host, "://") do
+      site_host(site_host)
+    else
+      site_host("https://#{site_host}")
+    end
+  end
+
+  defp validate_policy_implementation(changeset) do
+    implementation = Ecto.Changeset.get_field(changeset, :minimum_implementation)
+
+    case Registry.fetch_extractor(implementation) do
+      {:ok, _extractor} -> changeset
+      :error -> Ecto.Changeset.add_error(changeset, :minimum_implementation, "is not available")
+    end
+  end
+
+  defp broadcast_policy_change({:ok, _policy} = result) do
+    Newspaper.Events.broadcast_data_changed(:site_extraction_policies_changed)
+    result
+  end
+
+  defp broadcast_policy_change(result), do: result
 end

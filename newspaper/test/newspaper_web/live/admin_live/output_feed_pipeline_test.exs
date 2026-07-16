@@ -8,7 +8,7 @@ defmodule NewspaperWeb.AdminLive.OutputFeedPipelineTest do
   alias Newspaper.Publishing
   alias Newspaper.Repo
 
-  test "configures an output feed pipeline from the admin UI", %{conn: conn} do
+  test "enables site-policy extraction for an output feed", %{conn: conn} do
     {:ok, feed} =
       Publishing.create_generated_feed(%{
         "title" => "Technology Reading",
@@ -18,47 +18,29 @@ defmodule NewspaperWeb.AdminLive.OutputFeedPipelineTest do
 
     {:ok, view, _html} = live(conn, ~p"/output-feeds/#{feed.id}/pipeline")
 
-    assert has_element?(view, "#new-pipeline-step-form")
+    assert has_element?(view, "#enable-extraction-step")
+    refute has_element?(view, "select[name='pipeline_step[implementation_key]']")
     assert has_element?(view, "#process-existing-items")
 
     view
-    |> form("#new-pipeline-step-form",
-      pipeline_step: %{
-        "implementation_key" => "extraction.simple_html",
-        "timeout_ms" => "30000",
-        "minimum_text_length" => "750"
-      }
-    )
-    |> render_submit()
-
-    [step] = Processing.list_steps(feed)
-    assert step.config["timeout_ms"] == 30_000
-    assert step.config["minimum_text_length"] == 750
-    assert has_element?(view, "#steps-#{step.id}")
-
-    view
-    |> element("#edit-step-#{step.id}")
+    |> element("#enable-extraction-step")
     |> render_click()
 
-    view
-    |> form("#edit-pipeline-step-form-#{step.id}",
-      pipeline_step: %{
-        "enabled" => "false",
-        "timeout_ms" => "45000",
-        "minimum_text_length" => "1000"
-      }
-    )
-    |> render_submit()
+    [step] = Processing.list_steps(feed)
+    assert step.implementation_key == "extraction.site_policy"
+    assert step.config == %{}
+    assert has_element?(view, "#steps-#{step.id}")
 
-    step = Processing.get_step!(step.id)
-    refute step.enabled
-    assert step.config["timeout_ms"] == 45_000
+    assert :error =
+             Processing.create_step(feed, %{
+               "implementation_key" => "extraction.simple_html"
+             })
 
     view
     |> element("#toggle-step-#{step.id}")
     |> render_click()
 
-    assert Processing.get_step!(step.id).enabled
+    refute Processing.get_step!(step.id).enabled
 
     view
     |> element("#delete-step-#{step.id}")
@@ -72,11 +54,7 @@ defmodule NewspaperWeb.AdminLive.OutputFeedPipelineTest do
     feed = output_feed_with_article!()
 
     {:ok, _step} =
-      Processing.create_step(feed, %{
-        "implementation_key" => "extraction.simple_html",
-        "timeout_ms" => 20_000,
-        "minimum_text_length" => 500
-      })
+      Processing.create_extraction_step(feed)
 
     {:ok, view, _html} = live(conn, ~p"/output-feeds/#{feed.id}/pipeline")
 

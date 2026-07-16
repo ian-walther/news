@@ -20,7 +20,7 @@ Every implementation must preserve the shared JSON request/response contract, no
 
 ## Escalation Behavior
 
-The configured extraction step enables processing for an output feed. Site extraction policy determines the cheapest implementation worth attempting for a particular host.
+The configured extraction step enables processing for an output feed but does not select an extractor. Site extraction policy determines the cheapest implementation worth attempting for a particular host and owns escalation, request pacing, timeout, and extraction-quality thresholds.
 
 Escalation-worthy failures include:
 
@@ -66,5 +66,4 @@ Quality decisions should remain deterministic and auditable. Local LLMs can clas
 - The Elixir app can escalate through available implementations during one pipeline attempt.
 - A successful higher implementation can teach site-level minimum implementation policy.
 - Rate limits and transient network failures do not alter extractor capability policy.
-- The operator can inspect and override site policy.
 - Auth expiration and unavailable Chrome sessions are visible and manually retryable.

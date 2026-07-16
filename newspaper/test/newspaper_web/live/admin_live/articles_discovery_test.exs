@@ -159,11 +159,7 @@ defmodule NewspaperWeb.AdminLive.ArticlesDiscoveryTest do
 
     if Keyword.get(opts, :extraction?, false) do
       {:ok, _step} =
-        Processing.create_step(feed, %{
-          "implementation_key" => "extraction.simple_html",
-          "timeout_ms" => 20_000,
-          "minimum_text_length" => 500
-        })
+        Processing.create_extraction_step(feed)
     end
 
     if input_feed do

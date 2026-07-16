@@ -73,6 +73,8 @@ Each step should have a type, implementation key, enabled flag, position, and co
 
 The first configurable scope should be output feeds. Additional scope inheritance should wait until output-feed pipelines are useful.
 
+For extraction, the output-feed step only enables the site-policy coordinator. The article host owns the starting extractor, escalation, pacing, timeout, and extraction-quality thresholds. Output feeds must not select competing extraction methods for the same article.
+
 ## Failure Handling
 
 Failures should be visible and retryable where practical.
@@ -158,7 +160,7 @@ Re-render uses app-owned stored data, such as raw item data, article data, extra
 
 Extract fetches and parses article pages, then stores extracted article content and extraction metadata.
 
-Extraction is a pipeline step type. Simple HTML extraction, headless browser extraction, and headed browser extraction are separate implementations of that type behind a shared contract.
+Extraction is a pipeline step type whose output-scoped coordinator delegates to a host policy. Simple HTML extraction, headless browser extraction, and headed browser extraction are separate extractor strategies behind a shared contract.
 
 The Elixir app owns escalation. It should decide whether to try the next extractor in the chain and should persist site-level minimum extractor policy when a site is known to require a more capable implementation.
 

@@ -13,6 +13,8 @@ defmodule Newspaper.Content.SiteExtractionPolicy do
     field :last_rate_limited_at, :utc_datetime
     field :last_attempted_at, :utc_datetime
     field :escalation_enabled, :boolean, default: true
+    field :timeout_ms, :integer, default: 20_000
+    field :minimum_text_length, :integer, default: 500
     field :notes, :string
 
     has_many :article_extraction_attempts, Newspaper.Content.ArticleExtractionAttempt
@@ -33,11 +35,27 @@ defmodule Newspaper.Content.SiteExtractionPolicy do
       :last_rate_limited_at,
       :last_attempted_at,
       :escalation_enabled,
+      :timeout_ms,
+      :minimum_text_length,
       :notes
     ])
-    |> validate_required([:site_host, :minimum_implementation, :rate_limit_delay_ms])
+    |> validate_required([
+      :site_host,
+      :minimum_implementation,
+      :rate_limit_delay_ms,
+      :timeout_ms,
+      :minimum_text_length
+    ])
     |> validate_number(:rate_limit_delay_ms, greater_than_or_equal_to: 0)
     |> validate_number(:consecutive_rate_limits, greater_than_or_equal_to: 0)
+    |> validate_number(:timeout_ms,
+      greater_than_or_equal_to: 1_000,
+      less_than_or_equal_to: 120_000
+    )
+    |> validate_number(:minimum_text_length,
+      greater_than_or_equal_to: 100,
+      less_than_or_equal_to: 100_000
+    )
     |> unique_constraint(:site_host)
   end
 end

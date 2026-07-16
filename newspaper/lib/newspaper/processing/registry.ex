@@ -1,11 +1,23 @@
 defmodule Newspaper.Processing.Registry do
+  @site_policy_step_key "extraction.site_policy"
+
   @extraction_order [
     "extraction.simple_html",
     "extraction.headless_browser",
     "extraction.headed_browser"
   ]
 
-  @implementations %{
+  @step_implementations %{
+    @site_policy_step_key => %{
+      key: @site_policy_step_key,
+      step_type: "extraction",
+      label: "Website-directed extraction",
+      default_config: %{},
+      config_schema: []
+    }
+  }
+
+  @extractors %{
     "extraction.simple_html" => %{
       key: "extraction.simple_html",
       step_type: "extraction",
@@ -32,30 +44,31 @@ defmodule Newspaper.Processing.Registry do
     }
   }
 
-  def all do
-    @implementations
+  def fetch_step(key), do: Map.fetch(@step_implementations, key)
+
+  def site_policy_step_key, do: @site_policy_step_key
+
+  def extractors do
+    @extractors
     |> Map.values()
-    |> Enum.sort_by(& &1.label)
+    |> Enum.sort_by(&extraction_index(&1.key))
   end
 
-  def fetch(key), do: Map.fetch(@implementations, key)
-  def fetch!(key), do: Map.fetch!(@implementations, key)
-  def keys, do: Map.keys(@implementations)
+  def fetch_extractor(key), do: Map.fetch(@extractors, key)
+  def fetch_extractor!(key), do: Map.fetch!(@extractors, key)
 
-  def extraction_candidates(configured_key, minimum_key) do
-    start_index = max(extraction_index(configured_key), extraction_index(minimum_key))
-
+  def extraction_candidates(minimum_key) do
     @extraction_order
-    |> Enum.drop(start_index)
-    |> Enum.filter(&Map.has_key?(@implementations, &1))
+    |> Enum.drop(extraction_index(minimum_key))
+    |> Enum.filter(&Map.has_key?(@extractors, &1))
   end
 
-  def harder_than?(candidate, current) do
+  def harder_extractor_than?(candidate, current) do
     extraction_index(candidate) > extraction_index(current)
   end
 
-  def normalize_config(key, attrs) do
-    with {:ok, implementation} <- fetch(key) do
+  def normalize_step_config(key, attrs) do
+    with {:ok, implementation} <- fetch_step(key) do
       Enum.reduce_while(
         implementation.config_schema,
         {:ok, implementation.default_config},

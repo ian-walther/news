@@ -7,7 +7,6 @@
 - Add the isolated headless browser implementation behind the shared JSON contract.
 - Add the persistent headed browser implementation through host Chrome/CDP.
 - Exercise app-owned escalation and site-level minimum implementation learning with real failures.
-- Add operator controls for reviewing and overriding learned site extraction policy.
 
 ## Semantic Filtering And Summarization
 

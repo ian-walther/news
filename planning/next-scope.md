@@ -10,7 +10,6 @@ Prove extraction quality across the real source corpus, expand extraction covera
 - Headless browser extraction behind the shared extractor contract.
 - Headed browser extraction through the persistent host Chrome session.
 - App-owned escalation across extractor implementations.
-- Site extraction policy visibility and operator overrides.
 - The first local-LLM summarization implementation using durable extracted text.
 
 ## Designed-In But Later
