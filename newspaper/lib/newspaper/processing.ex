@@ -2,7 +2,9 @@ defmodule Newspaper.Processing do
   import Ecto.Query
 
   alias Newspaper.Content
-  alias Newspaper.Content.Article
+  alias Newspaper.Content.{Article, ArticleExtraction}
+  alias Newspaper.Operations
+  alias Newspaper.Operations.Run
   alias Newspaper.Processing.{PipelineStep, PipelineStepAttempt, Registry}
   alias Newspaper.Publishing.{GeneratedFeed, GeneratedFeedItem}
   alias Newspaper.Repo
@@ -32,9 +34,10 @@ defmodule Newspaper.Processing do
   def enqueue_item(%GeneratedFeedItem{} = item, opts \\ []) do
     item = Repo.preload(item, [:generated_feed, article: :extraction])
     force? = Keyword.get(opts, :force, false)
+    ignore_process_toggle? = Keyword.get(opts, :ignore_process_toggle, false)
 
     cond do
-      not item.generated_feed.process_items and not force? ->
+      not item.generated_feed.process_items and not force? and not ignore_process_toggle? ->
         {:ok, []}
 
       item.article.extraction && not force? ->
@@ -44,7 +47,7 @@ defmodule Newspaper.Processing do
         attempts =
           item.generated_feed_id
           |> list_enabled_steps("extraction")
-          |> Enum.map(&enqueue(&1, item.article, item))
+          |> Enum.map(&enqueue(&1, item.article, item, opts))
 
         case Enum.find(attempts, &match?({:error, _reason}, &1)) do
           nil -> {:ok, Enum.map(attempts, fn {:ok, attempt} -> attempt end)}
@@ -64,6 +67,33 @@ defmodule Newspaper.Processing do
         {:error, reason} -> {:halt, {:error, reason}}
       end
     end)
+  end
+
+  def start_feed_batch(feed_id, trigger \\ "manual") when is_integer(feed_id) do
+    feed = Newspaper.Publishing.get_generated_feed!(feed_id)
+    steps = list_enabled_steps(feed.id, "extraction")
+
+    if steps == [] do
+      {:error, :no_enabled_extraction_step}
+    else
+      items = Newspaper.Publishing.list_items_for_feed(feed)
+
+      with {:ok, batch} <-
+             Operations.start_run(
+               "pipeline_batch",
+               trigger,
+               %{
+                 "batch_type" => "process_existing",
+                 "generated_feed_id" => feed.id,
+                 "generated_feed_title" => feed.title
+               },
+               %{"pipeline_step_ids" => Enum.map(steps, & &1.id)}
+             ),
+           :ok <- enqueue_batch_items(items, batch.id),
+           {:ok, batch} <- refresh_batch_run(batch.id, length(items)) do
+        {:ok, batch}
+      end
+    end
   end
 
   def enqueue_article(article_id, opts \\ []) when is_integer(article_id) do
@@ -150,6 +180,44 @@ defmodule Newspaper.Processing do
     |> Repo.all()
   end
 
+  def list_attempts_for_batch(batch_run_id) when is_integer(batch_run_id) do
+    PipelineStepAttempt
+    |> where([attempt], attempt.batch_run_id == ^batch_run_id)
+    |> order_by([attempt], asc: attempt.id)
+    |> preload([:pipeline_step, :article, generated_feed_item: :generated_feed])
+    |> Repo.all()
+  end
+
+  def list_feed_batches(feed_id, limit \\ 5) when is_integer(feed_id) do
+    feed_id = Integer.to_string(feed_id)
+
+    Run
+    |> where(
+      [run],
+      run.run_type == "pipeline_batch" and
+        fragment("jsonb_extract_path_text(?, 'generated_feed_id') = ?", run.related, ^feed_id)
+    )
+    |> order_by([run], desc: run.started_at, desc: run.id)
+    |> limit(^limit)
+    |> Repo.all()
+  end
+
+  def feed_processing_counts(feed_id) when is_integer(feed_id) do
+    counts =
+      Repo.one(
+        from item in GeneratedFeedItem,
+          left_join: extraction in ArticleExtraction,
+          on: extraction.article_id == item.article_id,
+          where: item.generated_feed_id == ^feed_id,
+          select: %{
+            items: count(item.id),
+            extracted: count(extraction.id)
+          }
+      )
+
+    Map.put(counts, :unprocessed, counts.items - counts.extracted)
+  end
+
   def list_queued_attempts do
     PipelineStepAttempt
     |> where([attempt], attempt.status == "queued")
@@ -170,6 +238,7 @@ defmodule Newspaper.Processing do
         ]
       )
 
+    refresh_active_batch_runs()
     count
   end
 
@@ -184,26 +253,35 @@ defmodule Newspaper.Processing do
     enqueue(attempt.pipeline_step, attempt.article, attempt.generated_feed_item)
   end
 
-  def enqueue(%PipelineStep{} = step, %Article{} = article, %GeneratedFeedItem{} = item) do
+  def enqueue(
+        %PipelineStep{} = step,
+        %Article{} = article,
+        %GeneratedFeedItem{} = item,
+        opts \\ []
+      ) do
     case active_attempt(step.step_type, article.id) do
       %PipelineStepAttempt{} = attempt ->
         {:ok, attempt}
 
       nil ->
-        %PipelineStepAttempt{}
-        |> PipelineStepAttempt.changeset(%{
-          pipeline_step_id: step.id,
-          article_id: article.id,
-          generated_feed_item_id: item.id,
-          implementation_key: step.implementation_key,
-          step_type: step.step_type,
-          status: "queued",
-          input_snapshot: %{
-            "article_id" => article.id,
-            "generated_feed_item_id" => item.id,
-            "config" => step.config
-          }
-        })
+        changeset =
+          %PipelineStepAttempt{}
+          |> PipelineStepAttempt.changeset(%{
+            pipeline_step_id: step.id,
+            article_id: article.id,
+            generated_feed_item_id: item.id,
+            implementation_key: step.implementation_key,
+            step_type: step.step_type,
+            status: "queued",
+            input_snapshot: %{
+              "article_id" => article.id,
+              "generated_feed_item_id" => item.id,
+              "config" => step.config
+            }
+          })
+          |> put_batch_run(Keyword.get(opts, :batch_run_id))
+
+        changeset
         |> Repo.insert()
         |> case do
           {:ok, attempt} ->
@@ -223,13 +301,16 @@ defmodule Newspaper.Processing do
   end
 
   def mark_attempt_running(%PipelineStepAttempt{} = attempt) do
-    attempt
-    |> PipelineStepAttempt.changeset(%{
-      status: "running",
-      started_at: DateTime.utc_now(:second)
-    })
-    |> Repo.update()
-    |> broadcast_on_ok()
+    result =
+      attempt
+      |> PipelineStepAttempt.changeset(%{
+        status: "running",
+        started_at: DateTime.utc_now(:second)
+      })
+      |> Repo.update()
+      |> broadcast_on_ok()
+
+    refresh_attempt_batch(result)
   end
 
   def finish_attempt(%PipelineStepAttempt{} = attempt, status, attrs \\ %{})
@@ -239,13 +320,104 @@ defmodule Newspaper.Processing do
       |> Map.put(:status, status)
       |> Map.put(:finished_at, DateTime.utc_now(:second))
 
-    attempt
-    |> PipelineStepAttempt.changeset(attrs)
-    |> Repo.update()
-    |> broadcast_on_ok()
+    result =
+      attempt
+      |> PipelineStepAttempt.changeset(attrs)
+      |> Repo.update()
+      |> broadcast_on_ok()
+
+    refresh_attempt_batch(result)
+  end
+
+  def refresh_batch_run(batch_run_id, items_considered \\ nil)
+
+  def refresh_batch_run(nil, _items_considered), do: {:ok, nil}
+
+  def refresh_batch_run(batch_run_id, items_considered) when is_integer(batch_run_id) do
+    batch = Operations.get_run!(batch_run_id)
+
+    status_counts =
+      PipelineStepAttempt
+      |> where([attempt], attempt.batch_run_id == ^batch_run_id)
+      |> group_by([attempt], attempt.status)
+      |> select([attempt], {attempt.status, count(attempt.id)})
+      |> Repo.all()
+      |> Map.new()
+
+    counts = %{
+      "queued" => Map.get(status_counts, "queued", 0),
+      "running" => Map.get(status_counts, "running", 0),
+      "succeeded" => Map.get(status_counts, "succeeded", 0),
+      "failed" => Map.get(status_counts, "failed", 0)
+    }
+
+    total = Enum.sum(Map.values(counts))
+    items_considered = items_considered || batch.summary_counts["items_considered"] || total
+
+    summary =
+      counts
+      |> Map.put("total", total)
+      |> Map.put("items_considered", items_considered)
+      |> Map.put("skipped", max(items_considered - total, 0))
+
+    active = counts["queued"] + counts["running"]
+
+    cond do
+      active > 0 ->
+        Operations.update_run(batch, %{
+          status: "running",
+          finished_at: nil,
+          summary_counts: summary
+        })
+
+      is_nil(batch.finished_at) ->
+        status = if counts["failed"] > 0, do: "failed", else: "succeeded"
+        Operations.finish_run(batch, status, %{summary_counts: summary})
+
+      true ->
+        Operations.update_run(batch, %{summary_counts: summary})
+    end
   end
 
   def change_step(%PipelineStep{} = step, attrs \\ %{}), do: PipelineStep.changeset(step, attrs)
+
+  defp enqueue_batch_items(items, batch_run_id) do
+    Enum.reduce_while(items, :ok, fn item, :ok ->
+      case enqueue_item(item,
+             ignore_process_toggle: true,
+             force: false,
+             batch_run_id: batch_run_id
+           ) do
+        {:ok, _attempts} -> {:cont, :ok}
+        {:error, reason} -> {:halt, {:error, reason}}
+      end
+    end)
+  end
+
+  defp put_batch_run(changeset, nil), do: changeset
+
+  defp put_batch_run(changeset, batch_run_id) do
+    Ecto.Changeset.put_change(changeset, :batch_run_id, batch_run_id)
+  end
+
+  defp refresh_attempt_batch({:ok, %PipelineStepAttempt{} = attempt} = result) do
+    _ = refresh_batch_run(attempt.batch_run_id)
+    result
+  end
+
+  defp refresh_attempt_batch(result), do: result
+
+  defp refresh_active_batch_runs do
+    PipelineStepAttempt
+    |> where(
+      [attempt],
+      not is_nil(attempt.batch_run_id) and attempt.status in ["queued", "running"]
+    )
+    |> select([attempt], attempt.batch_run_id)
+    |> distinct(true)
+    |> Repo.all()
+    |> Enum.each(&refresh_batch_run/1)
+  end
 
   defp active_attempt(step_type, article_id) do
     Repo.one(

@@ -20,6 +20,7 @@ defmodule Newspaper.Processing.PipelineStepAttempt do
     belongs_to :pipeline_step, Newspaper.Processing.PipelineStep
     belongs_to :article, Newspaper.Content.Article
     belongs_to :generated_feed_item, Newspaper.Publishing.GeneratedFeedItem
+    belongs_to :batch_run, Newspaper.Operations.Run
     has_many :extraction_attempts, Newspaper.Content.ArticleExtractionAttempt
     has_one :article_extraction, Newspaper.Content.ArticleExtraction
 

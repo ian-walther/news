@@ -152,7 +152,7 @@ Durable article entries selected from the article pool for each generated output
 
 ### runs
 
-Fetch, publish, and later extraction/classification runs.
+Durable execution records for fetch, publish, extraction, classification, and bulk pipeline work. A bulk pipeline run is the parent operator-visible batch for its individual step attempts.
 
 - run type
 - trigger, such as manual/scheduled/system
@@ -207,6 +207,7 @@ Execution history for pipeline steps.
 - pipeline step ID
 - article ID when applicable
 - generated feed item ID when applicable
+- parent batch run ID when the attempt belongs to a bulk operation
 - status
 - input snapshot
 - output snapshot
@@ -214,7 +215,7 @@ Execution history for pipeline steps.
 - started timestamp
 - finished timestamp
 
-Attempts are audit/debug records. Durable current outputs should be stored in domain tables.
+Attempts are audit/debug records. Bulk operations should associate attempts with a durable parent run so progress and completion remain reconstructable. Durable current outputs should be stored in domain tables.
 
 ### article_extractions
 

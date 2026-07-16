@@ -27,6 +27,8 @@ defmodule Newspaper.Operations do
     |> Repo.all()
   end
 
+  def get_run!(id), do: Repo.get!(Run, id)
+
   def start_run(run_type, trigger, related \\ %{}, debug_metadata \\ %{}) do
     %Run{}
     |> Run.changeset(%{
@@ -47,6 +49,13 @@ defmodule Newspaper.Operations do
       |> Map.put(:status, status)
       |> Map.put(:finished_at, DateTime.utc_now(:second))
 
+    run
+    |> Run.changeset(attrs)
+    |> Repo.update()
+    |> broadcast_on_ok(:operations_changed)
+  end
+
+  def update_run(%Run{} = run, attrs) do
     run
     |> Run.changeset(attrs)
     |> Repo.update()

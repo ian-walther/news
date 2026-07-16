@@ -161,6 +161,7 @@ Pipeline steps should have:
 Pipeline step attempts should record:
 
 - article and generated feed item references when applicable
+- parent run reference for bulk execution
 - input snapshot
 - output snapshot
 - status
@@ -168,6 +169,8 @@ Pipeline step attempts should record:
 - started and finished timestamps
 
 Domain tables hold durable current results. Attempt records explain how those results were produced. Extraction artifacts are article-level reusable state; the output-feed step records why processing was requested and how its result was produced.
+
+Bulk processing should create a durable run before attempts are queued. The run owns aggregate progress and completion state; individual attempts remain the deterministic execution history. Manual processing of existing items should skip articles with a successful current artifact unless the operator explicitly requests reprocessing.
 
 ## Extraction, Filtering, And Summarization
 

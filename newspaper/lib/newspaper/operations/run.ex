@@ -15,6 +15,9 @@ defmodule Newspaper.Operations.Run do
 
     has_many :failures, Newspaper.Operations.Failure
 
+    has_many :pipeline_step_attempts, Newspaper.Processing.PipelineStepAttempt,
+      foreign_key: :batch_run_id
+
     timestamps(type: :utc_datetime)
   end
 

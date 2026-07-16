@@ -12,7 +12,6 @@ Prove extraction quality across the real source corpus, expand extraction covera
 - App-owned escalation across extractor implementations.
 - Site extraction policy visibility and operator overrides.
 - The first local-LLM summarization implementation using durable extracted text.
-- Pipeline attempt and extraction-history views where real usage shows they are useful.
 
 ## Designed-In But Later
 
