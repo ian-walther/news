@@ -11,6 +11,11 @@ config :newspaper,
   ecto_repos: [Newspaper.Repo],
   generators: [timestamp_type: :utc_datetime]
 
+config :newspaper, :extractors,
+  simple_html_command: Path.expand("../../workers/extraction-simple-html/bin/extract", __DIR__)
+
+config :newspaper, :processing_dispatcher_enabled, true
+
 # Configure the endpoint
 config :newspaper, NewspaperWeb.Endpoint,
   url: [host: "localhost"],

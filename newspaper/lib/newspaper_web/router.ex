@@ -20,7 +20,9 @@ defmodule NewspaperWeb.Router do
     live "/", AdminLive.Dashboard, :index
     live "/intake", AdminLive.Intake, :index
     live "/output-feeds", AdminLive.OutputFeeds, :index
+    live "/output-feeds/:id/pipeline", AdminLive.OutputFeedPipeline, :index
     live "/articles", AdminLive.Articles, :index
+    live "/articles/:guid", ArticleLive.Show, :show
     live "/runs", AdminLive.Runs, :index
     live "/settings", AdminLive.Settings, :index
 

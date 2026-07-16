@@ -22,6 +22,7 @@ defmodule Newspaper.Publishing.GeneratedFeed do
       on_replace: :delete
 
     has_many :items, Newspaper.Publishing.GeneratedFeedItem
+    has_many :pipeline_steps, Newspaper.Processing.PipelineStep
 
     timestamps(type: :utc_datetime)
   end

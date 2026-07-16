@@ -2,33 +2,25 @@
 
 ## Goal
 
-The current product focus is a configurable processing pipeline that supports content extraction as the first real processing step.
-
-The feed-only path is the foundation. The app becomes compelling when generated feeds can use extracted article content and local hosted article pages.
+Prove extraction quality across the real source corpus, expand extraction coverage where direct HTML is insufficient, and introduce the first useful local-LLM processing step.
 
 ## In Scope
 
-- Pipeline step model.
-- Pipeline step attempt/audit model.
-- Code-owned implementation registry.
-- Output-feed pipeline configuration UI.
-- Extraction step type.
-- Three extraction implementation slots with a shared contract: simple HTML, headless browser, and headed browser.
-- App integration for the simple HTML extraction executable.
-- App-owned extraction escalation and site-level minimum extractor policy.
-- Durable extraction output state.
-- Extraction failure visibility.
-- Hosted article pages using stable article identifiers.
-- Explicit re-rendering of generated feed item snapshots after extraction changes usable output state.
+- Real-source extraction quality review and failure classification.
+- Headless browser extraction behind the shared extractor contract.
+- Headed browser extraction through the persistent host Chrome session.
+- App-owned escalation across extractor implementations.
+- Site extraction policy visibility and operator overrides.
+- The first local-LLM summarization implementation using durable extracted text.
+- Pipeline attempt and extraction-history views where real usage shows they are useful.
 
 ## Designed-In But Later
 
 - LLM filtering step types.
-- LLM summarization step types.
 - Review/correction workflows for model output.
 - Reusable prompt/policy management.
 - Global/intake/input-feed pipeline inheritance.
-- Automatic retry/backoff.
+- Automatic retries beyond explicit operator retry and per-host pacing.
 - Full rebuild/danger-zone operations.
 
 ## Non-Goals
@@ -36,6 +28,6 @@ The feed-only path is the foundation. The app becomes compelling when generated 
 - Do not replace the feed-only output path.
 - Do not process articles live during RSS requests.
 - Do not allow arbitrary database-defined code execution.
-- Do not build a full workflow engine before extraction works.
+- Do not build a general workflow engine.
 - Do not require every output feed to use extraction.
-- Do not make summarization or filtering part of the initial extraction work.
+- Do not wait for every source to support browser extraction before trying summarization on successfully extracted articles.

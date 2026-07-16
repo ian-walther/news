@@ -145,9 +145,9 @@ Extraction, classification, summarization, and semantic filtering should be adde
 
 ## Configurable Processing Pipeline
 
-Output feeds should have configurable processing pipelines from the start of extraction work.
+Future processing capabilities should extend the output-feed pipeline rather than adding one-off execution paths.
 
-The first configurable scope should be the output feed. This allows different generated feeds to choose different extraction, filtering, summarization, and rendering behavior without changing source intake.
+The initial scope remains the output feed. This allows different generated feeds to choose different extraction, filtering, summarization, and rendering behavior without changing source intake.
 
 Pipeline steps should have:
 
@@ -167,7 +167,7 @@ Pipeline step attempts should record:
 - error
 - started and finished timestamps
 
-Domain tables should hold durable current results. Attempt records should explain how those results were produced.
+Domain tables hold durable current results. Attempt records explain how those results were produced. Extraction artifacts are article-level reusable state; the output-feed step records why processing was requested and how its result was produced.
 
 ## Extraction, Filtering, And Summarization
 

@@ -32,6 +32,7 @@ defmodule Newspaper.Publishing.GeneratedFeedItem do
     belongs_to :generated_feed, Newspaper.Publishing.GeneratedFeed
     belongs_to :article, Newspaper.Content.Article
     belongs_to :representative_raw_item, Newspaper.Intake.RawItem
+    has_many :pipeline_step_attempts, Newspaper.Processing.PipelineStepAttempt
 
     timestamps(type: :utc_datetime)
   end

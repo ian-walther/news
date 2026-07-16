@@ -218,20 +218,21 @@ Attempts are audit/debug records. Durable current outputs should be stored in do
 
 ### article_extractions
 
-Durable extraction results.
+Durable current extraction artifact for an article. Extracted content is article-level reusable state even when an output-feed pipeline step caused the work.
 
 - article ID
 - implementation key
-- status
 - final URL
 - extracted title
 - extracted byline
 - extracted publication timestamp
-- extracted content
+- sanitized extracted HTML
+- normalized extracted text
+- excerpt and site name
 - quality/debug metadata
 - created/updated timestamps
 
-The first implementation can store extraction state directly on articles if that keeps the change small, but the model should be ready to move extraction output into a first-class table if multiple extraction attempts or revisions become important.
+Attempt snapshots preserve execution history. Future revision history can become first-class if correction or comparison workflows need more than the current artifact plus attempts.
 
 ### site_extraction_policies
 

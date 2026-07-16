@@ -1,9 +1,10 @@
 defmodule Newspaper.Publishing do
   import Ecto.Query
 
-  alias Newspaper.Content.Article
+  alias Newspaper.Content.{Article, ArticleExtraction}
   alias Newspaper.Intake.{InputFeed, IntakeGroup, RawItem}
   alias Newspaper.Publishing.{GeneratedFeed, GeneratedFeedItem}
+  alias Newspaper.Processing
   alias Newspaper.Repo
 
   def list_generated_feeds do
@@ -94,7 +95,14 @@ defmodule Newspaper.Publishing do
       desc_nulls_last: i.published_at,
       desc: i.inserted_at
     )
-    |> preload([:generated_feed, article: :representative_raw_item])
+    |> preload([:generated_feed, article: [:representative_raw_item, :extraction]])
+    |> Repo.all()
+  end
+
+  def list_items_for_article(article_id) when is_integer(article_id) do
+    GeneratedFeedItem
+    |> where([i], i.article_id == ^article_id)
+    |> preload([:generated_feed, article: [:representative_raw_item, :extraction]])
     |> Repo.all()
   end
 
@@ -128,7 +136,7 @@ defmodule Newspaper.Publishing do
   end
 
   def rerender_item(%GeneratedFeedItem{} = item) do
-    item = Repo.preload(item, [:generated_feed, article: :representative_raw_item])
+    item = Repo.preload(item, [:generated_feed, article: [:representative_raw_item, :extraction]])
 
     raw_item =
       item.article.representative_raw_item || Repo.get(RawItem, item.representative_raw_item_id)
@@ -142,6 +150,8 @@ defmodule Newspaper.Publishing do
   def feed_url(%GeneratedFeed{guid: guid}), do: "/feeds/#{guid}.xml"
 
   defp create_item!(feed, article) do
+    article = Repo.preload(article, [:representative_raw_item, :extraction])
+
     raw_item =
       article.representative_raw_item || Repo.get!(RawItem, article.representative_raw_item_id)
 
@@ -157,38 +167,97 @@ defmodule Newspaper.Publishing do
       }
       |> Map.merge(render_attrs(feed, article, raw_item, now))
 
-    %GeneratedFeedItem{}
-    |> GeneratedFeedItem.changeset(attrs)
-    |> Repo.insert()
-    |> broadcast_on_ok(:publishing_changed)
+    result =
+      %GeneratedFeedItem{}
+      |> GeneratedFeedItem.changeset(attrs)
+      |> Repo.insert()
+      |> broadcast_on_ok(:publishing_changed)
+
+    with {:ok, item} <- result,
+         {:ok, _attempts} <- Processing.enqueue_item(item) do
+      {:ok, item}
+    end
   end
 
-  defp render_attrs(_feed, _article, raw_item, now \\ DateTime.utc_now(:second)) do
+  defp render_attrs(feed, article, raw_item, now \\ DateTime.utc_now(:second)) do
+    body_mode = body_mode(feed, article)
+
     %{
       representative_raw_item_id: raw_item && raw_item.id,
       published_at:
         raw_item && (raw_item.published_at || raw_item.feed_updated_at || raw_item.discovered_at),
       item_url: raw_item && raw_item.url,
-      body_mode: "original_feed_body",
-      selection_metadata: %{"mode" => "v1_pass_through"},
+      body_mode: body_mode,
+      selection_metadata: %{"mode" => body_mode},
       rendered_title: raw_item && raw_item.title,
-      rendered_link_url: raw_item && raw_item.url,
+      rendered_link_url: rendered_link_url(feed, article, raw_item),
       rendered_author: raw_item && raw_item.author,
       rendered_published_at: raw_item && (raw_item.published_at || raw_item.discovered_at),
       rendered_updated_at: raw_item && raw_item.feed_updated_at,
       rendered_summary: raw_item && raw_item.summary,
-      rendered_body: raw_item && raw_item.body,
+      rendered_body: rendered_body(feed, article, raw_item),
       rendered_source_name: raw_item && raw_item.source_name,
       rendered_source_url: raw_item && raw_item.source_url,
       rendered_categories: (raw_item && raw_item.categories) || [],
       rendered_media: (raw_item && raw_item.media) || %{},
       rendered_at: now,
-      render_source_metadata: %{"representative_raw_item_id" => raw_item && raw_item.id},
+      render_source_metadata: %{
+        "representative_raw_item_id" => raw_item && raw_item.id,
+        "article_id" => article && article.id,
+        "extraction_status" => article && article.extraction_status
+      },
       render_status: "rendered",
       render_error: nil,
       last_rendered_at: now
     }
   end
+
+  defp body_mode(%GeneratedFeed{process_items: true, use_extracted_content_body: true}, article) do
+    if extracted_html(article), do: "extracted_content", else: "original_feed_body"
+  end
+
+  defp body_mode(_feed, _article), do: "original_feed_body"
+
+  defp rendered_body(
+         %GeneratedFeed{process_items: true, use_extracted_content_body: true},
+         article,
+         raw_item
+       ) do
+    extracted_html(article) || (raw_item && raw_item.body)
+  end
+
+  defp rendered_body(_feed, _article, raw_item), do: raw_item && raw_item.body
+
+  defp rendered_link_url(
+         %GeneratedFeed{process_items: true, link_to_hosted_article: true},
+         %Article{guid: guid} = article,
+         raw_item
+       ) do
+    if extracted_html(article) do
+      NewspaperWeb.Endpoint.url()
+      |> URI.merge("/articles/#{guid}")
+      |> URI.to_string()
+    else
+      raw_item && raw_item.url
+    end
+  end
+
+  defp rendered_link_url(_feed, _article, raw_item), do: raw_item && raw_item.url
+
+  defp extracted_html(%Article{extraction: %ArticleExtraction{content_html: content_html}})
+       when is_binary(content_html) and content_html != "" do
+    content_html
+  end
+
+  defp extracted_html(%Article{
+         extraction_status: "succeeded",
+         extracted_content: extracted_content
+       })
+       when is_binary(extracted_content) and extracted_content != "" do
+    extracted_content
+  end
+
+  defp extracted_html(_article), do: nil
 
   defp eligible_generated_feed_ids(intake_group_id, source_ids) do
     intake_group_feed_ids =

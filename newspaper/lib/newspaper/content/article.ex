@@ -19,6 +19,9 @@ defmodule Newspaper.Content.Article do
     belongs_to :intake_group, Newspaper.Intake.IntakeGroup
     belongs_to :representative_raw_item, Newspaper.Intake.RawItem
     has_many :article_sources, Newspaper.Content.ArticleSource
+    has_many :article_extraction_attempts, Newspaper.Content.ArticleExtractionAttempt
+    has_one :extraction, Newspaper.Content.ArticleExtraction
+    has_many :pipeline_step_attempts, Newspaper.Processing.PipelineStepAttempt
 
     timestamps(type: :utc_datetime)
   end

@@ -22,7 +22,7 @@ Article identifiers should be usable for:
 
 - stable internal article identity
 - generated RSS item identity
-- local hosted article URLs after extraction exists
+- local hosted article URLs
 
 Output feed identifiers should be usable for:
 
@@ -44,7 +44,7 @@ Example generated feed URL shape:
 
 Generated output feed URLs should use the stable feed GUID as the canonical URL. They do not need to be pretty because FreshRSS is the main consumer. Human-friendly names belong in the admin UI and RSS feed title metadata, not in the stable URL identity.
 
-The exact identifier format can be decided during implementation, but it should not depend on mutable title text, output feed membership, slug text, source URLs, or rendered body content.
+Identifier formats must not depend on mutable title text, output feed membership, slug text, source URLs, or rendered body content.
 
 Avoid slugs app-wide until there is a compelling reason to introduce them. Stable generated identifiers should carry durable identity and URL behavior.
 
@@ -85,7 +85,7 @@ The item limit should be shown as a prepopulated field when configuring an outpu
 
 RSS output should return the most recent generated feed item snapshots for that output feed, ordered by rendered/published timestamp descending with discovered time as a fallback.
 
-Later extraction behavior:
+Processed extraction behavior:
 
 - Each output feed should have a boolean setting controlling whether item links point to the original article or the hosted extracted article page.
 
@@ -102,7 +102,7 @@ Unprocessed body behavior:
 - Feed item bodies pass through the selected original upstream feed body/content exactly.
 - No source attribution, dedupe explanation, summaries, or other app-added content should be injected into the RSS item body in unprocessed mode.
 
-Later extraction behavior:
+Processed extraction behavior:
 
 - Each output feed should have a process/extract-style boolean controlling whether item output may be transformed using extracted content.
 

@@ -16,13 +16,19 @@ defmodule Newspaper.Pipeline.Scheduler do
 
   @impl true
   def handle_cast(:fetch_now, state) do
-    Task.start(fn -> Pipeline.fetch_all("manual") end)
+    Task.Supervisor.start_child(Newspaper.Processing.TaskSupervisor, fn ->
+      Pipeline.fetch_all("manual")
+    end)
+
     {:noreply, state}
   end
 
   @impl true
   def handle_info(:scheduled_fetch, state) do
-    Task.start(fn -> Pipeline.fetch_all("scheduled") end)
+    Task.Supervisor.start_child(Newspaper.Processing.TaskSupervisor, fn ->
+      Pipeline.fetch_all("scheduled")
+    end)
+
     schedule_next_fetch()
     {:noreply, state}
   end

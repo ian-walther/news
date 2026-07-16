@@ -161,7 +161,7 @@ defmodule NewspaperWeb.AdminLive.Intake do
   def handle_event("fetch_feed", %{"id" => id}, socket) do
     id = to_id(id)
 
-    Task.start(fn ->
+    Task.Supervisor.start_child(Newspaper.Processing.TaskSupervisor, fn ->
       id
       |> Intake.get_input_feed!()
       |> Pipeline.fetch_input_feed("manual")

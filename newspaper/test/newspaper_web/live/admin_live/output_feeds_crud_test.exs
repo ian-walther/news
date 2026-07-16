@@ -78,6 +78,7 @@ defmodule NewspaperWeb.AdminLive.OutputFeedsCrudTest do
     |> render_click()
 
     refute Repo.get(GeneratedFeed, output_feed.id)
+    _ = :sys.get_state(view.pid)
   end
 
   test "exposes manual backfill and re-render controls", %{conn: conn} do
@@ -103,5 +104,6 @@ defmodule NewspaperWeb.AdminLive.OutputFeedsCrudTest do
 
     assert render(view) =~ "Backfill"
     assert render(view) =~ "Re-render"
+    _ = :sys.get_state(view.pid)
   end
 end

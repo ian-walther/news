@@ -88,5 +88,6 @@ defmodule NewspaperWeb.AdminLive.IntakeCrudTest do
     |> render_click()
 
     refute Repo.get(IntakeGroup, group.id)
+    _ = :sys.get_state(view.pid)
   end
 end

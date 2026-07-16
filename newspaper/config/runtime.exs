@@ -23,6 +23,13 @@ end
 config :newspaper, NewspaperWeb.Endpoint,
   http: [port: String.to_integer(System.get_env("PORT", "4000"))]
 
+if config_env() == :prod || System.get_env("NEWSPAPER_SIMPLE_HTML_EXTRACTOR") do
+  config :newspaper, :extractors,
+    simple_html_command:
+      System.get_env("NEWSPAPER_SIMPLE_HTML_EXTRACTOR") ||
+        "/app/workers/extraction-simple-html/bin/extract"
+end
+
 if config_env() == :prod do
   database_url =
     System.get_env("DATABASE_URL") ||

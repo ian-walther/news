@@ -15,8 +15,6 @@
 
 - Are there source-specific metadata fields that should be preserved specially during raw capture?
 - Should source attribution be added to generated feed bodies?
-- What exact local hosted article URL shape should use the stable article identifier?
-- Does hosted article routing need human-friendly URLs, or are GUID-only article URLs still sufficient?
 
 ## Retention
 
@@ -64,14 +62,12 @@
 - Should generated feeds include full extracted article text, summaries, excerpts, or a rendering pipeline setting beyond the initial extracted-body boolean?
 - How should paid-site auth expiration be detected and surfaced?
 - How should the Dockerized app reach host Chrome/CDP securely when CDP is bound narrowly?
-- Is JSON over stdin/stdout the right worker contract, or should extraction use another boundary?
 - What shared worker contract should extraction set for later classifier, summarizer, and PDF renderer workers?
 - What failure kinds and thresholds should teach a site-level minimum extractor?
 
 ## Pipeline Configuration
 
-- Should pipeline step ordering support move up/down controls immediately?
-- Should the initial implementation support only output-feed scoped steps, or also global defaults?
+- When is there enough real demand to add global, intake-group, or input-feed pipeline scope?
 - How much implementation config should be editable as typed fields versus raw JSON?
 - Should pipeline attempts be retained forever until retention policies exist?
 

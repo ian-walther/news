@@ -7,7 +7,7 @@
 # This file is based on these images:
 #
 #   - https://hub.docker.com/r/hexpm/elixir/tags - for the build image
-#   - https://hub.docker.com/_/debian/tags?name=trixie-20260518-slim - for the release image
+#   - https://hub.docker.com/_/node/tags?name=22.23.1-trixie-slim - for the release image
 #   - https://pkgs.org/ - resource for finding needed packages
 #   - Ex: docker.io/hexpm/elixir:1.19.5-erlang-28.2-debian-trixie-20260518-slim
 #
@@ -16,7 +16,7 @@ ARG OTP_VERSION=28.2
 ARG DEBIAN_VERSION=trixie-20260518-slim
 
 ARG BUILDER_IMAGE="docker.io/hexpm/elixir:${ELIXIR_VERSION}-erlang-${OTP_VERSION}-debian-${DEBIAN_VERSION}"
-ARG RUNNER_IMAGE="docker.io/debian:${DEBIAN_VERSION}"
+ARG RUNNER_IMAGE="docker.io/library/node:22.23.1-trixie-slim"
 
 FROM ${BUILDER_IMAGE} AS builder
 
@@ -90,6 +90,11 @@ ENV MIX_ENV="prod"
 
 # Only copy the final release from the build stage
 COPY --from=builder --chown=nobody:root /app/newspaper/_build/${MIX_ENV}/rel/newspaper ./
+
+# Copy external worker executables used by the release.
+COPY --chown=nobody:root workers/extraction-simple-html/package*.json ./workers/extraction-simple-html/
+RUN cd /app/workers/extraction-simple-html && npm ci --omit=dev
+COPY --chown=nobody:root workers/extraction-simple-html ./workers/extraction-simple-html
 
 USER nobody
 

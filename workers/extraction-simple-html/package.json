@@ -1,0 +1,22 @@
+{
+  "name": "@newspaper/extraction-simple-html",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Simple HTML article extraction worker for Newspaper.",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "bin": {
+    "newspaper-extract-simple-html": "./bin/extract"
+  },
+  "scripts": {
+    "test": "node --test",
+    "extract": "node ./bin/extract"
+  },
+  "dependencies": {
+    "@mozilla/readability": "^0.6.0",
+    "jsdom": "^26.1.0",
+    "sanitize-html": "2.17.6"
+  }
+}

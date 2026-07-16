@@ -18,7 +18,9 @@ defmodule NewspaperWeb.AdminLive.Dashboard do
   def handle_event("retry_failure", %{"id" => id}, socket) do
     failure_id = String.to_integer(id)
 
-    Task.start(fn -> Pipeline.retry_failure(failure_id) end)
+    Task.Supervisor.start_child(Newspaper.Processing.TaskSupervisor, fn ->
+      Pipeline.retry_failure(failure_id)
+    end)
 
     {:noreply, socket |> put_flash(:info, "Failure retry started") |> assign_data()}
   end
@@ -34,7 +36,7 @@ defmodule NewspaperWeb.AdminLive.Dashboard do
       <div class="mb-6 flex items-center justify-between">
         <div>
           <h1 class="text-2xl font-semibold">Failures / Recent Activity</h1>
-          <p class="text-sm text-base-content/70">Operational landing page for the V1 pipeline.</p>
+          <p class="text-sm text-base-content/70">Recent processing activity and failures.</p>
         </div>
         <button class="btn btn-primary" phx-click="fetch_all">Fetch all now</button>
       </div>

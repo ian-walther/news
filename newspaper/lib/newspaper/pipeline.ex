@@ -6,6 +6,7 @@ defmodule Newspaper.Pipeline do
   alias Newspaper.Intake.{InputFeed, RawItem}
   alias Newspaper.Operations
   alias Newspaper.Publishing
+  alias Newspaper.Processing
   alias Newspaper.Repo
 
   def fetch_all(trigger \\ "manual") do
@@ -280,6 +281,16 @@ defmodule Newspaper.Pipeline do
         |> to_id()
         |> Intake.get_input_feed!()
         |> fetch_input_feed(trigger)
+    end
+  end
+
+  defp retry_failure_type(
+         %{failure_type: "pipeline_step_" <> _kind, related: related},
+         _trigger
+       ) do
+    case related["pipeline_step_attempt_id"] do
+      attempt_id when is_integer(attempt_id) -> Processing.retry_attempt(attempt_id)
+      _ -> {:error, :missing_pipeline_step_attempt}
     end
   end
 

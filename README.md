@@ -65,8 +65,8 @@ scripts/deploy-prod.sh
 ```
 
 The deploy helper SSHes to `news`, updates `~/docker/news` from `origin/master`
-with `git pull --ff-only`, rebuilds/restarts the app container, and runs database
-migrations.
+with `git pull --ff-only`, builds the app image, runs database migrations in a
+one-off container, and then replaces the app container.
 
 Run idempotent production seeds separately when desired:
 

@@ -12,7 +12,7 @@ The feed foundation is generated RSS feeds.
 
 The app should keep input feeds, intake groups, canonical articles, and generated output feeds as separate concepts. Reeder Classic remains the primary reading client through FreshRSS for the bulk of news consumption.
 
-Content extraction is the first compelling product milestone. The feed-only loop should work as the foundation, but the app is not expected to become a daily-use product until generated feed entries can optionally use extracted article content and hosted article pages.
+Reliable extraction across static, JavaScript-rendered, and authenticated sources is the foundation for local-LLM summarization and filtering. The next compelling product milestone is useful AI digestion on successfully extracted articles; complete browser coverage does not need to block learning from sources that already extract cleanly.
 
 ## Product Modes
 
@@ -32,14 +32,12 @@ Generated feed curation is the initial product mode.
 
 ### Content Extraction
 
-Content extraction is the first major enhancement after generated feeds work and the main reason to begin using the app in earnest.
+Browser extraction expands coverage beyond sources that work through direct HTML fetches.
 
-- Configure extraction as a pipeline step from the admin UI.
-- Fetch linked article pages.
 - Reuse authenticated browser sessions where needed.
-- Parse full article content where possible.
-- Replace or enrich generated feed item bodies with extracted article content.
-- Surface extraction and auth failures clearly.
+- Render JavaScript-dependent pages in isolated browser contexts.
+- Surface auth expiration and browser failures clearly.
+- Learn the cheapest useful extractor for each site without treating transient failures as capability failures.
 
 ### Semantic Filtering And Enrichment
 

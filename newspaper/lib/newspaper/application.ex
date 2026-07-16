@@ -12,6 +12,8 @@ defmodule Newspaper.Application do
       Newspaper.Repo,
       {DNSCluster, query: Application.get_env(:newspaper, :dns_cluster_query) || :ignore},
       {Phoenix.PubSub, name: Newspaper.PubSub},
+      {Task.Supervisor, name: Newspaper.Processing.TaskSupervisor},
+      Newspaper.Processing.Dispatcher,
       Newspaper.Pipeline.Scheduler,
       # Start to serve requests, typically the last entry
       NewspaperWeb.Endpoint

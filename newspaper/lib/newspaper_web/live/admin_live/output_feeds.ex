@@ -102,14 +102,20 @@ defmodule NewspaperWeb.AdminLive.OutputFeeds do
 
   def handle_event("backfill_feed", %{"id" => id}, socket) do
     id = to_id(id)
-    Task.start(fn -> Newspaper.Pipeline.backfill_output_feed(id, "manual") end)
+
+    Task.Supervisor.start_child(Newspaper.Processing.TaskSupervisor, fn ->
+      Newspaper.Pipeline.backfill_output_feed(id, "manual")
+    end)
 
     {:noreply, socket |> put_flash(:info, "Output feed backfill started") |> assign_data()}
   end
 
   def handle_event("rerender_feed", %{"id" => id}, socket) do
     id = to_id(id)
-    Task.start(fn -> Newspaper.Pipeline.rerender_output_feed(id, "manual") end)
+
+    Task.Supervisor.start_child(Newspaper.Processing.TaskSupervisor, fn ->
+      Newspaper.Pipeline.rerender_output_feed(id, "manual")
+    end)
 
     {:noreply, socket |> put_flash(:info, "Output feed re-render started") |> assign_data()}
   end
@@ -168,6 +174,15 @@ defmodule NewspaperWeb.AdminLive.OutputFeeds do
         <:col :let={feed} label="URL">{"/feeds/#{feed.guid}.xml"}</:col>
         <:col :let={feed} label="Item limit">{feed.item_limit}</:col>
         <:col :let={feed} label="Enabled">{if feed.enabled, do: "yes", else: "no"}</:col>
+        <:action :let={feed}>
+          <.link
+            navigate={~p"/output-feeds/#{feed.id}/pipeline"}
+            class="btn btn-sm"
+            id={"pipeline-output-feed-#{feed.id}"}
+          >
+            Pipeline
+          </.link>
+        </:action>
         <:action :let={feed}>
           <button
             class="btn btn-sm"

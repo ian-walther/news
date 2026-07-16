@@ -1,32 +1,18 @@
 # Implementation Roadmap
 
-## Configurable Processing Pipeline
-
-- Add a first-class pipeline step model.
-- Add a pipeline step attempt/audit model.
-- Add an implementation registry owned by application code.
-- Add output-feed pipeline configuration UI.
-- Support adding, editing, enabling, disabling, deleting, and ordering steps.
-- Store implementation-specific config in a validated shape.
-- Keep step execution explicit; do not run processing during RSS requests.
-
 ## Content Extraction
 
-- Add the extraction step type.
-- Add a shared worker/executable contract for extraction.
-- Wire the simple HTML extraction executable into the app.
-- Add headless browser and headed browser extraction executables behind the same contract.
-- Add app-owned escalation across extraction implementations.
-- Store site-level minimum extractor policy so known hard sites can skip lower-cost extractors that do not work.
-- Store extracted content and extraction metadata as durable article state.
-- Record extraction attempts and failures through the pipeline attempt model.
-- Add local hosted article pages using stable article identifiers.
-- Re-render generated feed item snapshots after extraction succeeds when output feed settings use extracted content or hosted links.
+- Audit simple extraction against representative articles from configured sources.
+- Improve quality classification using observed paywalls, login pages, JavaScript shells, and incomplete output.
+- Add the isolated headless browser implementation behind the shared JSON contract.
+- Add the persistent headed browser implementation through host Chrome/CDP.
+- Exercise app-owned escalation and site-level minimum implementation learning with real failures.
+- Add operator controls for reviewing and overriding learned site extraction policy.
 
 ## Semantic Filtering And Summarization
 
-- Add filtering step implementations after extraction produces reliable article content.
-- Add summarization step implementations after filtering and extraction are observable.
+- Add a first local-LLM summarization implementation for successfully extracted articles.
+- Add filtering implementations after extraction and model output are observable.
 - Store model, prompt/config, output, confidence, and rationale for LLM-backed steps.
 - Keep source-specific policies auditable and correctable.
 - Avoid automatic destructive filtering until review behavior is clear.
