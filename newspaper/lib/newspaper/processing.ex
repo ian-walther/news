@@ -29,6 +29,23 @@ defmodule Newspaper.Processing do
     |> Repo.all()
   end
 
+  def extraction_eligible_article_ids([]), do: MapSet.new()
+
+  def extraction_eligible_article_ids(article_ids) when is_list(article_ids) do
+    GeneratedFeedItem
+    |> join(:inner, [item], feed in GeneratedFeed, on: feed.id == item.generated_feed_id)
+    |> join(:inner, [_item, feed], step in PipelineStep,
+      on:
+        step.generated_feed_id == feed.id and step.step_type == "extraction" and
+          step.enabled == true
+    )
+    |> where([item, feed, _step], item.article_id in ^article_ids and feed.enabled == true)
+    |> select([item, _feed, _step], item.article_id)
+    |> distinct(true)
+    |> Repo.all()
+    |> MapSet.new()
+  end
+
   def get_step!(id), do: Repo.get!(PipelineStep, id)
 
   def enqueue_item(%GeneratedFeedItem{} = item, opts \\ []) do

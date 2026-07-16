@@ -11,6 +11,7 @@ defmodule Newspaper.Content do
 
   alias Newspaper.Intake.RawItem
   alias Newspaper.Processing.Registry
+  alias Newspaper.Publishing.GeneratedFeedItem
   alias Newspaper.Repo
 
   def list_articles(limit \\ 100) do
@@ -24,6 +25,49 @@ defmodule Newspaper.Content do
       article_sources: [:input_feed, :raw_item]
     ])
     |> Repo.all()
+  end
+
+  def list_articles_page(filters \\ %{}) do
+    page = max(Map.get(filters, :page, 1), 1)
+    per_page = Map.get(filters, :per_page, 25)
+
+    query =
+      Article
+      |> from(as: :article)
+      |> filter_article_status(Map.get(filters, :status, "all"))
+      |> filter_article_search(Map.get(filters, :search, ""))
+      |> filter_article_source(Map.get(filters, :input_feed_id))
+      |> filter_generated_feed(Map.get(filters, :generated_feed_id))
+
+    total_count = Repo.aggregate(query, :count, :id)
+    total_pages = max(ceil(total_count / per_page), 1)
+    page = min(page, total_pages)
+
+    articles =
+      query
+      |> order_by([article: article],
+        desc_nulls_last: article.published_at,
+        desc: article.inserted_at,
+        desc: article.id
+      )
+      |> offset(^((page - 1) * per_page))
+      |> limit(^per_page)
+      |> preload([
+        :intake_group,
+        :representative_raw_item,
+        :extraction,
+        article_sources: [:input_feed, :raw_item],
+        generated_feed_items: :generated_feed
+      ])
+      |> Repo.all()
+
+    %{
+      articles: articles,
+      page: page,
+      per_page: per_page,
+      total_count: total_count,
+      total_pages: total_pages
+    }
   end
 
   def article_status_counts do
@@ -63,6 +107,74 @@ defmodule Newspaper.Content do
     )
     |> order_by([policy], desc: policy.backoff_until, asc: policy.site_host)
     |> Repo.all()
+  end
+
+  defp filter_article_status(query, "succeeded") do
+    where(query, [article: article], article.extraction_status == "succeeded")
+  end
+
+  defp filter_article_status(query, "failed") do
+    where(query, [article: article], article.extraction_status == "failed")
+  end
+
+  defp filter_article_status(query, "unprocessed") do
+    where(query, [article: article], article.extraction_status == "not_requested")
+  end
+
+  defp filter_article_status(query, "processing") do
+    where(query, [article: article], article.extraction_status in ["queued", "running"])
+  end
+
+  defp filter_article_status(query, _status), do: query
+
+  defp filter_article_search(query, search) when is_binary(search) do
+    case String.trim(search) do
+      "" ->
+        query
+
+      term ->
+        pattern = "%#{term}%"
+
+        where(
+          query,
+          [article: article],
+          ilike(article.title, ^pattern) or
+            ilike(article.canonical_url, ^pattern) or
+            ilike(article.outlet_name, ^pattern)
+        )
+    end
+  end
+
+  defp filter_article_search(query, _search), do: query
+
+  defp filter_article_source(query, nil), do: query
+
+  defp filter_article_source(query, input_feed_id) do
+    where(
+      query,
+      [article: article],
+      exists(
+        from source in ArticleSource,
+          where:
+            source.article_id == parent_as(:article).id and
+              source.input_feed_id == ^input_feed_id
+      )
+    )
+  end
+
+  defp filter_generated_feed(query, nil), do: query
+
+  defp filter_generated_feed(query, generated_feed_id) do
+    where(
+      query,
+      [article: article],
+      exists(
+        from item in GeneratedFeedItem,
+          where:
+            item.article_id == parent_as(:article).id and
+              item.generated_feed_id == ^generated_feed_id
+      )
+    )
   end
 
   def get_article!(id) do
