@@ -121,6 +121,56 @@ defmodule Newspaper.ExtractionTest do
     assert Repo.get!(Failure, failure.id).retry_count == 1
   end
 
+  test "escalates insufficient static HTML to headless extraction and learns the site minimum" do
+    article = create_article!("https://example.com/browser-rendered-story")
+
+    simple_worker =
+      worker_script!("simple-insufficient", %{
+        schema_version: 1,
+        implementation: "extraction.simple_html",
+        status: "failed",
+        final_url: article.canonical_url,
+        failure_kind: "insufficient_content",
+        retryable: false,
+        message: "readability_returned_no_content",
+        quality: %{"score" => 0, "reason" => "readability_returned_no_content"},
+        debug_metadata: %{"fixture" => true}
+      })
+
+    headless_worker =
+      worker_script!(
+        "headless-success",
+        success_payload()
+        |> Map.put(:implementation, "extraction.headless_browser")
+        |> Map.put(:final_url, article.canonical_url)
+      )
+
+    Application.put_env(:newspaper, :extractors,
+      simple_html_command: simple_worker,
+      headless_browser_command: headless_worker
+    )
+
+    configure_extraction!(article, "feed_headless_escalation_test")
+
+    pipeline_attempt = Repo.one!(PipelineStepAttempt)
+    assert {:ok, pipeline_attempt} = Extraction.execute_attempt(pipeline_attempt.id)
+    assert pipeline_attempt.status == "succeeded"
+
+    attempts =
+      ArticleExtractionAttempt
+      |> Repo.all()
+      |> Enum.sort_by(& &1.id)
+
+    assert Enum.map(attempts, &{&1.implementation, &1.status}) == [
+             {"extraction.simple_html", "failed"},
+             {"extraction.headless_browser", "ok"}
+           ]
+
+    policy = Repo.one!(SiteExtractionPolicy)
+    assert policy.minimum_implementation == "extraction.headless_browser"
+    assert policy.last_successful_implementation == "extraction.headless_browser"
+  end
+
   test "recovers a stale article permalink through a same-site URL feed GUID" do
     stale_url =
       "https://www.theautopian.com/park-outside-jeep-warns-owners-that-cars-could-catch-fire/"

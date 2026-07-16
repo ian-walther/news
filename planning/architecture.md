@@ -67,9 +67,7 @@ Operator-facing views should lead with domain state and meaningful parent operat
 
 ## Worker Responsibilities
 
-Workers should receive explicit structured input and return explicit structured output when they exist.
-
-The current assumption is JSON request/response contracts, but this is not final. Content extraction is the first feature that should force a real decision about worker execution, schema contracts, process boundaries, and precedent for later classifier, summarizer, and renderer workers.
+Workers should receive explicit structured input and return explicit structured output when they exist. Extraction establishes the initial worker precedent: versioned JSON requests arrive on stdin, versioned JSON responses leave on stdout, diagnostics use stderr, and durable state remains owned by the Elixir application.
 
 - `news-extract-simple`: direct HTML fetch and extraction evidence.
 - `news-extract-headless`: isolated headless browser rendering and extraction evidence.
@@ -81,6 +79,8 @@ The current assumption is JSON request/response contracts, but this is not final
 Workers should write logs to stderr, return machine-readable output on stdout or an output file, and avoid mutating durable app state directly.
 
 Extraction workers should share the same app-facing interface. The implementation key should be part of the request and response, but the response shape should stay stable across simple HTML, headless browser, and headed browser extraction.
+
+Direct-HTML and isolated-headless workers belong inside the production app image so deployment remains self-contained. Persistent authenticated Chrome remains host-owned because its profile and visible desktop session are long-lived operator-managed capabilities.
 
 ## Pipeline Implementation Registry
 
@@ -157,7 +157,7 @@ Expected files from the start:
 - `docker-compose.prod.yml` for production app deployment with app service and initial Postgres service.
 - `.env` or documented environment files for dev/prod settings.
 
-Host Chrome should remain outside Docker for persistent auth and interactive debugging.
+Host Chrome should remain outside Docker for persistent auth and interactive debugging. Isolated headless Chromium belongs inside the app image and must not reuse the host profile.
 
 See `planning/prod-topology.md` for the current production topology decision.
 

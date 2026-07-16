@@ -4,9 +4,8 @@
 
 - Audit simple extraction against representative articles from configured sources.
 - Improve quality classification using observed paywalls, login pages, JavaScript shells, and incomplete output.
-- Add the isolated headless browser implementation behind the shared JSON contract.
 - Add the persistent headed browser implementation through host Chrome/CDP.
-- Exercise app-owned escalation and site-level minimum implementation learning with real failures.
+- Exercise headless-to-headed escalation with real authenticated or browser-state-dependent failures.
 
 ## Semantic Filtering And Summarization
 

@@ -1,0 +1,13 @@
+{
+  "name": "@newspaper/workers",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "extraction-core",
+    "extraction-simple-html",
+    "extraction-headless-browser"
+  ],
+  "scripts": {
+    "test": "npm test --workspaces --if-present"
+  }
+}

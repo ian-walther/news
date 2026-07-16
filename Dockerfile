@@ -81,6 +81,7 @@ RUN sed -i '/en_US.UTF-8/s/^# //g' /etc/locale.gen \
 ENV LANG=en_US.UTF-8
 ENV LANGUAGE=en_US:en
 ENV LC_ALL=en_US.UTF-8
+ENV PLAYWRIGHT_BROWSERS_PATH=/app/.cache/ms-playwright
 
 WORKDIR "/app"
 RUN chown nobody /app
@@ -91,10 +92,18 @@ ENV MIX_ENV="prod"
 # Only copy the final release from the build stage
 COPY --from=builder --chown=nobody:root /app/newspaper/_build/${MIX_ENV}/rel/newspaper ./
 
-# Copy external worker executables used by the release.
-COPY --chown=nobody:root workers/extraction-simple-html/package*.json ./workers/extraction-simple-html/
-RUN cd /app/workers/extraction-simple-html && npm ci --omit=dev
-COPY --chown=nobody:root workers/extraction-simple-html ./workers/extraction-simple-html
+# Install external worker dependencies and the isolated Chromium runtime used by
+# headless extraction. The authenticated headed-browser tier remains host-owned.
+COPY --chown=nobody:root workers/package*.json ./workers/
+COPY --chown=nobody:root workers/extraction-core/package.json ./workers/extraction-core/package.json
+COPY --chown=nobody:root workers/extraction-simple-html/package.json ./workers/extraction-simple-html/package.json
+COPY --chown=nobody:root workers/extraction-headless-browser/package.json ./workers/extraction-headless-browser/package.json
+RUN cd /app/workers \
+  && npm ci --omit=dev \
+  && npx playwright install --with-deps --only-shell chromium \
+  && chmod -R a+rX /app/.cache/ms-playwright \
+  && rm -rf /var/lib/apt/lists/*
+COPY --chown=nobody:root workers ./workers
 
 USER nobody
 

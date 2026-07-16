@@ -41,6 +41,30 @@ defmodule Newspaper.Processing.Registry do
           maximum: 100_000
         }
       ]
+    },
+    "extraction.headless_browser" => %{
+      key: "extraction.headless_browser",
+      step_type: "extraction",
+      label: "Headless browser extraction",
+      runtime: Newspaper.Extraction.HeadlessBrowserWorker,
+      default_config: %{
+        "timeout_ms" => 20_000,
+        "minimum_text_length" => 500
+      },
+      config_schema: [
+        %{
+          key: "timeout_ms",
+          type: :integer,
+          minimum: 1_000,
+          maximum: 120_000
+        },
+        %{
+          key: "minimum_text_length",
+          type: :integer,
+          minimum: 100,
+          maximum: 100_000
+        }
+      ]
     }
   }
 

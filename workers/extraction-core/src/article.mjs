@@ -1,0 +1,299 @@
+import { Readability } from "@mozilla/readability";
+import { JSDOM, VirtualConsole } from "jsdom";
+import sanitizeHtml from "sanitize-html";
+
+export const DEFAULT_TIMEOUT_MS = 20_000;
+export const DEFAULT_MINIMUM_TEXT_LENGTH = 500;
+
+export function validateRequest(request, implementation, startedAt) {
+  const schemaVersion = request?.schema_version ?? 1;
+
+  if (schemaVersion !== 1) {
+    return failure({
+      schemaVersion,
+      implementation,
+      failureKind: "unsupported_schema_version",
+      retryable: false,
+      message: `Unsupported schema_version: ${schemaVersion}`,
+      startedAt
+    });
+  }
+
+  if (!request?.url || typeof request.url !== "string") {
+    return failure({
+      schemaVersion,
+      implementation,
+      failureKind: "invalid_request",
+      retryable: false,
+      message: "Request must include a string url",
+      startedAt
+    });
+  }
+
+  return null;
+}
+
+export function extractArticleFromHtml({
+  schemaVersion,
+  implementation,
+  html,
+  finalUrl,
+  minimumTextLength,
+  startedAt,
+  debugMetadata = {}
+}) {
+  const parsed = parseReadableArticle(html, finalUrl);
+  const contentText = normalizeText(parsed.textContent);
+  const contentHtml = sanitizeArticleHtml(parsed.content, finalUrl);
+  const quality = scoreQuality(contentText, parsed, minimumTextLength);
+
+  if (quality.score < 0.35) {
+    return failure({
+      schemaVersion,
+      implementation,
+      failureKind: "insufficient_content",
+      retryable: false,
+      message: quality.reason,
+      finalUrl,
+      quality,
+      startedAt,
+      debugMetadata: {
+        ...debugMetadata,
+        content_length: contentText.length,
+        title_present: Boolean(parsed.title)
+      }
+    });
+  }
+
+  return {
+    schema_version: schemaVersion,
+    implementation,
+    status: "ok",
+    final_url: finalUrl,
+    title: parsed.title || null,
+    byline: parsed.byline || null,
+    published_at: extractPublishedAt(html) || null,
+    content_html: contentHtml || null,
+    content_text: contentText,
+    excerpt: parsed.excerpt || null,
+    site_name: parsed.siteName || null,
+    quality,
+    debug_metadata: {
+      ...debugMetadata,
+      elapsed_ms: elapsedMs(startedAt)
+    }
+  };
+}
+
+export function sanitizeArticleHtml(html, baseUrl) {
+  if (!html) {
+    return null;
+  }
+
+  return sanitizeHtml(html, {
+    allowedTags: [
+      ...sanitizeHtml.defaults.allowedTags,
+      "img",
+      "figure",
+      "figcaption",
+      "picture",
+      "source"
+    ],
+    allowedAttributes: {
+      a: ["href", "title", "rel"],
+      img: ["src", "srcset", "alt", "title", "width", "height", "loading"],
+      source: ["src", "srcset", "type", "media"]
+    },
+    allowedSchemes: ["http", "https", "mailto"],
+    transformTags: {
+      a: (tagName, attributes) => ({
+        tagName,
+        attribs: {
+          ...attributes,
+          href: absoluteUrl(attributes.href, baseUrl),
+          rel: "noopener noreferrer"
+        }
+      }),
+      img: (tagName, attributes) => ({
+        tagName,
+        attribs: {
+          ...attributes,
+          src: absoluteUrl(attributes.src, baseUrl),
+          loading: "lazy"
+        }
+      }),
+      source: (tagName, attributes) => ({
+        tagName,
+        attribs: {
+          ...attributes,
+          src: absoluteUrl(attributes.src, baseUrl)
+        }
+      })
+    }
+  });
+}
+
+export function parseReadableArticle(html, url) {
+  const virtualConsole = new VirtualConsole();
+  const dom = new JSDOM(html, { url, virtualConsole });
+  const reader = new Readability(dom.window.document, { keepClasses: false });
+  const article = reader.parse();
+
+  return article || {
+    title: null,
+    byline: null,
+    content: null,
+    textContent: "",
+    excerpt: null,
+    siteName: null
+  };
+}
+
+export function failure(attrs) {
+  return {
+    schema_version: attrs.schemaVersion,
+    implementation: attrs.implementation,
+    status: "failed",
+    final_url: attrs.finalUrl || null,
+    failure_kind: attrs.failureKind,
+    retryable: attrs.retryable,
+    message: attrs.message,
+    quality: attrs.quality || null,
+    debug_metadata: {
+      status_code: attrs.statusCode ?? null,
+      retry_after_ms: attrs.retryAfterMs ?? null,
+      elapsed_ms: elapsedMs(attrs.startedAt),
+      ...(attrs.debugMetadata || {})
+    }
+  };
+}
+
+export function classifyError(error) {
+  const message = error instanceof Error ? error.message : String(error);
+
+  if (error?.name === "AbortError" || error?.name === "TimeoutError" || /timeout/i.test(message)) {
+    return "timeout";
+  }
+
+  if (error instanceof TypeError || /net::ERR_|ECONN|ENOTFOUND|EAI_AGAIN/.test(message)) {
+    return "network_error";
+  }
+
+  return "unknown";
+}
+
+export function classifyHttpFailure(statusCode) {
+  if (statusCode === 429) {
+    return { failureKind: "rate_limited", retryable: true };
+  }
+
+  if (statusCode === 404 || statusCode === 410) {
+    return { failureKind: "not_found", retryable: false };
+  }
+
+  if (statusCode === 401 || statusCode === 403) {
+    return { failureKind: "blocked", retryable: false };
+  }
+
+  return { failureKind: "http_error", retryable: statusCode >= 500 };
+}
+
+export function retryableError(error) {
+  return ["timeout", "network_error"].includes(classifyError(error));
+}
+
+export function parseRetryAfter(value) {
+  if (!value) {
+    return null;
+  }
+
+  const seconds = Number(value);
+
+  if (Number.isFinite(seconds) && seconds >= 0) {
+    return Math.round(seconds * 1_000);
+  }
+
+  const retryAt = new Date(value);
+
+  if (Number.isNaN(retryAt.getTime())) {
+    return null;
+  }
+
+  return Math.max(retryAt.getTime() - Date.now(), 0);
+}
+
+export function elapsedMs(startedAt) {
+  return new Date().getTime() - startedAt.getTime();
+}
+
+function absoluteUrl(value, baseUrl) {
+  if (!value) {
+    return undefined;
+  }
+
+  try {
+    return new URL(value, baseUrl).toString();
+  } catch {
+    return undefined;
+  }
+}
+
+function extractPublishedAt(html) {
+  const virtualConsole = new VirtualConsole();
+  const dom = new JSDOM(html, { virtualConsole });
+  const document = dom.window.document;
+
+  const selectors = [
+    'meta[property="article:published_time"]',
+    'meta[name="article:published_time"]',
+    'meta[name="pubdate"]',
+    'meta[name="publishdate"]',
+    'meta[name="date"]',
+    "time[datetime]"
+  ];
+
+  for (const selector of selectors) {
+    const element = document.querySelector(selector);
+    const value = element?.getAttribute("content") || element?.getAttribute("datetime");
+    const parsed = parseDate(value);
+
+    if (parsed) {
+      return parsed;
+    }
+  }
+
+  return null;
+}
+
+function parseDate(value) {
+  if (!value) {
+    return null;
+  }
+
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
+function scoreQuality(contentText, parsed, minimumTextLength) {
+  const contentLength = contentText.length;
+
+  if (!parsed.content || contentLength === 0) {
+    return { score: 0, reason: "readability_returned_no_content" };
+  }
+
+  if (contentLength < minimumTextLength) {
+    return {
+      score: Math.max(0.1, contentLength / minimumTextLength / 2),
+      reason: `content_text_shorter_than_${minimumTextLength}`
+    };
+  }
+
+  return {
+    score: Number(Math.min(1, 0.5 + contentLength / 4_000).toFixed(2)),
+    reason: "sufficient_content"
+  };
+}
+
+function normalizeText(text) {
+  return (text || "").replace(/\s+/g, " ").trim();
+}

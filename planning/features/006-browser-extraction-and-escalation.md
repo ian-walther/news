@@ -2,7 +2,7 @@
 
 ## Goal
 
-Expand article extraction beyond direct HTML fetches without changing the app-facing pipeline contract.
+Complete authenticated and browser-state-dependent extraction without changing the app-facing pipeline contract.
 
 The application owns extractor selection, escalation, pacing, durable attempts, and site policy. Worker executables only fetch and normalize one article request.
 
@@ -14,7 +14,7 @@ extraction.simple_html
   -> extraction.headed_browser
 ```
 
-`extraction.headless_browser` should render a page in an isolated browser context. `extraction.headed_browser` should connect to the persistent Chrome session on the production host for authenticated or browser-state-dependent sources.
+`extraction.headless_browser` renders a page in an isolated browser context. `extraction.headed_browser` should connect to the persistent Chrome session on the production host for authenticated or browser-state-dependent sources.
 
 Every implementation must preserve the shared JSON request/response contract, normalized content fields, failure taxonomy, and stderr/stdout separation.
 
@@ -64,8 +64,5 @@ Quality decisions should remain deterministic and auditable. Local LLMs can clas
 
 ## Remaining Acceptance Criteria
 
-- Headless and headed workers expose the same app-facing contract as simple HTML extraction.
-- The Elixir app can escalate through available implementations during one pipeline attempt.
-- A successful higher implementation can teach site-level minimum implementation policy.
-- Rate limits and transient network failures do not alter extractor capability policy.
+- The headed worker exposes the same app-facing contract as simple and headless extraction.
 - Auth expiration and unavailable Chrome sessions are visible and manually retryable.

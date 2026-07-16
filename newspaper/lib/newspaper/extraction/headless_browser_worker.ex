@@ -1,7 +1,7 @@
-defmodule Newspaper.Extraction.SimpleHtmlWorker do
+defmodule Newspaper.Extraction.HeadlessBrowserWorker do
   alias Newspaper.Extraction.CommandWorker
 
-  @implementation "extraction.simple_html"
+  @implementation "extraction.headless_browser"
 
   def implementation, do: @implementation
 
@@ -12,6 +12,6 @@ defmodule Newspaper.Extraction.SimpleHtmlWorker do
 
   defp default_command do
     Application.fetch_env!(:newspaper, :extractors)
-    |> Keyword.fetch!(:simple_html_command)
+    |> Keyword.fetch!(:headless_browser_command)
   end
 end

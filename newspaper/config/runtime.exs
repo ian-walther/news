@@ -23,11 +23,15 @@ end
 config :newspaper, NewspaperWeb.Endpoint,
   http: [port: String.to_integer(System.get_env("PORT", "4000"))]
 
-if config_env() == :prod || System.get_env("NEWSPAPER_SIMPLE_HTML_EXTRACTOR") do
+if config_env() == :prod || System.get_env("NEWSPAPER_SIMPLE_HTML_EXTRACTOR") ||
+     System.get_env("NEWSPAPER_HEADLESS_BROWSER_EXTRACTOR") do
   config :newspaper, :extractors,
     simple_html_command:
       System.get_env("NEWSPAPER_SIMPLE_HTML_EXTRACTOR") ||
-        "/app/workers/extraction-simple-html/bin/extract"
+        "/app/workers/extraction-simple-html/bin/extract",
+    headless_browser_command:
+      System.get_env("NEWSPAPER_HEADLESS_BROWSER_EXTRACTOR") ||
+        "/app/workers/extraction-headless-browser/bin/extract"
 end
 
 if config_env() == :prod do

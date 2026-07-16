@@ -12,7 +12,9 @@ config :newspaper,
   generators: [timestamp_type: :utc_datetime]
 
 config :newspaper, :extractors,
-  simple_html_command: Path.expand("../../workers/extraction-simple-html/bin/extract", __DIR__)
+  simple_html_command: Path.expand("../../workers/extraction-simple-html/bin/extract", __DIR__),
+  headless_browser_command:
+    Path.expand("../../workers/extraction-headless-browser/bin/extract", __DIR__)
 
 config :newspaper, :processing_dispatcher_enabled, true
 

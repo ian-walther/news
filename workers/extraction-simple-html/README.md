@@ -18,9 +18,10 @@ Human-readable diagnostics should go to stderr.
 ## Run
 
 ```sh
+cd workers
 npm ci
 npm test
-echo '{"schema_version":1,"implementation":"extraction.simple_html","url":"https://example.com/article"}' | npm run extract --silent
+echo '{"schema_version":1,"implementation":"extraction.simple_html","url":"https://example.com/article"}' | extraction-simple-html/bin/extract
 ```
 
 ## Request

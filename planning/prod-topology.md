@@ -17,9 +17,10 @@ N150 Ubuntu Server
     x11vnc sharing the existing X display
 
   Docker Compose services
-    Phoenix app
+    Phoenix app image
+      direct HTML worker
+      isolated headless Chromium worker
     Postgres, initially
-    workers, as needed
 ```
 
 ## Persistent Desktop Session
@@ -98,7 +99,9 @@ Initial production should use a production Docker Compose file with the Phoenix 
 
 Local development should not require running the app in Docker. The local development Compose file should only spin up Postgres; the Phoenix app runs natively on the Mac against the configured database URL.
 
-The host Chrome/desktop stack should live outside Docker. The app should treat Chrome as an external host capability used by extraction workers or app orchestration.
+The app image should contain direct-HTML extraction and an isolated headless Chromium runtime. These workers are disposable and carry no durable browser state.
+
+The host Chrome/desktop stack should live outside Docker. The app should treat that headed Chrome as an external host capability used only when extraction requires persistent authentication or operator-visible browser state.
 
 ## Design Implications
 

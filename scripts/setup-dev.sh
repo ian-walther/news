@@ -10,4 +10,8 @@ cd "${ROOT_DIR}/newspaper"
 mix setup
 
 cd "${ROOT_DIR}"
-npm ci --prefix workers/extraction-simple-html
+npm ci --prefix workers
+(
+  cd workers
+  npx playwright install --only-shell chromium
+)

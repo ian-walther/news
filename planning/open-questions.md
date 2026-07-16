@@ -51,7 +51,6 @@
 ## Production Architecture
 
 - Which future services should run in Docker and which should stay on the host alongside the Chrome/desktop stack?
-- Should workers run inside the main app container, as separate containers, or as host-level executables?
 - How should deploy, backup, restore, logs, and upgrades work?
 - What exact systemd unit structure should manage Xorg, the desktop session, Chrome, and x11vnc?
 - What fixed virtual display resolution should the Xorg dummy display use?
@@ -62,7 +61,6 @@
 - Should generated feeds include full extracted article text, summaries, excerpts, or a rendering pipeline setting beyond the initial extracted-body boolean?
 - How should paid-site auth expiration be detected and surfaced?
 - How should the Dockerized app reach host Chrome/CDP securely when CDP is bound narrowly?
-- What shared worker contract should extraction set for later classifier, summarizer, and PDF renderer workers?
 - What failure kinds and thresholds should teach a site-level minimum extractor?
 
 ## Pipeline Configuration

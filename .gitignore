@@ -40,3 +40,4 @@ newspaper-*.tar
 npm-debug.log
 /newspaper/assets/node_modules/
 /workers/*/node_modules/
+/workers/node_modules/
