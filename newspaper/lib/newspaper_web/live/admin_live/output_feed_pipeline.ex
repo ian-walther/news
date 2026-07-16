@@ -95,7 +95,7 @@ defmodule NewspaperWeb.AdminLive.OutputFeedPipeline do
 
       <section
         id="feed-processing-summary"
-        class="mb-8 grid border-y border-base-300 sm:grid-cols-3 sm:divide-x sm:divide-base-300"
+        class="mb-8 grid border-y border-base-300 sm:grid-cols-4 sm:divide-x sm:divide-base-300"
       >
         <div class="py-4 sm:px-5 sm:first:pl-0">
           <div class="text-2xl font-semibold tabular-nums">{@processing_counts.items}</div>
@@ -104,6 +104,10 @@ defmodule NewspaperWeb.AdminLive.OutputFeedPipeline do
         <div class="border-t border-base-300 py-4 sm:border-t-0 sm:px-5">
           <div class="text-2xl font-semibold tabular-nums">{@processing_counts.extracted}</div>
           <div class="text-sm text-base-content/60">Extracted</div>
+        </div>
+        <div class="border-t border-base-300 py-4 sm:border-t-0 sm:px-5">
+          <div class="text-2xl font-semibold tabular-nums">{@processing_counts.unavailable}</div>
+          <div class="text-sm text-base-content/60">Unavailable</div>
         </div>
         <div class="border-t border-base-300 py-4 sm:border-t-0 sm:px-5">
           <div class="text-2xl font-semibold tabular-nums">{@processing_counts.unprocessed}</div>
@@ -250,7 +254,7 @@ defmodule NewspaperWeb.AdminLive.OutputFeedPipeline do
   defp process_existing_label(%{enabled_extraction_steps: 0}), do: "Enable extraction first"
 
   defp process_existing_label(%{processing_counts: %{unprocessed: 0}}),
-    do: "All existing articles processed"
+    do: "No articles awaiting extraction"
 
   defp process_existing_label(%{processing_counts: %{unprocessed: 1}}),
     do: "Extract 1 unprocessed article"

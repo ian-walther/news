@@ -2,6 +2,7 @@ defmodule Newspaper.ProcessingBatchTest do
   use Newspaper.DataCase
 
   alias Newspaper.Extraction
+  alias Newspaper.Content.Article
   alias Newspaper.Intake
   alias Newspaper.Operations.Run
   alias Newspaper.Pipeline
@@ -79,6 +80,43 @@ defmodule Newspaper.ProcessingBatchTest do
     assert second_batch.summary_counts["total"] == 0
     assert second_batch.summary_counts["skipped"] == 2
     assert Processing.list_attempts_for_batch(second_batch.id) == []
+  end
+
+  test "a batch skips terminal article failures while preserving manual retry" do
+    feed = extraction_feed_with_articles!()
+
+    [missing_article, pending_article] =
+      Article
+      |> order_by([article], asc: article.id)
+      |> Repo.all()
+
+    missing_article
+    |> Article.changeset(%{
+      extraction_status: "failed",
+      extraction_metadata: %{
+        "failure_kind" => "not_found",
+        "retryable" => false,
+        "message" => "HTTP 404"
+      }
+    })
+    |> Repo.update!()
+
+    assert Processing.feed_processing_counts(feed.id) == %{
+             items: 2,
+             extracted: 0,
+             unavailable: 1,
+             unprocessed: 1
+           }
+
+    assert {:ok, batch} = Processing.start_feed_batch(feed.id, "test")
+    assert batch.summary_counts["items_considered"] == 2
+    assert batch.summary_counts["total"] == 1
+    assert batch.summary_counts["skipped"] == 1
+
+    [attempt] = Processing.list_attempts_for_batch(batch.id)
+    assert attempt.article_id == pending_article.id
+
+    assert {:ok, 1} = Processing.enqueue_article(missing_article.id)
   end
 
   defp extraction_feed_with_articles! do

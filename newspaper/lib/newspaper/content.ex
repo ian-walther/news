@@ -323,6 +323,23 @@ defmodule Newspaper.Content do
 
   def site_host(_url), do: nil
 
+  def extraction_url_candidates(%Article{} = article) do
+    article = Repo.preload(article, :representative_raw_item)
+    primary_url = article.resolved_url || article.canonical_url
+    primary_host = site_host(primary_url)
+
+    [
+      primary_url,
+      article.canonical_url,
+      article.representative_raw_item && article.representative_raw_item.feed_guid
+    ]
+    |> Enum.filter(&is_binary/1)
+    |> Enum.map(&String.trim/1)
+    |> Enum.filter(&valid_extraction_url?/1)
+    |> Enum.filter(&(site_host(&1) == primary_host))
+    |> Enum.uniq()
+  end
+
   def backoff_active?(%SiteExtractionPolicy{backoff_until: nil}, _now), do: false
 
   def backoff_active?(%SiteExtractionPolicy{backoff_until: backoff_until}, now) do
@@ -557,6 +574,17 @@ defmodule Newspaper.Content do
     host
     |> String.downcase()
     |> String.trim_leading("www.")
+  end
+
+  defp valid_extraction_url?(url) do
+    case URI.parse(url) do
+      %URI{scheme: scheme, host: host}
+      when scheme in ["http", "https"] and is_binary(host) and host != "" ->
+        true
+
+      _other ->
+        false
+    end
   end
 
   defp normalize_policy_attrs(attrs) do

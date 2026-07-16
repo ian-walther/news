@@ -23,25 +23,47 @@ defmodule Newspaper.Extraction do
     {:ok, attempt} = Processing.mark_attempt_running(attempt)
     article = attempt.article
     {:ok, article} = Content.set_extraction_status(article, "running")
-    url = article.resolved_url || article.canonical_url
+    url_candidates = Content.extraction_url_candidates(article)
+    url = List.first(url_candidates)
 
     {:ok, run} =
       Operations.start_run("pipeline_step", "pipeline", %{
         "pipeline_step_attempt_id" => attempt.id,
         "pipeline_step_id" => attempt.pipeline_step_id,
         "article_id" => article.id,
-        "url" => url
+        "url" => url,
+        "url_candidates" => url_candidates
       })
 
     with {:ok, policy} <- Content.get_site_extraction_policy_for_url(url),
          {:ok, policy} <- Content.mark_site_extraction_attempted(policy),
          {:ok, {result, input_snapshot}} <-
-           run_implementation_chain(url, article, policy, attempt) do
+           run_url_candidates(url_candidates, article, policy, attempt) do
       finish_result(run, attempt, article, policy, result, input_snapshot)
     else
       {:error, reason} ->
         fail_execution(attempt, inspect(reason), "execution_error", run)
     end
+  end
+
+  defp run_url_candidates(urls, article, policy, attempt) do
+    urls
+    |> Enum.with_index()
+    |> Enum.reduce_while({:error, :no_usable_article_url}, fn {url, index}, _outcome ->
+      case run_implementation_chain(url, article, policy, attempt) do
+        {:ok, {result, _input_snapshot}} = outcome ->
+          more_candidates? = index < length(urls) - 1
+
+          if article_not_found?(result) and more_candidates? do
+            {:cont, outcome}
+          else
+            {:halt, outcome}
+          end
+
+        {:error, _reason} = error ->
+          {:halt, error}
+      end
+    end)
   end
 
   defp run_implementation_chain(url, article, policy, attempt) do
@@ -116,6 +138,12 @@ defmodule Newspaper.Extraction do
   end
 
   defp escalate?(_policy, _result), do: false
+
+  defp article_not_found?(result) do
+    result["failure_kind"] == "not_found" or
+      (result["failure_kind"] == "http_error" and
+         get_in(result, ["debug_metadata", "status_code"]) in [404, 410])
+  end
 
   defp record_worker_attempt(
          article,

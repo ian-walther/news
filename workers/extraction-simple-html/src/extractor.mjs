@@ -372,6 +372,10 @@ function classifyHttpFailure(statusCode) {
     return { failureKind: "rate_limited", retryable: true };
   }
 
+  if (statusCode === 404 || statusCode === 410) {
+    return { failureKind: "not_found", retryable: false };
+  }
+
   if (statusCode === 401 || statusCode === 403) {
     return { failureKind: "blocked", retryable: false };
   }

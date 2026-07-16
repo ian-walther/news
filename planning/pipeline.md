@@ -201,6 +201,8 @@ The app should store site-level extraction policy so future articles can skip ex
 
 Workers should return normalized success, quality, and failure information. Failure kinds such as JavaScript required, auth required, paywall, blocking, or repeated insufficient content can trigger escalation. Network errors and timeouts should remain ordinary transient failures unless repeated real usage proves otherwise.
 
+An article URL can become stale while a publisher keeps the underlying post available at a corrected permalink. When a direct article request returns `404` or `410`, extraction may retry a URL-shaped feed stable ID only when it belongs to the same site. The redirect target becomes the resolved article URL after successful extraction. A missing article with no successful same-site fallback is a terminal, visible result: bulk processing should skip it, preserve the raw feed snapshot, and leave explicit manual retry available.
+
 ## Deduplication Boundary
 
 Deduplication should focus on duplicates within an intake group, especially repeated articles published to multiple feeds from the same outlet.

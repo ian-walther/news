@@ -32,6 +32,8 @@ Escalation-worthy failures include:
 
 Network failures, timeouts, and rate limiting should remain transient scheduling or availability failures. They must not teach the app that a more capable extractor is required.
 
+`not_found` is not an extractor-capability failure and should not move execution farther up the browser chain. The application may try a distinct, URL-shaped, same-site feed stable ID to recover a changed permalink. If no candidate succeeds, the failure remains terminal for automatic processing and manually retryable by the operator.
+
 When a higher implementation succeeds after a lower implementation fails, the app may learn that higher implementation as the site's minimum. The operator must be able to inspect and override learned policy.
 
 ## Headed Browser Topology

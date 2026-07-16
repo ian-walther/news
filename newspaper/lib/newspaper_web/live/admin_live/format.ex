@@ -66,6 +66,7 @@ defmodule NewspaperWeb.AdminLive.Format do
   def failure_type_label("fetch_input_feed_failed"), do: "Feed fetch failed"
   def failure_type_label("pipeline_step_timeout"), do: "Extraction timed out"
   def failure_type_label("pipeline_step_http_error"), do: "Article request failed"
+  def failure_type_label("pipeline_step_not_found"), do: "Article not found"
   def failure_type_label(value), do: humanize(value)
 
   def status_label(value), do: humanize(value)

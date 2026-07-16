@@ -82,6 +82,28 @@ test("extractFromRequest reports HTTP errors", async () => {
   assert.equal(result.debug_metadata.status_code, 403);
 });
 
+test("extractFromRequest classifies a missing article as not found", async () => {
+  const result = await extractFromRequest(
+    {
+      schema_version: 1,
+      implementation: "extraction.simple_html",
+      url: "https://example.com/stale-article-link"
+    },
+    {
+      fetchImpl: async () =>
+        new Response("<html><title>Page not found</title></html>", {
+          status: 404,
+          headers: { "content-type": "text/html" }
+        })
+    }
+  );
+
+  assert.equal(result.status, "failed");
+  assert.equal(result.failure_kind, "not_found");
+  assert.equal(result.retryable, false);
+  assert.equal(result.debug_metadata.status_code, 404);
+});
+
 test("extractFromRequest reports rate limiting distinctly", async () => {
   const result = await extractFromRequest(
     {

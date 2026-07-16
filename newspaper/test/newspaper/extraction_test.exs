@@ -121,6 +121,46 @@ defmodule Newspaper.ExtractionTest do
     assert Repo.get!(Failure, failure.id).retry_count == 1
   end
 
+  test "recovers a stale article permalink through a same-site URL feed GUID" do
+    stale_url =
+      "https://www.theautopian.com/park-outside-jeep-warns-owners-that-cars-could-catch-fire/"
+
+    stable_url = "https://www.theautopian.com/?p=278603"
+
+    corrected_url =
+      "https://www.theautopian.com/park-outside-jeep-warns-owners-that-could-catch-fire/"
+
+    article = create_article!(stale_url, feed_guid: stable_url)
+
+    worker =
+      fallback_worker_script!(
+        stable_url,
+        not_found_payload(stale_url),
+        Map.put(success_payload(), :final_url, corrected_url)
+      )
+
+    Application.put_env(:newspaper, :extractors, simple_html_command: worker)
+    configure_extraction!(article, "feed_stale_permalink_test")
+
+    pipeline_attempt = Repo.one!(PipelineStepAttempt)
+    assert {:ok, pipeline_attempt} = Extraction.execute_attempt(pipeline_attempt.id)
+    assert pipeline_attempt.status == "succeeded"
+
+    article = Repo.get!(Article, article.id)
+    assert article.extraction_status == "succeeded"
+    assert article.resolved_url == corrected_url
+
+    [missing_attempt, recovered_attempt] =
+      ArticleExtractionAttempt
+      |> Repo.all()
+      |> Enum.sort_by(& &1.id)
+
+    assert missing_attempt.failure_kind == "http_error"
+    assert missing_attempt.input_snapshot["url"] == stale_url
+    assert recovered_attempt.status == "ok"
+    assert recovered_attempt.input_snapshot["url"] == stable_url
+  end
+
   test "terminates a worker that exceeds its execution timeout" do
     worker = worker_script!("slow", success_payload(), "sleep 5")
 
@@ -195,7 +235,7 @@ defmodule Newspaper.ExtractionTest do
     assert Repo.aggregate(PipelineStepAttempt, :count) == 1
   end
 
-  defp create_article!(url) do
+  defp create_article!(url, opts \\ []) do
     {:ok, input_feed} =
       Intake.create_input_feed(%{
         name: "Seeded Feed",
@@ -205,7 +245,7 @@ defmodule Newspaper.ExtractionTest do
 
     {:ok, raw_item} =
       Intake.upsert_raw_item(input_feed, %{
-        feed_guid: "#{url}#rss",
+        feed_guid: Keyword.get(opts, :feed_guid, "#{url}#rss"),
         url: url,
         title: "Seeded Article",
         published_at: ~U[2026-06-18 12:00:00Z],
@@ -255,6 +295,31 @@ defmodule Newspaper.ExtractionTest do
     path
   end
 
+  defp fallback_worker_script!(stable_url, missing_payload, success_payload) do
+    path =
+      Path.join(
+        System.tmp_dir!(),
+        "newspaper-fallback-#{System.unique_integer([:positive])}"
+      )
+
+    missing_json = Jason.encode!(missing_payload)
+    success_json = Jason.encode!(success_payload)
+
+    File.write!(path, """
+    #!/usr/bin/env bash
+    request="$(cat)"
+
+    if printf '%s' "$request" | grep -Fq '#{stable_url}'; then
+      printf '%s\\n' '#{success_json}'
+    else
+      printf '%s\\n' '#{missing_json}'
+    fi
+    """)
+
+    File.chmod!(path, 0o755)
+    path
+  end
+
   defp success_payload do
     %{
       schema_version: 1,
@@ -281,6 +346,19 @@ defmodule Newspaper.ExtractionTest do
       retryable: true,
       message: "HTTP 429",
       debug_metadata: %{"status_code" => 429}
+    }
+  end
+
+  defp not_found_payload(url) do
+    %{
+      schema_version: 1,
+      implementation: "extraction.simple_html",
+      status: "failed",
+      final_url: url,
+      failure_kind: "http_error",
+      retryable: false,
+      message: "HTTP 404",
+      debug_metadata: %{"status_code" => 404}
     }
   end
 end

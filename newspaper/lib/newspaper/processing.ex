@@ -60,6 +60,9 @@ defmodule Newspaper.Processing do
       item.article.extraction && not force? ->
         {:ok, []}
 
+      terminal_extraction_failure?(item.article) and not force? ->
+        {:ok, []}
+
       true ->
         attempts =
           item.generated_feed_id
@@ -238,16 +241,25 @@ defmodule Newspaper.Processing do
     counts =
       Repo.one(
         from item in GeneratedFeedItem,
+          join: article in Article,
+          on: article.id == item.article_id,
           left_join: extraction in ArticleExtraction,
           on: extraction.article_id == item.article_id,
           where: item.generated_feed_id == ^feed_id,
           select: %{
             items: count(item.id),
-            extracted: count(extraction.id)
+            extracted: count(extraction.id),
+            unavailable:
+              fragment(
+                "count(*) FILTER (WHERE ? IS NULL AND ? = 'failed' AND (?->>'retryable') = 'false')",
+                extraction.id,
+                article.extraction_status,
+                article.extraction_metadata
+              )
           }
       )
 
-    Map.put(counts, :unprocessed, counts.items - counts.extracted)
+    Map.put(counts, :unprocessed, counts.items - counts.extracted - counts.unavailable)
   end
 
   def list_queued_attempts do
@@ -256,6 +268,16 @@ defmodule Newspaper.Processing do
     |> order_by([attempt], asc: attempt.inserted_at)
     |> Repo.all()
   end
+
+  defp terminal_extraction_failure?(%Article{
+         extraction_status: "failed",
+         extraction_metadata: metadata
+       })
+       when is_map(metadata) do
+    Map.get(metadata, "retryable") in [false, "false"]
+  end
+
+  defp terminal_extraction_failure?(_article), do: false
 
   def requeue_interrupted_attempts do
     {count, _rows} =
