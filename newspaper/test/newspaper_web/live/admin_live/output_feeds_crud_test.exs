@@ -20,6 +20,14 @@ defmodule NewspaperWeb.AdminLive.OutputFeedsCrudTest do
 
     {:ok, view, _html} = live(conn, ~p"/output-feeds")
 
+    refute has_element?(view, "#new-output-feed-form")
+
+    view
+    |> element("#add-output-feed")
+    |> render_click()
+
+    assert has_element?(view, "#new-output-feed-form")
+
     view
     |> form("#new-output-feed-form", %{
       "generated_feed" => %{
@@ -38,6 +46,8 @@ defmodule NewspaperWeb.AdminLive.OutputFeedsCrudTest do
     output_feed = Repo.get_by!(GeneratedFeed, title: "Cars") |> Repo.preload(:input_feeds)
     assert output_feed.item_limit == 25
     assert Enum.map(output_feed.input_feeds, & &1.id) == [input_feed.id]
+    refute has_element?(view, "#new-output-feed-form")
+    assert has_element?(view, "#output-feed-actions-#{output_feed.id}")
 
     view
     |> element("#edit-output-feed-#{output_feed.id}")

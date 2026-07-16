@@ -9,6 +9,14 @@ defmodule NewspaperWeb.AdminLive.IntakeCrudTest do
   test "creates, edits, and deletes intake groups and input feeds", %{conn: conn} do
     {:ok, view, _html} = live(conn, ~p"/intake")
 
+    refute has_element?(view, "#new-intake-group-form")
+
+    view
+    |> element("#add-intake-group")
+    |> render_click()
+
+    assert has_element?(view, "#new-intake-group-form")
+
     view
     |> form("#new-intake-group-form", %{
       "intake_group" => %{
@@ -42,6 +50,10 @@ defmodule NewspaperWeb.AdminLive.IntakeCrudTest do
     assert group.notes == "Updated notes"
 
     view
+    |> element("#add-input-feed")
+    |> render_click()
+
+    view
     |> form("#new-input-feed-form", %{
       "input_feed" => %{
         "name" => "Garage Feed",
@@ -53,6 +65,7 @@ defmodule NewspaperWeb.AdminLive.IntakeCrudTest do
 
     feed = Repo.get_by!(InputFeed, name: "Garage Feed")
     assert is_nil(feed.intake_group_id)
+    refute has_element?(view, "#new-input-feed-form")
 
     view
     |> element("#edit-feed-#{feed.id}")

@@ -58,7 +58,7 @@ defmodule NewspaperWeb.AdminLive.Articles do
   def render(assigns) do
     ~H"""
     <Layouts.app flash={@flash}>
-      <.nav />
+      <.nav current="articles" />
 
       <header class="mb-8">
         <p class="mb-1 text-xs font-semibold uppercase tracking-wider text-base-content/50">

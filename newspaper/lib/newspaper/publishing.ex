@@ -10,7 +10,7 @@ defmodule Newspaper.Publishing do
   def list_generated_feeds do
     GeneratedFeed
     |> order_by([f], asc: f.title)
-    |> preload([:intake_groups, :input_feeds])
+    |> preload([:intake_groups, :input_feeds, :pipeline_steps])
     |> Repo.all()
   end
 

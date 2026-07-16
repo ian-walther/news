@@ -40,7 +40,7 @@ defmodule NewspaperWeb.AdminLive.Dashboard do
   def render(assigns) do
     ~H"""
     <Layouts.app flash={@flash}>
-      <.nav />
+      <.nav current="activity" />
 
       <header class="mb-8 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>

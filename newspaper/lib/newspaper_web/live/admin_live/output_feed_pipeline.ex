@@ -6,6 +6,7 @@ defmodule NewspaperWeb.AdminLive.OutputFeedPipeline do
   alias Newspaper.Processing
   alias Newspaper.Processing.Registry
   alias Newspaper.Publishing
+  alias NewspaperWeb.AdminLive.Format
 
   def mount(%{"id" => id}, _session, socket) do
     if connected?(socket), do: Newspaper.Events.subscribe()
@@ -135,7 +136,7 @@ defmodule NewspaperWeb.AdminLive.OutputFeedPipeline do
   def render(assigns) do
     ~H"""
     <Layouts.app flash={@flash}>
-      <.nav />
+      <.nav current="output-feeds" />
 
       <div class="mb-6 flex flex-wrap items-center justify-between gap-3">
         <div>
@@ -186,7 +187,11 @@ defmodule NewspaperWeb.AdminLive.OutputFeedPipeline do
             <div class="min-w-0">
               <div class="flex flex-wrap items-center gap-2">
                 <span class="font-medium">{batch_status_label(batch)}</span>
-                <span class="text-sm text-base-content/60">{batch.started_at}</span>
+                <.local_time
+                  id={"pipeline-batch-started-#{batch.id}"}
+                  value={batch.started_at}
+                  class="text-sm text-base-content/60"
+                />
               </div>
               <progress
                 class="progress progress-primary mt-3 h-2 w-full max-w-xl"
@@ -199,7 +204,7 @@ defmodule NewspaperWeb.AdminLive.OutputFeedPipeline do
               </div>
             </div>
             <div class="text-sm text-base-content/60 md:text-right">
-              {batch_duration(batch)}
+              {Format.duration(batch)}
             </div>
           </div>
         </div>
@@ -407,17 +412,5 @@ defmodule NewspaperWeb.AdminLive.OutputFeedPipeline do
     "#{counts["succeeded"] || 0} succeeded · #{counts["failed"] || 0} failed · " <>
       "#{counts["queued"] || 0} queued · #{counts["running"] || 0} running · " <>
       "#{counts["skipped"] || 0} skipped"
-  end
-
-  defp batch_duration(%{finished_at: nil}), do: "In progress"
-
-  defp batch_duration(batch) do
-    seconds = max(DateTime.diff(batch.finished_at, batch.started_at, :second), 0)
-
-    cond do
-      seconds >= 3600 -> "#{div(seconds, 3600)}h #{div(rem(seconds, 3600), 60)}m"
-      seconds >= 60 -> "#{div(seconds, 60)}m #{rem(seconds, 60)}s"
-      true -> "#{seconds}s"
-    end
   end
 end

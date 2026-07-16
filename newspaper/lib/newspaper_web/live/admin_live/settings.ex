@@ -33,19 +33,36 @@ defmodule NewspaperWeb.AdminLive.Settings do
 
   def render(assigns) do
     ~H"""
-    <main class="mx-auto max-w-3xl p-6">
-      <.nav />
-      <h1 class="mb-6 text-2xl font-semibold">Settings</h1>
-      <.form for={@form} phx-submit="save" class="space-y-4">
-        <.input
-          field={@form[:fetch_interval_minutes]}
-          label="Global fetch interval minutes"
-          type="number"
-        />
-        <.input field={@form[:run_history_enabled]} label="Run history/debug logging" type="checkbox" />
-        <.button>Save settings</.button>
-      </.form>
-    </main>
+    <Layouts.app flash={@flash}>
+      <.nav current="settings" />
+      <div class="max-w-3xl">
+        <header class="mb-8">
+          <p class="mb-1 text-xs font-semibold uppercase tracking-wider text-base-content/50">
+            Application
+          </p>
+          <h1 class="text-2xl font-semibold">Settings</h1>
+          <p class="mt-1 text-sm text-base-content/65">Global scheduling and diagnostics.</p>
+        </header>
+        <.form
+          for={@form}
+          id="settings-form"
+          phx-submit="save"
+          class="space-y-5 border-y border-base-300 py-6"
+        >
+          <.input
+            field={@form[:fetch_interval_minutes]}
+            label="Global fetch interval minutes"
+            type="number"
+          />
+          <.input
+            field={@form[:run_history_enabled]}
+            label="Run history/debug logging"
+            type="checkbox"
+          />
+          <.button><.icon name="hero-check" class="size-4" /> Save settings</.button>
+        </.form>
+      </div>
+    </Layouts.app>
     """
   end
 

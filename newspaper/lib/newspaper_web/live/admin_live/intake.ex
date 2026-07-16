@@ -10,20 +10,34 @@ defmodule NewspaperWeb.AdminLive.Intake do
 
     {:ok,
      socket
+     |> assign(:creating, nil)
      |> assign(:editing_group_id, nil)
      |> assign(:editing_feed_id, nil)
      |> assign_forms()
      |> assign_data()}
   end
 
+  def handle_event("show_create", %{"type" => type}, socket) when type in ["group", "feed"] do
+    {:noreply, socket |> assign(:creating, type) |> assign_new_forms()}
+  end
+
+  def handle_event("cancel_create", _params, socket) do
+    {:noreply, socket |> assign(:creating, nil) |> assign_new_forms()}
+  end
+
   def handle_event("save_group", %{"intake_group" => params}, socket) do
     case Intake.create_intake_group(params) do
       {:ok, _group} ->
         {:noreply,
-         socket |> put_flash(:info, "Intake group created") |> assign_forms() |> assign_data()}
+         socket
+         |> put_flash(:info, "Intake group created")
+         |> assign(:creating, nil)
+         |> assign_new_forms()
+         |> assign_data()}
 
       {:error, changeset} ->
-        {:noreply, assign(socket, :group_form, to_form(changeset))}
+        {:noreply,
+         socket |> assign(:creating, "group") |> assign(:group_form, to_form(changeset))}
     end
   end
 
@@ -32,6 +46,7 @@ defmodule NewspaperWeb.AdminLive.Intake do
 
     {:noreply,
      socket
+     |> assign(:creating, nil)
      |> assign(:editing_group_id, group.id)
      |> assign(:group_edit_form, to_form(Intake.change_intake_group(group)))}
   end
@@ -83,10 +98,14 @@ defmodule NewspaperWeb.AdminLive.Intake do
     case Intake.create_input_feed(params) do
       {:ok, _feed} ->
         {:noreply,
-         socket |> put_flash(:info, "Input feed created") |> assign_forms() |> assign_data()}
+         socket
+         |> put_flash(:info, "Input feed created")
+         |> assign(:creating, nil)
+         |> assign_new_forms()
+         |> assign_data()}
 
       {:error, changeset} ->
-        {:noreply, assign(socket, :feed_form, to_form(changeset))}
+        {:noreply, socket |> assign(:creating, "feed") |> assign(:feed_form, to_form(changeset))}
     end
   end
 
@@ -95,6 +114,7 @@ defmodule NewspaperWeb.AdminLive.Intake do
 
     {:noreply,
      socket
+     |> assign(:creating, nil)
      |> assign(:editing_feed_id, feed.id)
      |> assign(:feed_edit_form, to_form(Intake.change_input_feed(feed)))}
   end
@@ -176,45 +196,110 @@ defmodule NewspaperWeb.AdminLive.Intake do
 
   def render(assigns) do
     ~H"""
-    <main class="mx-auto max-w-6xl p-6">
-      <.nav />
-      <h1 class="mb-6 text-2xl font-semibold">Intake</h1>
+    <Layouts.app flash={@flash}>
+      <.nav current="intake" />
 
-      <div class="grid gap-8 lg:grid-cols-2">
-        <section>
-          <h2 class="mb-3 text-lg font-semibold">New Intake Group</h2>
+      <header class="mb-8 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <p class="mb-1 text-xs font-semibold uppercase tracking-wider text-base-content/50">
+            Sources
+          </p>
+          <h1 class="text-2xl font-semibold">Intake</h1>
+          <p class="mt-1 text-sm text-base-content/65">
+            Feeds discover articles; groups define deduplication boundaries.
+          </p>
+        </div>
+        <div class="flex flex-wrap gap-2">
+          <button
+            id="add-input-feed"
+            type="button"
+            class="btn btn-primary"
+            phx-click="show_create"
+            phx-value-type="feed"
+          >
+            <.icon name="hero-plus" class="size-4" /> Add feed
+          </button>
+          <button
+            id="add-intake-group"
+            type="button"
+            class="btn"
+            phx-click="show_create"
+            phx-value-type="group"
+          >
+            <.icon name="hero-plus" class="size-4" /> Add group
+          </button>
+        </div>
+      </header>
+
+      <section :if={@creating} id="intake-create-panel" class="mb-10 border-y border-base-300 py-6">
+        <div class="mb-5 flex items-center justify-between gap-4">
+          <h2 class="text-base font-semibold">
+            {if @creating == "group", do: "New intake group", else: "New input feed"}
+          </h2>
+          <button
+            id="cancel-intake-create"
+            type="button"
+            class="btn btn-ghost btn-sm btn-square"
+            phx-click="cancel_create"
+            title="Close"
+            aria-label="Close creation form"
+          >
+            <.icon name="hero-x-mark" class="size-5" />
+          </button>
+        </div>
+
+        <div :if={@creating == "group"}>
           <.form
             for={@group_form}
             id="new-intake-group-form"
             phx-submit="save_group"
-            class="space-y-4"
+            class="grid gap-4 md:grid-cols-2"
           >
             <.input field={@group_form[:name]} label="Name" />
             <.input field={@group_form[:outlet_name]} label="Outlet name" />
-            <.input field={@group_form[:notes]} label="Notes" type="textarea" />
-            <.button>Create group</.button>
+            <.input
+              field={@group_form[:notes]}
+              label="Notes"
+              type="textarea"
+              class="textarea w-full md:col-span-2"
+            />
+            <div class="md:col-span-2">
+              <.button><.icon name="hero-plus" class="size-4" /> Create group</.button>
+            </div>
           </.form>
-        </section>
+        </div>
 
-        <section>
-          <h2 class="mb-3 text-lg font-semibold">New Input Feed</h2>
-          <.form for={@feed_form} id="new-input-feed-form" phx-submit="save_feed" class="space-y-4">
+        <div :if={@creating == "feed"}>
+          <.form
+            for={@feed_form}
+            id="new-input-feed-form"
+            phx-submit="save_feed"
+            class="grid gap-4 md:grid-cols-2"
+          >
             <.input field={@feed_form[:name]} label="Name" />
-            <.input field={@feed_form[:url]} label="URL" />
+            <.input field={@feed_form[:url]} label="URL" type="url" />
             <.input
               field={@feed_form[:intake_group_id]}
               label="Intake group"
               type="select"
               options={@group_options}
             />
-            <.button>Create feed</.button>
+            <div class="self-end">
+              <.button><.icon name="hero-plus" class="size-4" /> Create feed</.button>
+            </div>
           </.form>
-        </section>
-      </div>
+        </div>
+      </section>
 
-      <section class="mt-8">
-        <h2 class="mb-3 text-lg font-semibold">Ungrouped Feeds</h2>
-        <ul class="space-y-2 text-sm">
+      <section id="ungrouped-input-feeds" class="mb-10">
+        <div class="mb-3 flex items-baseline justify-between gap-4">
+          <h2 class="text-base font-semibold">Ungrouped feeds</h2>
+          <span class="text-xs text-base-content/50">{@ungrouped_feed_count}</span>
+        </div>
+        <ul class="divide-y divide-base-300 border-y border-base-300 text-sm">
+          <li :if={@ungrouped_feed_count == 0} class="py-6 text-base-content/55">
+            Every input feed belongs to a group.
+          </li>
           <.feed_row
             :for={feed <- @ungrouped_feeds}
             feed={feed}
@@ -225,52 +310,43 @@ defmodule NewspaperWeb.AdminLive.Intake do
         </ul>
       </section>
 
-      <section class="mt-8">
-        <h2 class="mb-3 text-lg font-semibold">Groups</h2>
-        <div class="space-y-4">
-          <div :for={group <- @groups} class="rounded border p-4">
+      <section id="intake-groups">
+        <div class="mb-3 flex items-baseline justify-between gap-4">
+          <h2 class="text-base font-semibold">Groups</h2>
+          <span class="text-xs text-base-content/50">{@group_count}</span>
+        </div>
+        <div class="divide-y divide-base-300 border-y border-base-300">
+          <p :if={@group_count == 0} class="py-8 text-sm text-base-content/55">
+            No intake groups configured.
+          </p>
+          <article :for={group <- @groups} id={"intake-group-#{group.id}"} class="py-5">
             <div class="flex items-start justify-between gap-4">
-              <div>
-                <div class="font-semibold">{group.name}</div>
-                <div class="text-sm text-base-content/70">
-                  {if group.enabled, do: "enabled", else: "disabled"}
-                  <div :if={group.notes not in [nil, ""]}>{group.notes}</div>
+              <div class="min-w-0">
+                <div class="flex flex-wrap items-center gap-2">
+                  <h3 class="font-semibold">{group.name}</h3>
+                  <span class={
+                    if(group.enabled, do: "badge badge-success badge-soft", else: "badge badge-ghost")
+                  }>
+                    {if group.enabled, do: "Enabled", else: "Disabled"}
+                  </span>
+                  <span class="text-xs text-base-content/50">
+                    {length(group.input_feeds)} {if length(group.input_feeds) == 1,
+                      do: "feed",
+                      else: "feeds"}
+                  </span>
                 </div>
+                <p :if={group.notes not in [nil, ""]} class="mt-1 text-sm text-base-content/60">
+                  {group.notes}
+                </p>
               </div>
-              <div class="flex shrink-0 gap-2">
-                <button
-                  class="btn btn-sm"
-                  phx-click="edit_group"
-                  phx-value-id={group.id}
-                  id={"edit-group-#{group.id}"}
-                >
-                  Edit
-                </button>
-                <button
-                  class="btn btn-sm"
-                  phx-click="toggle_group"
-                  phx-value-id={group.id}
-                  id={"toggle-group-#{group.id}"}
-                >
-                  {if group.enabled, do: "Disable", else: "Enable"}
-                </button>
-                <button
-                  class="btn btn-sm btn-error btn-soft"
-                  phx-click="delete_group"
-                  phx-value-id={group.id}
-                  data-confirm="Delete this intake group?"
-                  id={"delete-group-#{group.id}"}
-                >
-                  Delete
-                </button>
-              </div>
+              <.group_actions group={group} />
             </div>
             <.form
               :if={@editing_group_id == group.id}
               for={@group_edit_form}
               id={"edit-intake-group-form-#{group.id}"}
               phx-submit="update_group"
-              class="mt-4 grid gap-3 md:grid-cols-2"
+              class="mt-5 grid gap-3 border-t border-base-300 pt-5 md:grid-cols-2"
             >
               <.input
                 id={"edit-intake-group-name-#{group.id}"}
@@ -301,7 +377,10 @@ defmodule NewspaperWeb.AdminLive.Intake do
                 </button>
               </div>
             </.form>
-            <ul class="mt-3 space-y-2 text-sm">
+            <ul
+              :if={group.input_feeds != []}
+              class="mt-5 divide-y divide-base-300 border-t border-base-300 text-sm"
+            >
               <.feed_row
                 :for={feed <- group.input_feeds}
                 feed={feed}
@@ -310,10 +389,10 @@ defmodule NewspaperWeb.AdminLive.Intake do
                 feed_edit_form={@feed_edit_form}
               />
             </ul>
-          </div>
+          </article>
         </div>
       </section>
-    </main>
+    </Layouts.app>
     """
   end
 
@@ -324,50 +403,35 @@ defmodule NewspaperWeb.AdminLive.Intake do
 
   defp feed_row(assigns) do
     ~H"""
-    <li class="rounded border border-base-300 p-3">
-      <div class="flex items-start justify-between gap-4">
-        <div>
-          <div class="font-medium">{@feed.name}</div>
-          <div class="break-all text-base-content/70">{@feed.url}</div>
-          <div class="text-base-content/60">
-            {if @feed.enabled, do: "enabled", else: "disabled"} - {@feed.last_fetch_status ||
-              "never fetched"}
+    <li id={"input-feed-#{@feed.id}"} class="py-4">
+      <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div class="min-w-0">
+          <div class="flex flex-wrap items-center gap-2">
+            <span class="font-medium">{@feed.name}</span>
+            <span class={
+              if(@feed.enabled, do: "badge badge-success badge-soft", else: "badge badge-ghost")
+            }>
+              {if @feed.enabled, do: "Enabled", else: "Disabled"}
+            </span>
+            <span class={fetch_status_class(@feed.last_fetch_status)}>
+              {fetch_status_label(@feed.last_fetch_status)}
+            </span>
+          </div>
+          <div class="mt-1 break-all text-xs text-base-content/55">{@feed.url}</div>
+          <div :if={@feed.last_fetched_at} class="mt-1 text-xs text-base-content/45">
+            Last fetched <.local_time id={"feed-fetched-#{@feed.id}"} value={@feed.last_fetched_at} />
           </div>
         </div>
-        <div class="flex shrink-0 gap-2">
+        <div class="flex shrink-0 items-center gap-2 sm:justify-end">
           <button
             class="btn btn-sm"
             phx-click="fetch_feed"
             phx-value-id={@feed.id}
             id={"fetch-feed-#{@feed.id}"}
           >
-            Fetch
+            <.icon name="hero-arrow-path" class="size-4" /> Fetch
           </button>
-          <button
-            class="btn btn-sm"
-            phx-click="edit_feed"
-            phx-value-id={@feed.id}
-            id={"edit-feed-#{@feed.id}"}
-          >
-            Edit
-          </button>
-          <button
-            class="btn btn-sm"
-            phx-click="toggle_feed"
-            phx-value-id={@feed.id}
-            id={"toggle-feed-#{@feed.id}"}
-          >
-            {if @feed.enabled, do: "Disable", else: "Enable"}
-          </button>
-          <button
-            class="btn btn-sm btn-error btn-soft"
-            phx-click="delete_feed"
-            phx-value-id={@feed.id}
-            data-confirm="Delete this input feed?"
-            id={"delete-feed-#{@feed.id}"}
-          >
-            Delete
-          </button>
+          <.feed_actions feed={@feed} />
         </div>
       </div>
 
@@ -376,7 +440,7 @@ defmodule NewspaperWeb.AdminLive.Intake do
         for={@feed_edit_form}
         id={"edit-input-feed-form-#{@feed.id}"}
         phx-submit="update_feed"
-        class="mt-4 grid gap-3 md:grid-cols-2"
+        class="mt-5 grid gap-3 border-t border-base-300 pt-5 md:grid-cols-2"
       >
         <.input id={"edit-input-feed-name-#{@feed.id}"} field={@feed_edit_form[:name]} label="Name" />
         <.input id={"edit-input-feed-url-#{@feed.id}"} field={@feed_edit_form[:url]} label="URL" />
@@ -415,27 +479,123 @@ defmodule NewspaperWeb.AdminLive.Intake do
     """
   end
 
+  attr :group, IntakeGroup, required: true
+
+  defp group_actions(assigns) do
+    ~H"""
+    <details id={"group-actions-#{@group.id}"} class="dropdown dropdown-end shrink-0">
+      <summary
+        class="btn btn-ghost btn-sm btn-square"
+        title="Group actions"
+        aria-label="Group actions"
+      >
+        <.icon name="hero-ellipsis-horizontal" class="size-5" />
+      </summary>
+      <ul class="menu dropdown-content z-20 mt-1 w-44 border border-base-300 bg-base-100 p-1 shadow-lg">
+        <li>
+          <button phx-click="edit_group" phx-value-id={@group.id} id={"edit-group-#{@group.id}"}>
+            <.icon name="hero-pencil-square" class="size-4" /> Edit
+          </button>
+        </li>
+        <li>
+          <button phx-click="toggle_group" phx-value-id={@group.id} id={"toggle-group-#{@group.id}"}>
+            <.icon name={if(@group.enabled, do: "hero-pause", else: "hero-play")} class="size-4" />
+            {if @group.enabled, do: "Disable", else: "Enable"}
+          </button>
+        </li>
+        <li>
+          <button
+            class="text-error"
+            phx-click="delete_group"
+            phx-value-id={@group.id}
+            data-confirm="Delete this intake group?"
+            id={"delete-group-#{@group.id}"}
+          >
+            <.icon name="hero-trash" class="size-4" /> Delete
+          </button>
+        </li>
+      </ul>
+    </details>
+    """
+  end
+
+  attr :feed, InputFeed, required: true
+
+  defp feed_actions(assigns) do
+    ~H"""
+    <details id={"feed-actions-#{@feed.id}"} class="dropdown dropdown-end">
+      <summary class="btn btn-ghost btn-sm btn-square" title="Feed actions" aria-label="Feed actions">
+        <.icon name="hero-ellipsis-horizontal" class="size-5" />
+      </summary>
+      <ul class="menu dropdown-content z-20 mt-1 w-44 border border-base-300 bg-base-100 p-1 shadow-lg">
+        <li>
+          <button phx-click="edit_feed" phx-value-id={@feed.id} id={"edit-feed-#{@feed.id}"}>
+            <.icon name="hero-pencil-square" class="size-4" /> Edit
+          </button>
+        </li>
+        <li>
+          <button phx-click="toggle_feed" phx-value-id={@feed.id} id={"toggle-feed-#{@feed.id}"}>
+            <.icon name={if(@feed.enabled, do: "hero-pause", else: "hero-play")} class="size-4" />
+            {if @feed.enabled, do: "Disable", else: "Enable"}
+          </button>
+        </li>
+        <li>
+          <button
+            class="text-error"
+            phx-click="delete_feed"
+            phx-value-id={@feed.id}
+            data-confirm="Delete this input feed?"
+            id={"delete-feed-#{@feed.id}"}
+          >
+            <.icon name="hero-trash" class="size-4" /> Delete
+          </button>
+        </li>
+      </ul>
+    </details>
+    """
+  end
+
   defp assign_data(socket) do
     groups = Intake.list_intake_groups()
 
     socket
     |> assign(:groups, groups)
-    |> assign(:ungrouped_feeds, Intake.list_ungrouped_input_feeds())
+    |> assign(:group_count, length(groups))
+    |> then(fn socket ->
+      ungrouped_feeds = Intake.list_ungrouped_input_feeds()
+
+      socket
+      |> assign(:ungrouped_feeds, ungrouped_feeds)
+      |> assign(:ungrouped_feed_count, length(ungrouped_feeds))
+    end)
     |> assign(:group_options, [{"No intake group", ""} | Enum.map(groups, &{&1.name, &1.id})])
   end
 
   defp assign_forms(socket) do
     socket
-    |> assign(:group_form, to_form(Intake.change_intake_group(%IntakeGroup{})))
-    |> assign(:feed_form, to_form(Intake.change_input_feed(%InputFeed{})))
+    |> assign_new_forms()
     |> assign(:group_edit_form, nil)
     |> assign(:feed_edit_form, nil)
+  end
+
+  defp assign_new_forms(socket) do
+    socket
+    |> assign(:group_form, to_form(Intake.change_intake_group(%IntakeGroup{})))
+    |> assign(:feed_form, to_form(Intake.change_input_feed(%InputFeed{})))
   end
 
   defp blank_group_to_nil(%{"intake_group_id" => ""} = params),
     do: %{params | "intake_group_id" => nil}
 
   defp blank_group_to_nil(params), do: params
+
+  defp fetch_status_label("ok"), do: "Healthy"
+  defp fetch_status_label("failed"), do: "Failed"
+  defp fetch_status_label(_status), do: "Never fetched"
+
+  defp fetch_status_class("ok"), do: "badge badge-success badge-soft"
+  defp fetch_status_class("failed"), do: "badge badge-error badge-soft"
+  defp fetch_status_class(_status), do: "badge badge-ghost"
 
   defp to_id(id) when is_integer(id), do: id
   defp to_id(id) when is_binary(id), do: String.to_integer(id)
