@@ -199,7 +199,9 @@ defmodule NewspaperWeb.AdminLive.Dashboard do
                     <p class="font-medium">{Format.failure_type_label(group.failure_type)}</p>
                     <p class="mt-0.5 truncate text-sm text-base-content/65">{group.source}</p>
                   </div>
-                  <span class="badge badge-error badge-soft shrink-0">{group.count} occurrences</span>
+                  <span class="badge badge-error badge-soft shrink-0">
+                    {occurrence_label(group.count)}
+                  </span>
                 </div>
                 <p class="mt-3 line-clamp-2 text-sm text-base-content/70">{group.message}</p>
                 <div class="mt-3 flex flex-wrap items-center gap-3">
@@ -311,4 +313,7 @@ defmodule NewspaperWeb.AdminLive.Dashboard do
     |> to_string()
     |> String.trim_leading("www.")
   end
+
+  defp occurrence_label(1), do: "1 occurrence"
+  defp occurrence_label(count), do: "#{count} occurrences"
 end
