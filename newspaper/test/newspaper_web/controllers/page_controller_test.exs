@@ -3,6 +3,6 @@ defmodule NewspaperWeb.PageControllerTest do
 
   test "GET /", %{conn: conn} do
     conn = get(conn, ~p"/")
-    assert html_response(conn, 200) =~ "Failures / Recent Activity"
+    assert html_response(conn, 200) =~ ~s(id="article-health")
   end
 end

@@ -41,6 +41,20 @@ defmodule NewspaperWeb.Layouts do
       </div>
     </main>
 
+    <script :type={Phoenix.LiveView.ColocatedHook} name=".LocalTime">
+      export default {
+        mounted() {
+          const value = this.el.dataset.timestamp
+          if (!value) return
+
+          this.el.textContent = new Intl.DateTimeFormat(undefined, {
+            dateStyle: "medium",
+            timeStyle: "short"
+          }).format(new Date(value))
+        }
+      }
+    </script>
+
     <.flash_group flash={@flash} />
     """
   end

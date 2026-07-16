@@ -63,6 +63,8 @@ Avoid both of these failure modes:
 - Local article pages once extraction exists.
 - Later paper planning, delivery, and Home Assistant integration.
 
+Operator-facing views should lead with domain state and meaningful parent operations. Low-level child runs, snapshots, and raw metadata remain available as expandable debug evidence instead of dominating routine workflows. Time values should be stored in UTC and rendered in the operator's browser-local timezone.
+
 ## Worker Responsibilities
 
 Workers should receive explicit structured input and return explicit structured output when they exist.

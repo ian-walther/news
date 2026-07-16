@@ -26,6 +26,45 @@ defmodule Newspaper.Content do
     |> Repo.all()
   end
 
+  def article_status_counts do
+    counts =
+      Article
+      |> group_by([article], article.extraction_status)
+      |> select([article], {article.extraction_status, count(article.id)})
+      |> Repo.all()
+      |> Map.new()
+
+    %{
+      total: Enum.sum(Map.values(counts)),
+      extracted: Map.get(counts, "succeeded", 0),
+      failed: Map.get(counts, "failed", 0),
+      queued: Map.get(counts, "queued", 0),
+      running: Map.get(counts, "running", 0),
+      not_requested: Map.get(counts, "not_requested", 0)
+    }
+  end
+
+  def list_recent_extracted_articles(limit \\ 8) do
+    Article
+    |> join(:inner, [article], extraction in ArticleExtraction,
+      on: extraction.article_id == article.id
+    )
+    |> order_by([_article, extraction], desc: extraction.extracted_at, desc: extraction.id)
+    |> limit(^limit)
+    |> preload([_article, extraction], extraction: extraction)
+    |> Repo.all()
+  end
+
+  def list_active_site_backoffs(now \\ DateTime.utc_now(:second)) do
+    SiteExtractionPolicy
+    |> where(
+      [policy],
+      policy.backoff_until > ^now or policy.consecutive_rate_limits > 0
+    )
+    |> order_by([policy], desc: policy.backoff_until, asc: policy.site_host)
+    |> Repo.all()
+  end
+
   def get_article!(id) do
     Article
     |> Repo.get!(id)

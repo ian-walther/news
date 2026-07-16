@@ -202,6 +202,14 @@ defmodule Newspaper.Processing do
     |> Repo.all()
   end
 
+  def list_recent_batches(limit \\ 5) do
+    Run
+    |> where([run], run.run_type == "pipeline_batch")
+    |> order_by([run], desc: run.started_at, desc: run.id)
+    |> limit(^limit)
+    |> Repo.all()
+  end
+
   def feed_processing_counts(feed_id) when is_integer(feed_id) do
     counts =
       Repo.one(

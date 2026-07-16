@@ -32,6 +32,42 @@ defmodule NewspaperWeb.CoreComponents do
   alias Phoenix.LiveView.JS
 
   @doc """
+  Renders a UTC timestamp in the browser's local timezone.
+  """
+  attr :id, :string, required: true
+  attr :value, :any, required: true
+  attr :class, :any, default: nil
+
+  def local_time(assigns) do
+    assigns =
+      assigns
+      |> assign(:iso_value, local_time_iso(assigns.value))
+      |> assign(:fallback, local_time_fallback(assigns.value))
+
+    ~H"""
+    <time
+      id={@id}
+      datetime={@iso_value}
+      data-timestamp={@iso_value}
+      class={@class}
+      phx-hook=".LocalTime"
+      phx-update="ignore"
+    >
+      {@fallback}
+    </time>
+    """
+  end
+
+  defp local_time_iso(%DateTime{} = value), do: DateTime.to_iso8601(value)
+  defp local_time_iso(_value), do: nil
+
+  defp local_time_fallback(%DateTime{} = value) do
+    Calendar.strftime(value, "%b %-d, %Y %H:%M UTC")
+  end
+
+  defp local_time_fallback(_value), do: "In progress"
+
+  @doc """
   Renders flash notices.
 
   ## Examples
