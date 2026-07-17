@@ -483,7 +483,11 @@ defmodule NewspaperWeb.AdminLive.Intake do
 
   defp group_actions(assigns) do
     ~H"""
-    <details id={"group-actions-#{@group.id}"} class="dropdown dropdown-end shrink-0">
+    <details
+      id={"group-actions-#{@group.id}"}
+      class="dropdown dropdown-end shrink-0"
+      phx-click-away={JS.remove_attribute("open")}
+    >
       <summary
         class="btn btn-ghost btn-sm btn-square"
         title="Group actions"
@@ -523,7 +527,11 @@ defmodule NewspaperWeb.AdminLive.Intake do
 
   defp feed_actions(assigns) do
     ~H"""
-    <details id={"feed-actions-#{@feed.id}"} class="dropdown dropdown-end">
+    <details
+      id={"feed-actions-#{@feed.id}"}
+      class="dropdown dropdown-end"
+      phx-click-away={JS.remove_attribute("open")}
+    >
       <summary class="btn btn-ghost btn-sm btn-square" title="Feed actions" aria-label="Feed actions">
         <.icon name="hero-ellipsis-horizontal" class="size-5" />
       </summary>

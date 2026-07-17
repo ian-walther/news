@@ -348,7 +348,11 @@ defmodule NewspaperWeb.AdminLive.OutputFeeds do
 
   defp output_feed_actions(assigns) do
     ~H"""
-    <details id={"output-feed-actions-#{@feed.id}"} class="dropdown dropdown-end">
+    <details
+      id={"output-feed-actions-#{@feed.id}"}
+      class="dropdown dropdown-end"
+      phx-click-away={JS.remove_attribute("open")}
+    >
       <summary
         class="btn btn-ghost btn-sm btn-square"
         title="Output feed actions"
