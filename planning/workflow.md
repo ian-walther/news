@@ -36,6 +36,20 @@ generated feed item available
   -> failure recorded when needed
 ```
 
+## Digestion Flow
+
+```text
+generated feed item available
+  -> enabled digestion step checks for successful extraction
+  -> step attempt recorded
+  -> selected Ollama model produces one structured title and summary
+  -> result validated and stored as a durable article digest
+  -> generated feed item re-rendered when configured to use digest output
+  -> failure recorded when generation or validation fails
+```
+
+Articles without a successful extraction are not eligible for digestion. The digest step should wait on that prerequisite rather than silently using a raw feed body.
+
 ## State Strategy
 
 Prefer simple, explicit state fields and failure records over a general-purpose workflow framework.
@@ -91,9 +105,11 @@ Examples:
 - Generated feed render failed.
 - Extraction auth expired.
 - Extraction failed.
+- Digest output failed schema validation.
+- The configured Ollama server or selected model is unavailable.
 - Classifier output failed schema validation.
 
-The model should support feed, extraction, filtering, summarization, rendering, and worker contract failures.
+The model should support feed, extraction, digestion, filtering, rendering, and worker contract failures.
 
 Re-rendering should be explicit. When extraction succeeds or settings change later, the system should update generated feed item snapshots through a deliberate reprocess path rather than changing output implicitly on every RSS request.
 
@@ -175,11 +191,11 @@ Filter decides whether an article should remain eligible for an output feed, be 
 
 Filtering is a pipeline step type. Source-policy filtering and local-LLM topic filtering are separate implementations of that type.
 
-### Summarize
+### Digest
 
-Summarize produces durable summaries for reading, feed output, or newspaper sections.
+Digest produces one durable factual replacement title and reading summary from a successful article extraction.
 
-Summarization is a pipeline step type. Different models, prompts, and output formats should be represented as separate implementations or implementation configs.
+Digestion is a pipeline step type. The initial `digestion.ollama.article_digest` implementation stores the selected model and bounded config on the output-feed step. Existing eligible articles are processed through an explicit `Digest existing articles` bulk action; successful artifacts are regenerated only through an explicit re-digest action.
 
 ### Rebuild
 

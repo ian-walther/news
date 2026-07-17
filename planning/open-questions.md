@@ -20,7 +20,7 @@
 
 - How long should raw items, articles, and generated feed items be retained by default?
 - Should retention be based on age, item count, output feed membership, or a mix?
-- What should be protected from autopurge once extraction, summaries, or newspaper history exist?
+- What should be protected from autopurge once extraction, digests, or newspaper history exist?
 - How long should verbose run/debug history be retained?
 
 ## Rebuild
@@ -57,7 +57,6 @@
 ## Extraction
 
 - What config fields should `extraction.headed_browser` expose in the first UI?
-- Should generated feeds include full extracted article text, summaries, excerpts, or a rendering pipeline setting beyond the initial extracted-body boolean?
 - How should paid-site auth expiration be detected and surfaced?
 - How should the Dockerized app reach host Chrome/CDP securely when CDP is bound narrowly?
 - What failure kinds and thresholds should teach a site-level minimum extractor?
@@ -67,6 +66,15 @@
 - When is there enough real demand to add global, intake-group, or input-feed pipeline scope?
 - How much implementation config should be editable as typed fields versus raw JSON?
 - Should pipeline attempts be retained forever until retention policies exist?
+
+## Article Digestion
+
+- When digest rendering is selected, should publication wait for a successful digest, or publish original content immediately and re-render later?
+- What summary length and paragraph shape work best in Reeder?
+- What prompt and validation bounds reliably produce a factual one-sentence title without clickbait framing?
+- Which installed Ollama model should be selected after testing representative extracted articles?
+- What Ollama concurrency limit keeps desktop inference responsive while processing a backlog?
+- Which connection, model, and structured-output failures should retry automatically?
 
 ## Home Assistant
 

@@ -62,7 +62,7 @@ The review corpus should include:
 - very short legitimate articles
 - malformed or unusually structured pages
 
-Quality decisions should remain deterministic and auditable. Local LLMs can classify or summarize extracted text later, but they should not silently rewrite extraction output into an unverifiable canonical article.
+Quality decisions should remain deterministic and auditable. Local LLMs can classify or digest extracted text later, but they should not silently rewrite extraction output into an unverifiable canonical article.
 
 ## Remaining Acceptance Criteria
 

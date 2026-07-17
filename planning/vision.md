@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Build a local-first personal news intake system that improves the existing FreshRSS and Reeder workflow by adding an upstream layer for feed aggregation, deduplication, generated feed publishing, content extraction, semantic filtering, summarization, and morning newspaper generation.
+Build a local-first personal news intake system that improves the existing FreshRSS and Reeder workflow by adding an upstream layer for feed aggregation, deduplication, generated feed publishing, content extraction, semantic filtering, article digestion, and morning newspaper generation.
 
 The morning newspaper is the long-term product goal. The intermediate feed features are intentionally useful on their own, and each one should move the system closer to that final newspaper workflow.
 
@@ -12,7 +12,7 @@ The feed foundation is generated RSS feeds.
 
 The app should keep input feeds, intake groups, canonical articles, and generated output feeds as separate concepts. Reeder Classic remains the primary reading client through FreshRSS for the bulk of news consumption.
 
-Reliable extraction across static, JavaScript-rendered, and authenticated sources is the foundation for local-LLM summarization and filtering. The next compelling product milestone is useful AI digestion on successfully extracted articles; complete browser coverage does not need to block learning from sources that already extract cleanly.
+Reliable extraction across static, JavaScript-rendered, and authenticated sources is the foundation for local-LLM digestion and filtering. The next compelling product milestone is a factual replacement title and useful reading summary for successfully extracted articles; complete browser coverage does not need to block learning from sources that already extract cleanly.
 
 ## Product Modes
 
@@ -48,6 +48,15 @@ Semantic filtering and enrichment come after the feed pipeline and extraction pa
 - Support source-specific content policies, such as excluding political-topic coverage from otherwise useful sources whose political coverage is not trusted.
 - Store confidence, rationale, model identity, prompt/config metadata, and review state.
 - Make bad decisions auditable and correctable.
+
+### Article Digestion
+
+Article digestion is a discrete generated-feed feature built on successful durable extraction.
+
+- Produce one factual replacement title and reading summary from each selected article.
+- Let each output feed independently choose original or digest titles and original, extracted, or digest bodies.
+- Discover installed models from a configurable local Ollama server and persist the selected model per digestion step.
+- Keep this single-article transform separate from future cross-source synthesis and World Radar behavior.
 
 ### Morning Newspaper
 

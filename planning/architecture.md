@@ -73,7 +73,6 @@ Workers should receive explicit structured input and return explicit structured 
 - `news-extract-headless`: isolated headless browser rendering and extraction evidence.
 - `news-extract-headed`: headed host Chrome extraction evidence.
 - `news-classify`: semantic labels, confidence, routing/filter decision, rationale.
-- `news-summarize`: structured summaries in requested formats.
 - `news-render-paper`: PDF rendering from a complete layout model.
 
 Workers should write logs to stderr, return machine-readable output on stdout or an output file, and avoid mutating durable app state directly.
@@ -81,6 +80,8 @@ Workers should write logs to stderr, return machine-readable output on stdout or
 Extraction workers should share the same app-facing interface. The implementation key should be part of the request and response, but the response shape should stay stable across simple HTML, headless browser, and headed browser extraction.
 
 Direct-HTML and isolated-headless workers belong inside the production app image so deployment remains self-contained. Persistent authenticated Chrome remains host-owned because its profile and visible desktop session are long-lived operator-managed capabilities.
+
+The first article-digest implementation should not add a worker executable. Ollama is already an external HTTP model runtime, so the Phoenix application should use `Req` to call a configurable Ollama base URL directly. The app owns model discovery, selected-model configuration, structured-output validation, durable digest state, attempts, and failures.
 
 ## Pipeline Implementation Registry
 
@@ -106,6 +107,12 @@ The extraction registry should include at least:
 - `extraction.headed_browser`
 
 The registry describes available implementations. Site extraction policy describes where in the chain a site should start.
+
+The digestion registry should initially include only:
+
+- `digestion.ollama.article_digest`
+
+Its config schema should require an Ollama model name discovered from the configured server. Prompt and output-schema revisions remain code-owned so persisted artifacts can identify their behavior without creating a general database-defined prompt system.
 
 ## Browser And Auth Strategy
 

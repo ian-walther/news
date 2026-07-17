@@ -4,7 +4,7 @@
 
 Generated output feeds should be configurable, but the defaults should be conservative and FreshRSS/Reeder-friendly.
 
-Feed items should link to the original article and pass through the selected original upstream feed entry body unless an output feed explicitly chooses to render an available extraction. Extraction scheduling belongs to the output-feed pipeline; link and body settings only control how a durable extraction artifact is rendered.
+Feed items should link to the original article and pass through the selected original upstream feed title and body unless an output feed explicitly chooses another available durable artifact. Pipeline steps schedule extraction and digestion; title, link, and body settings only control rendering.
 
 Output feeds should render from durable generated feed item records created by the pipeline. They should not be lazy mirrors of whatever is currently present in upstream source feeds.
 
@@ -56,6 +56,8 @@ The GUID should not change when:
 
 - extraction later succeeds
 - the item body changes from original feed body to extracted content
+- a generated digest title or summary is selected
+- an existing digest is regenerated
 - the output feed switches from original article links to hosted article links
 - article metadata is corrected
 
@@ -95,6 +97,17 @@ Suggested setting:
 
 When false, RSS item links point to the original article. When true and extracted hosting is available, RSS item links point to the local hosted article URL.
 
+## Title Source
+
+Each output feed should select its rendered item title source explicitly:
+
+- `original`
+- `digest`
+
+The default is `original`. `digest` uses the generated title from the current successful article-digest artifact for that output's configured digestion step.
+
+The title source is independent of body and link selection. A feed may use a digest title while retaining full extracted content and original article links.
+
 ## Body Source
 
 Original body behavior:
@@ -104,26 +117,35 @@ Original body behavior:
 
 Extracted body behavior:
 
-- Each output feed should have a boolean controlling whether an available extraction replaces the original feed body.
-
-Suggested setting:
-
-- `use_extracted_content_body`
-
-When `use_extracted_content_body` is false, generated feed items pass along the selected original feed body exactly. When it is true and extraction succeeded, generated feed items use extracted article content. If extraction failed or is unavailable, the feed falls back to the original feed body unless a later policy says otherwise.
+- `extracted_content` uses the sanitized HTML from the current successful article extraction.
+- When extraction is unavailable, the item is not extraction-ready; the selected publication policy decides whether it waits or temporarily renders original content.
 
 An enabled extraction pipeline step is the only output-level switch that requests extraction. It automatically schedules future generated feed items. Existing items require an explicit bulk extraction action, preserving future-only configuration semantics.
+
+Digest body behavior:
+
+- `digest_summary` uses the generated summary from the current successful article-digest artifact.
+- Model output remains plain text; the application escapes it and renders predictable feed-safe paragraphs.
+
+The body-source setting is one explicit selector:
+
+- `original_feed`
+- `extracted_content`
+- `digest_summary`
+
+The default is `original_feed`. Moving to one selector avoids overlapping booleans and unclear precedence as digest output becomes available.
+
+If a selected digest artifact is not ready, the item is not digest-ready. Whether publication waits for the digest or temporarily publishes original content is an open product decision that must be explicit and visible rather than an accidental fallback.
 
 ## Configurability
 
 Keep rendering settings simple while processing pipeline steps are introduced.
 
-Useful output-feed settings:
+Output-feed rendering settings:
 
 - `link_to_hosted_article`
-- `use_extracted_content_body`
-
-Additional rendering options can be added later for extracted output, such as source attribution, summary-first bodies, excerpts, or original-plus-local link blocks. More advanced choices should eventually be represented as rendering pipeline step implementations rather than ad hoc conditionals.
+- `title_source`
+- `body_source`
 
 ## Render Snapshots
 

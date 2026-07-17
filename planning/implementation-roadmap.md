@@ -7,11 +7,19 @@
 - Add the persistent headed browser implementation through host Chrome/CDP.
 - Exercise headless-to-headed escalation with real authenticated or browser-state-dependent failures.
 
-## Semantic Filtering And Summarization
+## Article Digestion
 
-- Add a first local-LLM summarization implementation for successfully extracted articles.
-- Add filtering implementations after extraction and model output are observable.
-- Store model, prompt/config, output, confidence, and rationale for LLM-backed steps.
+- Add a configurable Ollama connection and live model discovery in the admin UI.
+- Add `digestion.ollama.article_digest` for successfully extracted articles.
+- Request and validate one structured factual title and summary.
+- Store the input extraction identity, selected model, prompt/schema version, config snapshot, output, and validation/debug metadata.
+- Add explicit output-feed title and body source selectors.
+- Make future processing automatic and existing-article digestion an explicit bulk action.
+
+## Semantic Filtering
+
+- Add filtering implementations after extraction and digest model behavior are observable.
+- Store model, prompt/config, decision, confidence, and rationale for LLM-backed filtering steps.
 - Keep source-specific policies auditable and correctable.
 - Avoid automatic destructive filtering until review behavior is clear.
 

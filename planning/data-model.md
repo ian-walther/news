@@ -96,7 +96,8 @@ Definitions for output feeds published to FreshRSS.
 - inclusion rules over intake groups, sources, categories, or later policies
 - optional future filtering/routing policy reference
 - boolean controlling whether links point to hosted article pages
-- boolean controlling whether bodies use extracted content when available
+- title source selector: original or digest
+- body source selector: original feed, extracted content, or digest summary
 - configurable processing pipeline reference or scoped pipeline steps
 
 ### generated_feed_intake_groups
@@ -169,6 +170,7 @@ Application-level settings.
 
 - global fetch interval minutes, default `60`
 - run history/debug logging enabled, default true
+- Ollama base URL, initially `http://desktop.home:11434`
 
 ### failures
 
@@ -263,16 +265,23 @@ Initial implementation keys:
 
 New sites should start with `extraction.simple_html` unless an operator policy says otherwise. If lower-cost extractors fail in escalation-worthy ways and a higher extractor succeeds, the app can record the higher extractor as the site's minimum implementation.
 
-### article_summaries
+### article_digests
 
-Future summarization outputs.
+Durable current article-digest output for one configured output-feed pipeline step.
 
 - article ID
-- implementation key
-- model/prompt/config metadata
-- summary text or structured summary
-- confidence/quality metadata
-- created timestamp
+- pipeline step ID
+- extraction ID or deterministic extraction input hash
+- implementation key, initially `digestion.ollama.article_digest`
+- Ollama model name
+- prompt/schema version
+- step config snapshot
+- generated title
+- generated summary
+- validation/quality/debug metadata
+- generated and updated timestamps
+
+The current artifact is replaced only by explicit re-digestion. Pipeline attempts retain execution history. The model's chain-of-thought should not be requested or stored.
 
 ### article_filter_decisions
 
@@ -320,14 +329,6 @@ Future configurable policies for generated feed selection, filtering, and routin
 - LLM prompt/schema revision references when semantic filtering exists
 - enabled flag
 - created/updated timestamps
-
-### summaries
-
-- article ID
-- model identity
-- summary type
-- summary text
-- created timestamp
 
 ### paper_runs
 

@@ -38,7 +38,7 @@ Deduplication belongs primarily at the intake-group layer.
 
 The article pool is the durable set of canonical articles produced by intake groups.
 
-Article records preserve source appearances, source metadata, stable app-generated article identity, extraction state, classification state, and later summary/newspaper metadata.
+Article records preserve source appearances, source metadata, stable app-generated article identity, extraction state, classification state, and later digest/newspaper metadata.
 
 ### Output Feed
 
@@ -48,7 +48,7 @@ Output feeds select from the article pool. They are commonly category feeds, but
 
 Categorization, filtering, and routing belong primarily at the output-feed layer.
 
-Output feeds also control RSS rendering settings such as whether item links point to original articles or hosted extracted article pages, and whether item bodies use original feed content or extracted content when available.
+Output feeds also control RSS rendering settings such as whether item links point to original articles or hosted extracted article pages, whether item titles use original or generated digest titles, and whether item bodies use original feed content, extracted content, or digest summaries.
 
 Output feeds should have stable app-generated identities for feed URLs and feed-level metadata. Generated feed items should also have stable app-generated identities and act as durable publication records.
 
@@ -67,7 +67,7 @@ A pipeline step type is the conceptual operation being performed.
 Examples:
 
 - extraction
-- summarization
+- digestion
 - filtering
 - rendering
 
@@ -78,7 +78,7 @@ A pipeline step implementation is the concrete strategy for a step type.
 Examples:
 
 - `extraction.site_policy`
-- `summarization.local_llm.brief`
+- `digestion.ollama.article_digest`
 - `filtering.local_llm.topic_policy`
 
 Implementations should be registered in code with metadata for labels, config schema, validation, and runtime behavior. The database should store selected implementation keys and config, not arbitrary executable behavior.
@@ -98,7 +98,7 @@ input feeds
        canonical article records
        extraction state
        classification state
-       summary/newspaper state
+       digest/newspaper state
   -> output feeds
        select articles from included intake groups and input feeds
        apply category/source rules
@@ -141,13 +141,13 @@ input feed configured
   -> generated RSS published
 ```
 
-Extraction, classification, summarization, and semantic filtering should be added as explicit pipeline steps on top of this foundation.
+Extraction, classification, article digestion, and semantic filtering should be added as explicit pipeline steps on top of this foundation.
 
 ## Configurable Processing Pipeline
 
 Future processing capabilities should extend the output-feed pipeline rather than adding one-off execution paths.
 
-The initial scope remains the output feed. This allows different generated feeds to enable extraction and choose filtering, summarization, and rendering behavior without changing source intake. Extractor selection itself remains host-scoped so one article is fetched consistently and its extraction artifact can be reused across outputs.
+The initial scope remains the output feed. This allows different generated feeds to enable extraction and choose filtering, digestion, and rendering behavior without changing source intake. Extractor selection itself remains host-scoped so one article is fetched consistently and its extraction artifact can be reused across outputs.
 
 An enabled output-feed extraction step is the sole scheduling switch for extraction. New generated feed items automatically request extraction through that step. Enabling a step remains future-only; existing items require an explicit bulk extraction action. Link-to-hosted and extracted-body settings consume an available extraction artifact but do not independently schedule work.
 
@@ -174,20 +174,23 @@ Domain tables hold durable current results. Attempt records explain how those re
 
 Bulk processing should create a durable run before attempts are queued. The run owns aggregate progress and completion state; individual attempts remain the deterministic execution history. Manual processing of existing items should skip articles with a successful current artifact unless the operator explicitly requests reprocessing.
 
-## Extraction, Filtering, And Summarization
+## Extraction, Digestion, And Filtering
 
-Content extraction comes before semantic filtering and summarization.
+Content extraction comes before semantic filtering and article digestion. When both filtering and digestion are enabled, filtering should normally run first so excluded articles do not consume digest work. The first digest implementation produces a replacement title and summary together from the same extracted article and model call.
 
 ```text
 article in pool
   -> extraction step attempted when enabled
   -> extracted article content stored
   -> filtering step attempted when enabled
-  -> summarization step attempted when enabled
+  -> digestion step attempted for eligible articles when enabled
+  -> structured digest title and summary stored
   -> output policies decide inclusion, exclusion, rendering, or review routing
 ```
 
 Feed metadata can provide cheap hints, but content-aware filtering should rely on extracted article content when possible.
+
+The initial digest implementation is `digestion.ollama.article_digest`. It calls a configured Ollama server directly, uses a model selected from Ollama discovery, and stores a durable output-scoped digest artifact. This is intentionally a Newspaper-specific article transform, not a general LLM workflow layer.
 
 Extraction should use an app-owned escalation chain. The extractor implementations are separate executables with a shared contract, but the Elixir app decides which implementation to try, when to escalate, and what to remember for a site.
 
