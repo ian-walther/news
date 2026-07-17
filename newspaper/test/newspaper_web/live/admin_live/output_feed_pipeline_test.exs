@@ -66,6 +66,11 @@ defmodule NewspaperWeb.AdminLive.OutputFeedPipelineTest do
              "Extract 1 unprocessed article"
            )
 
+    assert has_element?(
+             view,
+             "#process-existing-items[phx-disable-with='Queueing extraction...']"
+           )
+
     view
     |> element("#process-existing-items")
     |> render_click()

@@ -86,6 +86,7 @@ defmodule NewspaperWeb.AdminLive.OutputFeedPipeline do
           id="process-existing-items"
           type="button"
           phx-click="process_existing"
+          phx-disable-with="Queueing extraction..."
           disabled={process_existing_disabled?(assigns)}
           class="btn btn-primary"
         >
