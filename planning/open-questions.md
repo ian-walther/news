@@ -40,7 +40,6 @@
 
 - Which pipeline attempt states are enough without overbuilding a workflow engine?
 - What failure types need a first-class queue?
-- What automatic retry/backoff behavior is needed after real usage?
 - What failure lifecycle states are needed after real usage?
 - When, if ever, does the job surface justify moving from supervised GenServers to Oban or another job system?
 

@@ -127,6 +127,17 @@ defmodule Newspaper.Extraction do
     {result, input_snapshot, started_at, finished_at}
   end
 
+  defp escalate?(
+         %{escalation_enabled: true} = policy,
+         %{
+           "implementation" => "extraction.simple_html",
+           "failure_kind" => "rate_limited"
+         } = result
+       ) do
+    is_nil(get_in(result, ["debug_metadata", "retry_after_ms"])) and
+      policy.consecutive_rate_limits >= 1
+  end
+
   defp escalate?(%{escalation_enabled: true}, result) do
     result["failure_kind"] in [
       "javascript_required",

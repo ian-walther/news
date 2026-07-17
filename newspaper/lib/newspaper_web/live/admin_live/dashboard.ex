@@ -33,6 +33,13 @@ defmodule NewspaperWeb.AdminLive.Dashboard do
     {:noreply, socket |> put_flash(:info, "Retry started") |> assign_data()}
   end
 
+  def handle_event("retry_site_now", %{"id" => id}, socket) do
+    policy = Content.get_site_extraction_policy!(String.to_integer(id))
+    {kind, message} = retry_site_message(policy.site_host)
+
+    {:noreply, socket |> put_flash(kind, message) |> assign_data()}
+  end
+
   def handle_info({:newspaper_data_changed, _event}, socket) do
     {:noreply, assign_data(socket)}
   end
@@ -243,9 +250,21 @@ defmodule NewspaperWeb.AdminLive.Dashboard do
                     {policy.consecutive_rate_limits} consecutive rate limits
                   </p>
                 </div>
-                <div class="shrink-0 text-right text-xs text-base-content/55">
-                  <p>{policy.minimum_request_interval_ms} ms base interval</p>
-                  <.local_time id={"backoff-time-#{policy.id}"} value={policy.backoff_until} />
+                <div class="flex shrink-0 items-center gap-3">
+                  <div class="text-right text-xs text-base-content/55">
+                    <p>{policy.minimum_request_interval_ms} ms base interval</p>
+                    <.local_time id={"backoff-time-#{policy.id}"} value={policy.backoff_until} />
+                  </div>
+                  <button
+                    id={"retry-site-now-#{policy.id}"}
+                    type="button"
+                    class="btn btn-sm"
+                    phx-click="retry_site_now"
+                    phx-value-id={policy.id}
+                    phx-disable-with="Trying..."
+                  >
+                    <.icon name="hero-arrow-path" class="size-4" /> Try now
+                  </button>
                 </div>
               </article>
             </div>
@@ -316,4 +335,13 @@ defmodule NewspaperWeb.AdminLive.Dashboard do
 
   defp occurrence_label(1), do: "1 occurrence"
   defp occurrence_label(count), do: "#{count} occurrences"
+
+  defp retry_site_message(site_host) do
+    case Processing.Dispatcher.retry_now(site_host) do
+      {:started, _pid} -> {:info, "Retrying #{site_host} now"}
+      :already_running -> {:info, "#{site_host} already has an extraction running"}
+      :empty -> {:info, "No queued articles for #{site_host}"}
+      {:error, reason} -> {:error, "Could not retry #{site_host}: #{inspect(reason)}"}
+    end
+  end
 end

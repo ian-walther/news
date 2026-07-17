@@ -127,11 +127,102 @@ defmodule Newspaper.ExtractionTest do
     assert Repo.get!(Failure, failure.id).retry_count == 1
   end
 
+  test "repeated headerless simple rate limits escalate to headless and learn it" do
+    article = create_article!("https://racer.com/browser-required-example")
+
+    simple_worker =
+      worker_script!("simple-rate-limited", rate_limited_payload(article.canonical_url))
+
+    headless_worker =
+      worker_script!(
+        "headless-after-rate-limit",
+        success_payload()
+        |> Map.put(:implementation, "extraction.headless_browser")
+        |> Map.put(:final_url, article.canonical_url)
+      )
+
+    Application.put_env(:newspaper, :extractors,
+      simple_html_command: simple_worker,
+      headless_browser_command: headless_worker
+    )
+
+    configure_extraction!(article, "feed_rate_limit_escalation_test")
+
+    first_attempt = Repo.one!(PipelineStepAttempt)
+    assert {:ok, first_attempt} = Extraction.execute_attempt(first_attempt.id)
+    assert first_attempt.status == "failed"
+
+    assert {:ok, second_attempt} = Processing.retry_attempt(first_attempt.id)
+    assert {:ok, second_attempt} = Extraction.execute_attempt(second_attempt.id)
+    assert second_attempt.status == "succeeded"
+
+    attempts =
+      ArticleExtractionAttempt
+      |> Repo.all()
+      |> Enum.sort_by(& &1.id)
+
+    assert Enum.map(attempts, &{&1.implementation, &1.status}) == [
+             {"extraction.simple_html", "failed"},
+             {"extraction.simple_html", "failed"},
+             {"extraction.headless_browser", "ok"}
+           ]
+
+    policy = Repo.one!(SiteExtractionPolicy)
+    assert policy.minimum_implementation == "extraction.headless_browser"
+    assert policy.last_successful_implementation == "extraction.headless_browser"
+    assert policy.consecutive_rate_limits == 0
+    assert policy.backoff_until == nil
+  end
+
+  test "explicit retry-after does not escalate a repeated rate limit" do
+    article = create_article!("https://racer.com/retry-after-example")
+
+    simple_worker =
+      worker_script!(
+        "simple-retry-after",
+        rate_limited_payload(article.canonical_url, 10 * 60 * 1000)
+      )
+
+    headless_worker =
+      worker_script!(
+        "unused-headless-retry-after",
+        success_payload()
+        |> Map.put(:implementation, "extraction.headless_browser")
+        |> Map.put(:final_url, article.canonical_url)
+      )
+
+    Application.put_env(:newspaper, :extractors,
+      simple_html_command: simple_worker,
+      headless_browser_command: headless_worker
+    )
+
+    configure_extraction!(article, "feed_retry_after_no_escalation_test")
+
+    {:ok, policy} = Content.get_site_extraction_policy_for_url(article.canonical_url)
+
+    {:ok, _policy} =
+      Content.update_site_extraction_policy(policy, %{consecutive_rate_limits: 1})
+
+    attempt = Repo.one!(PipelineStepAttempt)
+    assert {:ok, attempt} = Extraction.execute_attempt(attempt.id)
+    assert attempt.status == "failed"
+
+    assert [%ArticleExtractionAttempt{implementation: "extraction.simple_html"}] =
+             Repo.all(ArticleExtractionAttempt)
+
+    policy = Repo.one!(SiteExtractionPolicy)
+    assert policy.minimum_implementation == "extraction.simple_html"
+    assert policy.consecutive_rate_limits == 2
+  end
+
   test "rate limit backoff grows to a thirty minute cap" do
     article = create_article!("https://www.theautopian.com/backoff-example")
     worker = worker_script!("repeated-rate-limit", rate_limited_payload())
     Application.put_env(:newspaper, :extractors, simple_html_command: worker)
     configure_extraction!(article, "feed_rate_limit_backoff_test")
+
+    {:ok, policy} = Content.get_site_extraction_policy_for_url(article.canonical_url)
+    {:ok, _policy} = Content.update_site_extraction_policy(policy, %{escalation_enabled: false})
 
     first_attempt = Repo.one!(PipelineStepAttempt)
 
@@ -185,7 +276,7 @@ defmodule Newspaper.ExtractionTest do
     worker =
       worker_script!(
         "retry-after-rate-limit",
-        put_in(rate_limited_payload(), [:debug_metadata, :retry_after_ms], 45 * 60 * 1000)
+        rate_limited_payload("https://www.theautopian.com/example", 45 * 60 * 1000)
       )
 
     Application.put_env(:newspaper, :extractors, simple_html_command: worker)
@@ -324,6 +415,49 @@ defmodule Newspaper.ExtractionTest do
       |> Repo.update!()
 
     assert Content.extraction_wait_ms(policy) == 0
+  end
+
+  test "site retry now bypasses active backoff once without resetting rate limit history" do
+    article = create_article!("https://retry-now.example.com/article")
+
+    worker =
+      worker_script!(
+        "forced-rate-limit",
+        rate_limited_payload(article.canonical_url),
+        "sleep 0.1"
+      )
+
+    Application.put_env(:newspaper, :extractors, simple_html_command: worker)
+    configure_extraction!(article, "feed_retry_now_test")
+
+    {:ok, policy} = Content.get_site_extraction_policy_for_url(article.canonical_url)
+
+    {:ok, _policy} =
+      Content.update_site_extraction_policy(policy, %{
+        consecutive_rate_limits: 1,
+        backoff_until: DateTime.add(DateTime.utc_now(:second), 60 * 60, :second),
+        escalation_enabled: false
+      })
+
+    attempt = Repo.one!(PipelineStepAttempt)
+    Newspaper.Processing.Dispatcher.enqueue(attempt.id, policy.site_host)
+    _ = :sys.get_state(Newspaper.Processing.Dispatcher)
+
+    assert Repo.get!(PipelineStepAttempt, attempt.id).status == "queued"
+    assert {:started, pid} = Newspaper.Processing.Dispatcher.retry_now(policy.site_host)
+
+    ref = Process.monitor(pid)
+    assert_receive {:DOWN, ^ref, :process, ^pid, :normal}, 2_000
+
+    attempt = Repo.get!(PipelineStepAttempt, attempt.id)
+    assert attempt.status == "failed"
+    assert attempt.failure_kind == "rate_limited"
+
+    policy = Content.get_site_extraction_policy!(policy.id)
+    assert policy.consecutive_rate_limits == 2
+
+    backoff_seconds = DateTime.diff(policy.backoff_until, policy.last_rate_limited_at, :second)
+    assert backoff_seconds in 299..300
   end
 
   test "shares one active extraction across output feeds for the same article" do
@@ -467,16 +601,16 @@ defmodule Newspaper.ExtractionTest do
     }
   end
 
-  defp rate_limited_payload do
+  defp rate_limited_payload(url \\ "https://www.theautopian.com/example", retry_after_ms \\ nil) do
     %{
       schema_version: 1,
       implementation: "extraction.simple_html",
       status: "failed",
-      final_url: "https://www.theautopian.com/example",
+      final_url: url,
       failure_kind: "rate_limited",
       retryable: true,
       message: "HTTP 429",
-      debug_metadata: %{"status_code" => 429}
+      debug_metadata: %{"status_code" => 429, "retry_after_ms" => retry_after_ms}
     }
   end
 

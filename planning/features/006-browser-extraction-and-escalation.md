@@ -30,7 +30,9 @@ Escalation-worthy failures include:
 - `blocked`
 - repeated `insufficient_content`
 
-Network failures, timeouts, and rate limiting should remain transient scheduling or availability failures. They must not teach the app that a more capable extractor is required.
+Network failures and timeouts should remain transient scheduling or availability failures. An ordinary rate limit or a response with an explicit `Retry-After` should use site backoff without escalation. Repeated rate limits without `Retry-After` from the simple client may indicate bot classification rather than request volume, so they may trigger a headless probe. A successful probe may teach headless as the site's minimum implementation. A headless rate limit must not automatically escalate into the persistent headed browser.
+
+Active site backoff should remain operator-overridable. A manual retry should bypass the current timer once without erasing rate-limit history; failure resumes adaptive backoff, while success clears it naturally.
 
 `not_found` is not an extractor-capability failure and should not move execution farther up the browser chain. The application may try a distinct, URL-shaped, same-site feed stable ID to recover a changed permalink. If no candidate succeeds, the failure remains terminal for automatic processing and manually retryable by the operator.
 

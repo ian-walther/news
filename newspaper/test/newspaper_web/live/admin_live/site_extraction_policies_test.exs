@@ -69,4 +69,23 @@ defmodule NewspaperWeb.AdminLive.SiteExtractionPoliciesTest do
 
     refute Repo.get(SiteExtractionPolicy, policy.id)
   end
+
+  test "offers an immediate retry for a site in backoff", %{conn: conn} do
+    {:ok, policy} =
+      Content.create_site_extraction_policy(%{
+        site_host: "racer.com",
+        consecutive_rate_limits: 3,
+        backoff_until: DateTime.add(DateTime.utc_now(:second), 15 * 60, :second)
+      })
+
+    {:ok, view, _html} = live(conn, ~p"/sites")
+
+    assert has_element?(view, "#retry-site-now-#{policy.id}", "Try now")
+
+    view
+    |> element("#retry-site-now-#{policy.id}")
+    |> render_click()
+
+    assert has_element?(view, "#flash-info", "No queued articles for racer.com")
+  end
 end

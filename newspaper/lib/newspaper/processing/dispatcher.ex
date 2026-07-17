@@ -13,6 +13,18 @@ defmodule Newspaper.Processing.Dispatcher do
 
   def enqueue(_attempt_id, _site_host), do: :ok
 
+  def retry_now(site_host) when is_binary(site_host) do
+    site_host =
+      site_host
+      |> String.trim()
+      |> String.downcase()
+      |> String.trim_leading("www.")
+
+    GenServer.call(__MODULE__, {:retry_now, site_host})
+  end
+
+  def retry_now(_site_host), do: :empty
+
   @impl true
   def init(_state) do
     if Application.get_env(:newspaper, :processing_dispatcher_enabled, true) do
@@ -37,28 +49,35 @@ defmodule Newspaper.Processing.Dispatcher do
     {:noreply, state}
   end
 
-  def handle_info({:run_next, site_host}, state) do
-    host_state = Map.fetch!(state.hosts, site_host)
+  def handle_info({:run_next, site_host, timer_token}, state) do
+    case Map.get(state.hosts, site_host) do
+      %{running?: false, timer_token: ^timer_token} = host_state ->
+        state = put_host(state, site_host, clear_timer(host_state))
+        {state, _result} = start_next(state, site_host)
+        {:noreply, state}
 
-    case :queue.out(host_state.queue) do
-      {{:value, attempt_id}, queue} ->
-        host_state = %{host_state | queue: queue, running?: true, timer: nil}
-        state = put_host(state, site_host, host_state)
+      _host_state ->
+        {:noreply, state}
+    end
+  end
 
-        case Task.Supervisor.start_child(Newspaper.Processing.TaskSupervisor, fn ->
-               result = Extraction.execute_attempt(attempt_id)
-               GenServer.cast(__MODULE__, {:finished, site_host, result})
-             end) do
-          {:ok, _pid} ->
-            {:noreply, state}
+  @impl true
+  def handle_call({:retry_now, site_host}, _from, state) do
+    case Map.get(state.hosts, site_host) do
+      nil ->
+        {:reply, :empty, state}
 
-          {:error, reason} ->
-            GenServer.cast(__MODULE__, {:finished, site_host, {:error, reason}})
-            {:noreply, state}
+      %{running?: true} ->
+        {:reply, :already_running, state}
+
+      host_state ->
+        if :queue.is_empty(host_state.queue) do
+          {:reply, :empty, state}
+        else
+          state = put_host(state, site_host, cancel_timer(host_state))
+          {state, result} = start_next(state, site_host)
+          {:reply, result, state}
         end
-
-      {:empty, _queue} ->
-        {:noreply, put_host(state, site_host, %{host_state | timer: nil})}
     end
   end
 
@@ -104,14 +123,52 @@ defmodule Newspaper.Processing.Dispatcher do
             {:error, _reason} -> 0
           end
 
-        timer = Process.send_after(self(), {:run_next, site_host}, delay)
-        put_host(state, site_host, %{host_state | timer: timer})
+        timer_token = make_ref()
+        timer = Process.send_after(self(), {:run_next, site_host, timer_token}, delay)
+        put_host(state, site_host, %{host_state | timer: timer, timer_token: timer_token})
     end
   end
 
   defp new_host_state do
-    %{queue: :queue.new(), running?: false, timer: nil}
+    %{queue: :queue.new(), running?: false, timer: nil, timer_token: nil}
   end
+
+  defp start_next(state, site_host) do
+    host_state = Map.fetch!(state.hosts, site_host)
+
+    case :queue.out(host_state.queue) do
+      {{:value, attempt_id}, queue} ->
+        host_state = %{clear_timer(host_state) | queue: queue, running?: true}
+        state = put_host(state, site_host, host_state)
+
+        result =
+          Task.Supervisor.start_child(Newspaper.Processing.TaskSupervisor, fn ->
+            result = Extraction.execute_attempt(attempt_id)
+            GenServer.cast(__MODULE__, {:finished, site_host, result})
+          end)
+
+        case result do
+          {:ok, pid} ->
+            {state, {:started, pid}}
+
+          {:error, reason} ->
+            GenServer.cast(__MODULE__, {:finished, site_host, {:error, reason}})
+            {state, {:error, reason}}
+        end
+
+      {:empty, _queue} ->
+        {put_host(state, site_host, clear_timer(host_state)), :empty}
+    end
+  end
+
+  defp cancel_timer(%{timer: nil} = host_state), do: clear_timer(host_state)
+
+  defp cancel_timer(host_state) do
+    Process.cancel_timer(host_state.timer, async: false, info: false)
+    clear_timer(host_state)
+  end
+
+  defp clear_timer(host_state), do: %{host_state | timer: nil, timer_token: nil}
 
   defp put_host(state, site_host, host_state) do
     put_in(state, [:hosts, site_host], host_state)

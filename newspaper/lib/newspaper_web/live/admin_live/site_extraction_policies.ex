@@ -5,6 +5,7 @@ defmodule NewspaperWeb.AdminLive.SiteExtractionPolicies do
 
   alias Newspaper.Content
   alias Newspaper.Content.SiteExtractionPolicy
+  alias Newspaper.Processing.Dispatcher
   alias Newspaper.Processing.Registry
 
   def mount(_params, _session, socket) do
@@ -79,6 +80,13 @@ defmodule NewspaperWeb.AdminLive.SiteExtractionPolicies do
      |> assign(:editing_policy_id, nil)
      |> assign(:edit_form, nil)
      |> assign_policies()}
+  end
+
+  def handle_event("retry_site_now", %{"id" => id}, socket) do
+    policy = Content.get_site_extraction_policy!(String.to_integer(id))
+    {kind, message} = retry_site_message(policy.site_host)
+
+    {:noreply, socket |> put_flash(kind, message) |> assign_policies()}
   end
 
   def handle_info({:newspaper_data_changed, _event}, socket) do
@@ -197,6 +205,17 @@ defmodule NewspaperWeb.AdminLive.SiteExtractionPolicies do
 
           <div class="flex flex-wrap gap-2 lg:justify-end">
             <button
+              :if={policy.consecutive_rate_limits > 0}
+              id={"retry-site-now-#{policy.id}"}
+              type="button"
+              class="btn btn-sm"
+              phx-click="retry_site_now"
+              phx-value-id={policy.id}
+              phx-disable-with="Trying..."
+            >
+              <.icon name="hero-arrow-path" class="size-4" /> Try now
+            </button>
+            <button
               id={"edit-site-policy-#{policy.id}"}
               type="button"
               class="btn btn-sm"
@@ -307,4 +326,13 @@ defmodule NewspaperWeb.AdminLive.SiteExtractionPolicies do
   end
 
   defp present?(value), do: is_binary(value) and String.trim(value) != ""
+
+  defp retry_site_message(site_host) do
+    case Dispatcher.retry_now(site_host) do
+      {:started, _pid} -> {:info, "Retrying #{site_host} now"}
+      :already_running -> {:info, "#{site_host} already has an extraction running"}
+      :empty -> {:info, "No queued articles for #{site_host}"}
+      {:error, reason} -> {:error, "Could not retry #{site_host}: #{inspect(reason)}"}
+    end
+  end
 end

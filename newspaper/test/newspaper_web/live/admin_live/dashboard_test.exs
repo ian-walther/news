@@ -88,6 +88,25 @@ defmodule NewspaperWeb.AdminLive.DashboardTest do
     refute has_element?(view, "#failure-groups")
   end
 
+  test "offers an immediate retry from active site pacing", %{conn: conn} do
+    {:ok, policy} =
+      Content.create_site_extraction_policy(%{
+        site_host: "racer.com",
+        consecutive_rate_limits: 3,
+        backoff_until: DateTime.add(DateTime.utc_now(:second), 15 * 60, :second)
+      })
+
+    {:ok, view, _html} = live(conn, ~p"/")
+
+    assert has_element?(view, "#retry-site-now-#{policy.id}", "Try now")
+
+    view
+    |> element("#retry-site-now-#{policy.id}")
+    |> render_click()
+
+    assert has_element?(view, "#flash-info", "No queued articles for racer.com")
+  end
+
   defp extracted_article! do
     {:ok, input_feed} =
       Intake.create_input_feed(%{

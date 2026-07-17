@@ -79,7 +79,7 @@ For extraction, the output-feed step only enables the site-policy coordinator. T
 
 Failures should be visible and retryable where practical.
 
-Failure handling should stay minimal: show failures, link them to related records/runs where possible, and allow manual retry for retryable failures. Do not add automatic retry/backoff behavior or manual resolved/ignored/dismissed lifecycle states until real usage clarifies what is needed.
+Failure handling should stay minimal: show failures, link them to related records/runs where possible, and allow manual retry for retryable failures. Avoid manual resolved/ignored/dismissed lifecycle states until real usage clarifies what is needed.
 
 Examples:
 
