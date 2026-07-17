@@ -23,7 +23,7 @@ defmodule NewspaperWeb.AdminLive.SiteExtractionPoliciesTest do
         "site_host" => "WWW.ArsTechnica.com",
         "minimum_implementation" => "extraction.simple_html",
         "escalation_enabled" => "false",
-        "rate_limit_delay_ms" => "12000",
+        "minimum_request_interval_ms" => "12000",
         "timeout_ms" => "45000",
         "minimum_text_length" => "750",
         "notes" => "Static HTML works reliably"
@@ -34,7 +34,7 @@ defmodule NewspaperWeb.AdminLive.SiteExtractionPoliciesTest do
     policy = Repo.one!(SiteExtractionPolicy)
     assert policy.site_host == "arstechnica.com"
     refute policy.escalation_enabled
-    assert policy.rate_limit_delay_ms == 12_000
+    assert policy.minimum_request_interval_ms == 12_000
     assert policy.timeout_ms == 45_000
     assert policy.minimum_text_length == 750
     assert has_element?(view, "#site-policy-#{policy.id}")
@@ -49,7 +49,7 @@ defmodule NewspaperWeb.AdminLive.SiteExtractionPoliciesTest do
         "site_host" => "arstechnica.com",
         "minimum_implementation" => "extraction.simple_html",
         "escalation_enabled" => "true",
-        "rate_limit_delay_ms" => "3000",
+        "minimum_request_interval_ms" => "3000",
         "timeout_ms" => "60000",
         "minimum_text_length" => "1000",
         "notes" => ""
@@ -59,6 +59,7 @@ defmodule NewspaperWeb.AdminLive.SiteExtractionPoliciesTest do
 
     policy = Content.get_site_extraction_policy!(policy.id)
     assert policy.escalation_enabled
+    assert policy.minimum_request_interval_ms == 3_000
     assert policy.timeout_ms == 60_000
     assert policy.minimum_text_length == 1_000
 

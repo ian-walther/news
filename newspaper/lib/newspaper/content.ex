@@ -353,7 +353,11 @@ defmodule Newspaper.Content do
           0
 
         last_attempted_at ->
-          max(policy.rate_limit_delay_ms - DateTime.diff(now, last_attempted_at, :millisecond), 0)
+          max(
+            policy.minimum_request_interval_ms -
+              DateTime.diff(now, last_attempted_at, :millisecond),
+            0
+          )
       end
 
     backoff_wait =
@@ -426,7 +430,6 @@ defmodule Newspaper.Content do
             learned_minimum_implementation(policy, result["implementation"]),
           last_successful_implementation: result["implementation"],
           last_failure_kind: nil,
-          rate_limit_delay_ms: max(div(policy.rate_limit_delay_ms, 2), 3_000),
           consecutive_rate_limits: 0,
           backoff_until: nil
         })
@@ -458,13 +461,12 @@ defmodule Newspaper.Content do
        ) do
     consecutive_rate_limits = policy.consecutive_rate_limits + 1
     retry_after_ms = get_in(result, ["debug_metadata", "retry_after_ms"]) || 0
-    delay_ms = max(rate_limit_delay_ms(consecutive_rate_limits), retry_after_ms)
+    delay_ms = max(rate_limit_backoff_ms(consecutive_rate_limits), retry_after_ms)
     backoff_until = DateTime.add(DateTime.utc_now(:second), div(delay_ms, 1000), :second)
 
     policy
     |> SiteExtractionPolicy.changeset(%{
       last_failure_kind: result["failure_kind"],
-      rate_limit_delay_ms: delay_ms,
       backoff_until: backoff_until,
       consecutive_rate_limits: consecutive_rate_limits,
       last_rate_limited_at: DateTime.utc_now(:second)
@@ -478,9 +480,10 @@ defmodule Newspaper.Content do
     |> Repo.update!()
   end
 
-  defp rate_limit_delay_ms(1), do: 5 * 60 * 1000
-  defp rate_limit_delay_ms(2), do: 30 * 60 * 1000
-  defp rate_limit_delay_ms(_count), do: 2 * 60 * 60 * 1000
+  defp rate_limit_backoff_ms(1), do: 60 * 1000
+  defp rate_limit_backoff_ms(2), do: 5 * 60 * 1000
+  defp rate_limit_backoff_ms(3), do: 15 * 60 * 1000
+  defp rate_limit_backoff_ms(_count), do: 30 * 60 * 1000
 
   defp learned_minimum_implementation(policy, implementation) do
     if policy.escalation_enabled and

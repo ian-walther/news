@@ -129,7 +129,7 @@ defmodule NewspaperWeb.AdminLive.SiteExtractionPolicies do
             options={extractor_options(@extractors)}
           />
           <.input
-            field={@form[:rate_limit_delay_ms]}
+            field={@form[:minimum_request_interval_ms]}
             type="number"
             label="Minimum request interval (ms)"
           />
@@ -175,7 +175,7 @@ defmodule NewspaperWeb.AdminLive.SiteExtractionPolicies do
               </span>
             </div>
             <div class="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm text-base-content/65">
-              <span>{policy.rate_limit_delay_ms} ms interval</span>
+              <span>{policy.minimum_request_interval_ms} ms interval</span>
               <span>{policy.timeout_ms} ms timeout</span>
               <span>{policy.minimum_text_length} character minimum</span>
               <span :if={policy.last_failure_kind}>Last failure: {policy.last_failure_kind}</span>
@@ -239,7 +239,7 @@ defmodule NewspaperWeb.AdminLive.SiteExtractionPolicies do
             />
             <.input
               id={"edit-site-policy-interval-#{policy.id}"}
-              field={@edit_form[:rate_limit_delay_ms]}
+              field={@edit_form[:minimum_request_interval_ms]}
               type="number"
               label="Minimum request interval (ms)"
             />

@@ -96,6 +96,11 @@ defmodule Newspaper.ExtractionTest do
     Application.put_env(:newspaper, :extractors, simple_html_command: worker)
     configure_extraction!(article, "feed_rate_limited_test")
 
+    {:ok, policy} = Content.get_site_extraction_policy_for_url(article.canonical_url)
+
+    {:ok, _policy} =
+      Content.update_site_extraction_policy(policy, %{minimum_request_interval_ms: 12_000})
+
     attempt = Repo.one!(PipelineStepAttempt)
     assert {:ok, attempt} = Extraction.execute_attempt(attempt.id)
     assert attempt.status == "failed"
@@ -110,7 +115,8 @@ defmodule Newspaper.ExtractionTest do
     assert policy.minimum_implementation == "extraction.simple_html"
     assert policy.last_failure_kind == "rate_limited"
     assert policy.consecutive_rate_limits == 1
-    assert policy.rate_limit_delay_ms == 5 * 60 * 1000
+    assert policy.minimum_request_interval_ms == 12_000
+    assert DateTime.diff(policy.backoff_until, policy.last_rate_limited_at, :second) in 59..60
     assert Content.backoff_active?(policy, DateTime.utc_now(:second))
     assert Content.extraction_wait_ms(policy) > 0
 
@@ -119,6 +125,81 @@ defmodule Newspaper.ExtractionTest do
     assert {:ok, retry_attempt} = Pipeline.retry_failure(failure.id, "test_retry")
     assert retry_attempt.status == "queued"
     assert Repo.get!(Failure, failure.id).retry_count == 1
+  end
+
+  test "rate limit backoff grows to a thirty minute cap" do
+    article = create_article!("https://www.theautopian.com/backoff-example")
+    worker = worker_script!("repeated-rate-limit", rate_limited_payload())
+    Application.put_env(:newspaper, :extractors, simple_html_command: worker)
+    configure_extraction!(article, "feed_rate_limit_backoff_test")
+
+    first_attempt = Repo.one!(PipelineStepAttempt)
+
+    Enum.reduce([60, 5 * 60, 15 * 60, 30 * 60, 30 * 60], first_attempt, fn seconds, attempt ->
+      assert {:ok, failed_attempt} = Extraction.execute_attempt(attempt.id)
+      assert failed_attempt.status == "failed"
+
+      policy = Repo.one!(SiteExtractionPolicy)
+
+      assert DateTime.diff(policy.backoff_until, policy.last_rate_limited_at, :second) in (seconds -
+                                                                                             1)..seconds
+
+      assert {:ok, next_attempt} = Processing.retry_attempt(failed_attempt.id)
+      next_attempt
+    end)
+  end
+
+  test "successful extraction clears transient backoff without changing site pacing" do
+    article = create_article!("https://www.theautopian.com/recovery-example")
+    rate_limited_worker = worker_script!("recovery-rate-limit", rate_limited_payload())
+    Application.put_env(:newspaper, :extractors, simple_html_command: rate_limited_worker)
+    configure_extraction!(article, "feed_rate_limit_recovery_test")
+
+    {:ok, policy} = Content.get_site_extraction_policy_for_url(article.canonical_url)
+
+    {:ok, _policy} =
+      Content.update_site_extraction_policy(policy, %{minimum_request_interval_ms: 12_000})
+
+    first_attempt = Repo.one!(PipelineStepAttempt)
+    assert {:ok, failed_attempt} = Extraction.execute_attempt(first_attempt.id)
+
+    success_worker =
+      worker_script!(
+        "recovery-success",
+        Map.put(success_payload(), :final_url, article.canonical_url)
+      )
+
+    Application.put_env(:newspaper, :extractors, simple_html_command: success_worker)
+    assert {:ok, retry_attempt} = Processing.retry_attempt(failed_attempt.id)
+    assert {:ok, _attempt} = Extraction.execute_attempt(retry_attempt.id)
+
+    policy = Repo.one!(SiteExtractionPolicy)
+    assert policy.minimum_request_interval_ms == 12_000
+    assert policy.consecutive_rate_limits == 0
+    assert policy.backoff_until == nil
+  end
+
+  test "server retry-after can exceed the local backoff cap" do
+    article = create_article!("https://www.theautopian.com/retry-after-example")
+
+    worker =
+      worker_script!(
+        "retry-after-rate-limit",
+        put_in(rate_limited_payload(), [:debug_metadata, :retry_after_ms], 45 * 60 * 1000)
+      )
+
+    Application.put_env(:newspaper, :extractors, simple_html_command: worker)
+    configure_extraction!(article, "feed_retry_after_test")
+
+    attempt = Repo.one!(PipelineStepAttempt)
+    assert {:ok, _attempt} = Extraction.execute_attempt(attempt.id)
+
+    policy = Repo.one!(SiteExtractionPolicy)
+
+    retry_after_seconds = 45 * 60
+
+    assert DateTime.diff(policy.backoff_until, policy.last_rate_limited_at, :second) in (retry_after_seconds -
+                                                                                           1)..retry_after_seconds
   end
 
   test "escalates insufficient static HTML to headless extraction and learns the site minimum" do

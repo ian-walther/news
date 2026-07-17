@@ -244,7 +244,7 @@ defmodule NewspaperWeb.AdminLive.Dashboard do
                   </p>
                 </div>
                 <div class="shrink-0 text-right text-xs text-base-content/55">
-                  <p>{policy.rate_limit_delay_ms} ms delay</p>
+                  <p>{policy.minimum_request_interval_ms} ms base interval</p>
                   <.local_time id={"backoff-time-#{policy.id}"} value={policy.backoff_until} />
                 </div>
               </article>

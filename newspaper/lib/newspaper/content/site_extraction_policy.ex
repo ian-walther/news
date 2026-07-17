@@ -7,7 +7,7 @@ defmodule Newspaper.Content.SiteExtractionPolicy do
     field :minimum_implementation, :string, default: "extraction.simple_html"
     field :last_successful_implementation, :string
     field :last_failure_kind, :string
-    field :rate_limit_delay_ms, :integer, default: 3_000
+    field :minimum_request_interval_ms, :integer, default: 3_000
     field :backoff_until, :utc_datetime
     field :consecutive_rate_limits, :integer, default: 0
     field :last_rate_limited_at, :utc_datetime
@@ -29,7 +29,7 @@ defmodule Newspaper.Content.SiteExtractionPolicy do
       :minimum_implementation,
       :last_successful_implementation,
       :last_failure_kind,
-      :rate_limit_delay_ms,
+      :minimum_request_interval_ms,
       :backoff_until,
       :consecutive_rate_limits,
       :last_rate_limited_at,
@@ -42,11 +42,11 @@ defmodule Newspaper.Content.SiteExtractionPolicy do
     |> validate_required([
       :site_host,
       :minimum_implementation,
-      :rate_limit_delay_ms,
+      :minimum_request_interval_ms,
       :timeout_ms,
       :minimum_text_length
     ])
-    |> validate_number(:rate_limit_delay_ms, greater_than_or_equal_to: 0)
+    |> validate_number(:minimum_request_interval_ms, greater_than_or_equal_to: 0)
     |> validate_number(:consecutive_rate_limits, greater_than_or_equal_to: 0)
     |> validate_number(:timeout_ms,
       greater_than_or_equal_to: 1_000,
