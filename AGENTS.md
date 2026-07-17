@@ -16,11 +16,11 @@
    For bug fixes and regressions, first add or identify a test that fails because of the bug, confirm the failure, and only then add the fix. After the fix, rerun the focused test and the full suite to confirm the red-green cycle.
    Cosmetic copy, title, spacing, or visual polish tweaks do not need dedicated regression tests unless they fix a recurring regression or encode behavior that should remain stable.
 
-6. Do not deploy to production without explicit approval.
-   The user has final say on what gets deployed. Prepare, test, and explain deployable changes, but wait for explicit approval before running production deployment commands.
+6. Commit, push, and deploy completed work by default.
+   After a task passes full verification, commit all task-related changes with a descriptive message, push the current branch, and deploy production without waiting for separate approval. This is standing authorization specific to this non-load-bearing side project. Never include unrelated working-tree changes, and skip any of these steps when the user explicitly asks to hold for review or not deploy.
 
-7. Do not commit changes unless explicitly asked.
-   The user has final say on what gets committed. Keep changes in the working tree and summarize them clearly so the user can review before commit.
+7. Verify every production deployment.
+   After deploying, confirm production is running the intended commit, inspect container health and recent logs, exercise relevant routes, and perform a feature-specific smoke test when practical. Resolve deployment failures before declaring the task complete.
 
 This is a web application written using the Phoenix web framework.
 
