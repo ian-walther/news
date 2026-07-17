@@ -60,15 +60,15 @@ defmodule NewspaperWeb.AdminLive.ArticlesExtractionTest do
       Publishing.create_generated_feed(%{
         "title" => "Tech",
         "guid" => "feed_articles_live_extraction",
-        "process_items" => false,
         "input_feed_ids" => [article.representative_raw_item.input_feed_id]
       })
 
-    {:ok, _step} =
+    {:ok, step} =
       Processing.create_extraction_step(output_feed)
 
+    {:ok, step} = Processing.update_step(step, %{enabled: false})
     assert {:ok, _run} = Pipeline.backfill_output_feed(output_feed.id, "test")
-    refute output_feed.process_items
+    {:ok, _step} = Processing.update_step(step, %{enabled: true})
   end
 
   defp create_article!(url) do

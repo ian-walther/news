@@ -60,7 +60,7 @@ defmodule NewspaperWeb.AdminLive.OutputFeedPipeline do
 
         {:noreply,
          socket
-         |> put_flash(:info, "Queued #{count} unprocessed articles")
+         |> put_flash(:info, "Queued #{count} existing articles for extraction")
          |> assign_processing()}
 
       {:error, reason} ->
@@ -111,8 +111,8 @@ defmodule NewspaperWeb.AdminLive.OutputFeedPipeline do
           <div class="text-sm text-base-content/60">Unavailable</div>
         </div>
         <div class="border-t border-base-300 py-4 sm:border-t-0 sm:px-5">
-          <div class="text-2xl font-semibold tabular-nums">{@processing_counts.unprocessed}</div>
-          <div class="text-sm text-base-content/60">Unprocessed</div>
+          <div class="text-2xl font-semibold tabular-nums">{@processing_counts.not_requested}</div>
+          <div class="text-sm text-base-content/60">Not requested</div>
         </div>
       </section>
 
@@ -184,7 +184,7 @@ defmodule NewspaperWeb.AdminLive.OutputFeedPipeline do
         >
           <div>
             <div class="flex flex-wrap items-center gap-2">
-              <span class="font-medium">Website-directed extraction</span>
+              <span class="font-medium">Automatic extraction</span>
               <span class={if(step.enabled, do: "badge badge-success badge-soft", else: "badge")}>
                 {if step.enabled, do: "Enabled", else: "Disabled"}
               </span>
@@ -244,7 +244,7 @@ defmodule NewspaperWeb.AdminLive.OutputFeedPipeline do
   defp error_message(reason), do: inspect(reason)
 
   defp process_existing_disabled?(assigns) do
-    assigns.enabled_extraction_steps == 0 or assigns.processing_counts.unprocessed == 0 or
+    assigns.enabled_extraction_steps == 0 or assigns.processing_counts.not_requested == 0 or
       not is_nil(assigns.active_batch)
   end
 
@@ -254,14 +254,14 @@ defmodule NewspaperWeb.AdminLive.OutputFeedPipeline do
 
   defp process_existing_label(%{enabled_extraction_steps: 0}), do: "Enable extraction first"
 
-  defp process_existing_label(%{processing_counts: %{unprocessed: 0}}),
+  defp process_existing_label(%{processing_counts: %{not_requested: 0}}),
     do: "No articles awaiting extraction"
 
-  defp process_existing_label(%{processing_counts: %{unprocessed: 1}}),
-    do: "Extract 1 unprocessed article"
+  defp process_existing_label(%{processing_counts: %{not_requested: 1}}),
+    do: "Extract 1 existing article"
 
   defp process_existing_label(assigns) do
-    "Extract #{assigns.processing_counts.unprocessed} unprocessed articles"
+    "Extract #{assigns.processing_counts.not_requested} existing articles"
   end
 
   defp batch_completed(batch) do

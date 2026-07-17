@@ -225,7 +225,6 @@ Enum.each(freshrss_categories, fn category ->
     description: "Seeded from the FreshRSS #{category.name} category.",
     item_limit: 500,
     enabled: true,
-    process_items: false,
     link_to_hosted_article: false,
     use_extracted_content_body: false,
     policy_config: %{"seed_source" => "freshrss_opml"}

@@ -4,7 +4,7 @@
 
 Generated output feeds should be configurable, but the defaults should be conservative and FreshRSS/Reeder-friendly.
 
-Unprocessed feed items should link to the original article and pass through the selected original upstream feed entry body exactly. After content extraction exists, each output feed can choose whether to process/extract items. Only processed/extracted output should change links, bodies, or article content.
+Feed items should link to the original article and pass through the selected original upstream feed entry body unless an output feed explicitly chooses to render an available extraction. Extraction scheduling belongs to the output-feed pipeline; link and body settings only control how a durable extraction artifact is rendered.
 
 Output feeds should render from durable generated feed item records created by the pipeline. They should not be lazy mirrors of whatever is currently present in upstream source feeds.
 
@@ -67,7 +67,7 @@ Generated feed items are first-class durable publication records, not just compu
 
 ## Link Target
 
-Unprocessed link behavior:
+Original link behavior:
 
 - Feed item links point to the original article URL.
 
@@ -85,7 +85,7 @@ The item limit should be shown as a prepopulated field when configuring an outpu
 
 RSS output should return the most recent generated feed item snapshots for that output feed, ordered by rendered/published timestamp descending with discovered time as a fallback.
 
-Processed extraction behavior:
+Extracted link behavior:
 
 - Each output feed should have a boolean setting controlling whether item links point to the original article or the hosted extracted article page.
 
@@ -97,21 +97,22 @@ When false, RSS item links point to the original article. When true and extracte
 
 ## Body Source
 
-Unprocessed body behavior:
+Original body behavior:
 
 - Feed item bodies pass through the selected original upstream feed body/content exactly.
-- No source attribution, dedupe explanation, summaries, or other app-added content should be injected into the RSS item body in unprocessed mode.
+- No source attribution, dedupe explanation, summaries, or other app-added content should be injected when the original body is selected.
 
-Processed extraction behavior:
+Extracted body behavior:
 
-- Each output feed should have a process/extract-style boolean controlling whether item output may be transformed using extracted content.
+- Each output feed should have a boolean controlling whether an available extraction replaces the original feed body.
 
 Suggested setting:
 
-- `process_items` or `extract_items`
 - `use_extracted_content_body`
 
-When processing/extraction is false, generated feed items pass along the selected original feed body exactly. When processing/extraction is true and extraction succeeded, generated feed items may use extracted article content according to output feed settings. If extraction failed or is unavailable, the feed should fall back to the original feed body unless a later policy says otherwise.
+When `use_extracted_content_body` is false, generated feed items pass along the selected original feed body exactly. When it is true and extraction succeeded, generated feed items use extracted article content. If extraction failed or is unavailable, the feed falls back to the original feed body unless a later policy says otherwise.
+
+An enabled extraction pipeline step is the only output-level switch that requests extraction. It automatically schedules future generated feed items. Existing items require an explicit bulk extraction action, preserving future-only configuration semantics.
 
 ## Configurability
 
@@ -119,11 +120,10 @@ Keep rendering settings simple while processing pipeline steps are introduced.
 
 Useful output-feed settings:
 
-- `process_items` or `extract_items`
 - `link_to_hosted_article`
 - `use_extracted_content_body`
 
-Additional rendering options can be added later for processed/extracted output, such as source attribution, summary-first bodies, excerpts, or original-plus-local link blocks. More advanced choices should eventually be represented as rendering pipeline step implementations rather than ad hoc conditionals.
+Additional rendering options can be added later for extracted output, such as source attribution, summary-first bodies, excerpts, or original-plus-local link blocks. More advanced choices should eventually be represented as rendering pipeline step implementations rather than ad hoc conditionals.
 
 ## Render Snapshots
 

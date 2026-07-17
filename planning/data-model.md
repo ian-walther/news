@@ -96,7 +96,6 @@ Definitions for output feeds published to FreshRSS.
 - inclusion rules over intake groups, sources, categories, or later policies
 - optional future filtering/routing policy reference
 - boolean controlling whether links point to hosted article pages
-- boolean controlling whether items are processed/extracted
 - boolean controlling whether bodies use extracted content when available
 - configurable processing pipeline reference or scoped pipeline steps
 
@@ -201,6 +200,8 @@ Configured processing steps.
 Step implementations are registered in code. Database rows select and configure those implementations.
 
 An output-feed extraction row selects the site-policy coordinator. It does not store a concrete extractor choice or extractor-specific configuration.
+
+The enabled state of that row is the sole output-level extraction scheduling switch. Enabled steps schedule future generated feed items; existing items are only scheduled through an explicit bulk action. Output link/body booleans consume an available extraction artifact but do not request one.
 
 ### pipeline_step_attempts
 

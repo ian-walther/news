@@ -105,7 +105,7 @@ defmodule Newspaper.ProcessingBatchTest do
              items: 2,
              extracted: 0,
              unavailable: 1,
-             unprocessed: 1
+             not_requested: 1
            }
 
     assert {:ok, batch} = Processing.start_feed_batch(feed.id, "test")
@@ -152,14 +152,15 @@ defmodule Newspaper.ProcessingBatchTest do
       Publishing.create_generated_feed(%{
         "title" => "Cars",
         "guid" => "feed_processing_batch_test",
-        "process_items" => false,
         "input_feed_ids" => [input_feed.id]
       })
 
-    {:ok, _step} =
+    {:ok, step} =
       Processing.create_extraction_step(output_feed)
 
+    {:ok, step} = Processing.update_step(step, %{enabled: false})
     assert {:ok, _run} = Pipeline.backfill_output_feed(output_feed.id, "test")
+    {:ok, _step} = Processing.update_step(step, %{enabled: true})
     output_feed
   end
 

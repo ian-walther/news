@@ -44,6 +44,11 @@ defmodule NewspaperWeb.AdminLive.ArticlesDiscoveryTest do
     refute has_element?(view, "#article-#{spaceflight.id}")
     assert has_element?(view, "#article-status-succeeded[data-active='true']")
     assert has_element?(view, "#articles-filter-form")
+
+    {:ok, not_requested_view, _html} = live(conn, ~p"/articles?status=not_requested")
+    assert has_element?(not_requested_view, "#article-status-not_requested", "Not requested")
+    assert has_element?(not_requested_view, "#article-#{spaceflight.id}")
+    refute has_element?(not_requested_view, "#article-#{headlights.id}")
   end
 
   test "paginates the durable article pool", %{conn: conn} do
@@ -118,7 +123,7 @@ defmodule NewspaperWeb.AdminLive.ArticlesDiscoveryTest do
     assert has_element?(
              view,
              "#article-#{spaceflight.id}[data-extraction-eligible='false']",
-             "No extraction pipeline"
+             "No output requests extraction"
            )
   end
 
@@ -151,7 +156,6 @@ defmodule NewspaperWeb.AdminLive.ArticlesDiscoveryTest do
     attrs = %{
       "title" => title,
       "guid" => "feed_#{title |> String.downcase() |> String.replace(" ", "_")}_discovery_test",
-      "process_items" => false,
       "input_feed_ids" => if(input_feed, do: [input_feed.id], else: [])
     }
 

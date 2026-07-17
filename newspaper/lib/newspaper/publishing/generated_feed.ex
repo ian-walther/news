@@ -8,7 +8,6 @@ defmodule Newspaper.Publishing.GeneratedFeed do
     field :description, :string
     field :item_limit, :integer, default: 500
     field :enabled, :boolean, default: true
-    field :process_items, :boolean, default: false
     field :link_to_hosted_article, :boolean, default: false
     field :use_extracted_content_body, :boolean, default: false
     field :policy_config, :map, default: %{}
@@ -35,7 +34,6 @@ defmodule Newspaper.Publishing.GeneratedFeed do
       :description,
       :item_limit,
       :enabled,
-      :process_items,
       :link_to_hosted_article,
       :use_extracted_content_body,
       :policy_config

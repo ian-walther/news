@@ -301,21 +301,15 @@ defmodule NewspaperWeb.AdminLive.OutputFeeds do
           type="checkbox"
         />
         <.input
-          id={edit_field_id("process-items", @editing_id)}
-          field={@form[:process_items]}
-          label="Process/extract items"
-          type="checkbox"
-        />
-        <.input
           id={edit_field_id("link-to-hosted-article", @editing_id)}
           field={@form[:link_to_hosted_article]}
-          label="Link to hosted article"
+          label="Use hosted article links"
           type="checkbox"
         />
         <.input
           id={edit_field_id("use-extracted-content-body", @editing_id)}
           field={@form[:use_extracted_content_body]}
-          label="Use extracted content body"
+          label="Use extracted article bodies"
           type="checkbox"
         />
       </div>
@@ -436,20 +430,19 @@ defmodule NewspaperWeb.AdminLive.OutputFeeds do
   end
 
   defp pipeline_label(feed) do
-    extraction_steps =
-      Enum.count(feed.pipeline_steps, &(&1.step_type == "extraction" and &1.enabled))
-
-    case extraction_steps do
-      0 -> "No extraction pipeline"
-      1 -> "Extraction enabled"
-      count -> "#{count} extraction steps"
+    case Enum.find(feed.pipeline_steps, &(&1.step_type == "extraction")) do
+      nil -> "No automatic extraction"
+      %{enabled: true} -> "Extracts future articles"
+      %{enabled: false} -> "Future extraction paused"
     end
   end
 
-  defp body_label(%{process_items: false}), do: "Original content"
+  defp body_label(%{use_extracted_content_body: true, link_to_hosted_article: true}),
+    do: "Extracted bodies + hosted links"
+
   defp body_label(%{use_extracted_content_body: true}), do: "Extracted body"
   defp body_label(%{link_to_hosted_article: true}), do: "Hosted article links"
-  defp body_label(_feed), do: "Extraction enabled"
+  defp body_label(_feed), do: "Original body + links"
 
   defp to_id(id) when is_integer(id), do: id
   defp to_id(id) when is_binary(id), do: String.to_integer(id)

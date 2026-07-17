@@ -87,7 +87,8 @@ defmodule Newspaper.ExtractionTest do
              |> URI.merge("/articles/#{article.guid}")
              |> URI.to_string()
 
-    assert output_feed.process_items
+    assert output_feed.use_extracted_content_body
+    assert output_feed.link_to_hosted_article
   end
 
   test "rate limited extraction updates site backoff policy without escalating extractor capability" do
@@ -479,14 +480,13 @@ defmodule Newspaper.ExtractionTest do
     assert Enum.all?(items, &(&1.body_mode == "extracted_content"))
   end
 
-  test "manual extraction bypasses the output feed automatic processing toggle" do
+  test "an enabled extraction step automatically queues future feed items" do
     article = create_article!("https://arstechnica.com/space/manual-example")
 
     {:ok, output_feed} =
       Publishing.create_generated_feed(%{
         "title" => "Tech",
         "guid" => "feed_manual_extraction",
-        "process_items" => false,
         "input_feed_ids" => [article.representative_raw_item.input_feed_id]
       })
 
@@ -494,10 +494,24 @@ defmodule Newspaper.ExtractionTest do
       Processing.create_extraction_step(output_feed)
 
     assert {:ok, _run} = Pipeline.backfill_output_feed(output_feed.id, "test")
-    assert Repo.aggregate(PipelineStepAttempt, :count) == 0
-
-    assert {:ok, 1} = Processing.enqueue_article(article.id)
     assert Repo.aggregate(PipelineStepAttempt, :count) == 1
+  end
+
+  test "a disabled extraction step leaves future feed items not requested" do
+    article = create_article!("https://arstechnica.com/space/disabled-example")
+
+    {:ok, output_feed} =
+      Publishing.create_generated_feed(%{
+        "title" => "Tech",
+        "guid" => "feed_disabled_extraction",
+        "input_feed_ids" => [article.representative_raw_item.input_feed_id]
+      })
+
+    {:ok, step} = Processing.create_extraction_step(output_feed)
+    {:ok, _step} = Processing.update_step(step, %{enabled: false})
+
+    assert {:ok, _run} = Pipeline.backfill_output_feed(output_feed.id, "test")
+    assert Repo.aggregate(PipelineStepAttempt, :count) == 0
   end
 
   defp create_article!(url, opts \\ []) do
@@ -532,7 +546,6 @@ defmodule Newspaper.ExtractionTest do
       Publishing.create_generated_feed(%{
         "title" => "Tech",
         "guid" => guid,
-        "process_items" => true,
         "link_to_hosted_article" => true,
         "use_extracted_content_body" => true,
         "input_feed_ids" => [article.representative_raw_item.input_feed_id]

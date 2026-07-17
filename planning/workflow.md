@@ -28,7 +28,7 @@ source enabled
 
 ```text
 generated feed item available
-  -> configured extraction step selected
+  -> enabled extraction step requests article extraction
   -> step attempt recorded
   -> extraction implementation runs
   -> article content stored
@@ -75,6 +75,8 @@ The first configurable scope should be output feeds. Additional scope inheritanc
 
 For extraction, the output-feed step only enables the site-policy coordinator. The article host owns the starting extractor, escalation, pacing, timeout, and extraction-quality thresholds. Output feeds must not select competing extraction methods for the same article.
 
+The extraction step's enabled state is the output-level scheduling control. It automatically requests extraction for future generated feed items. Enabling it is not retroactive; the operator must explicitly request extraction of existing items. Output link and body settings only decide how an available extraction artifact is rendered.
+
 ## Failure Handling
 
 Failures should be visible and retryable where practical.
@@ -108,6 +110,7 @@ Keep enabled/disabled behavior simple.
 - Disabled input feeds are not fetched.
 - Disabled intake groups make their child input feeds inactive for fetching.
 - Disabled output feeds do not create new generated feed items.
+- Disabled pipeline steps do not schedule future attempts of that step type.
 - Disabling anything should not delete raw items, articles, source appearances, or existing generated feed items.
 - Re-enabling resumes future processing only unless the user explicitly runs a manual backfill/rebuild/re-render action.
 - A disabled output feed endpoint should return `404`.

@@ -149,6 +149,8 @@ Future processing capabilities should extend the output-feed pipeline rather tha
 
 The initial scope remains the output feed. This allows different generated feeds to enable extraction and choose filtering, summarization, and rendering behavior without changing source intake. Extractor selection itself remains host-scoped so one article is fetched consistently and its extraction artifact can be reused across outputs.
 
+An enabled output-feed extraction step is the sole scheduling switch for extraction. New generated feed items automatically request extraction through that step. Enabling a step remains future-only; existing items require an explicit bulk extraction action. Link-to-hosted and extracted-body settings consume an available extraction artifact but do not independently schedule work.
+
 Pipeline steps should have:
 
 - scope
@@ -211,7 +213,7 @@ Current dedupe should use normalized URL and feed-provided stable ID as its init
 
 Cross-outlet semantic clustering is a later capability. It may matter for the morning newspaper or World Radar, but it should not block feed-level dedupe.
 
-In unprocessed/pass-through output, dedupe should select one representative raw entry for the generated feed item snapshot. The app does not need to merge duplicate item bodies.
+When original pass-through rendering is selected, dedupe should select one representative raw entry for the generated feed item snapshot. The app does not need to merge duplicate item bodies.
 
 Representative selection should use the earliest timestamp, with a deterministic arbitrary tie-break when needed. The exact duplicate winner is not product-critical because extraction is expected to become the meaningful content source; feed output mostly needs a usable article URL and stable identity.
 

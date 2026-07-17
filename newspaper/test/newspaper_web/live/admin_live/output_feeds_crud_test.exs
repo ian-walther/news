@@ -27,6 +27,7 @@ defmodule NewspaperWeb.AdminLive.OutputFeedsCrudTest do
     |> render_click()
 
     assert has_element?(view, "#new-output-feed-form")
+    refute has_element?(view, "input[name='generated_feed[process_items]']")
 
     view
     |> form("#new-output-feed-form", %{
@@ -34,7 +35,6 @@ defmodule NewspaperWeb.AdminLive.OutputFeedsCrudTest do
         "title" => "Cars",
         "description" => "Seeded from the FreshRSS Cars category.",
         "item_limit" => "25",
-        "process_items" => "false",
         "link_to_hosted_article" => "false",
         "use_extracted_content_body" => "false",
         "input_feed_ids" => [input_feed.id],
@@ -60,7 +60,6 @@ defmodule NewspaperWeb.AdminLive.OutputFeedsCrudTest do
         "description" => "Updated output feed",
         "item_limit" => "100",
         "enabled" => "true",
-        "process_items" => "true",
         "link_to_hosted_article" => "true",
         "use_extracted_content_body" => "true",
         "input_feed_ids" => [],
@@ -77,7 +76,6 @@ defmodule NewspaperWeb.AdminLive.OutputFeedsCrudTest do
     assert output_feed.title == "Output Feed Updated"
     assert output_feed.description == "Updated output feed"
     assert output_feed.item_limit == 100
-    assert output_feed.process_items
     assert output_feed.link_to_hosted_article
     assert output_feed.use_extracted_content_body
     assert output_feed.input_feeds == []

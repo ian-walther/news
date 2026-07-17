@@ -5,7 +5,7 @@ defmodule NewspaperWeb.AdminLive.Articles do
   alias NewspaperWeb.AdminLive.Format
   import NewspaperWeb.AdminLive.Nav
 
-  @statuses ~w(all succeeded unprocessed processing failed)
+  @statuses ~w(all succeeded not_requested processing failed)
 
   def mount(_params, _session, socket) do
     if connected?(socket), do: Newspaper.Events.subscribe()
@@ -203,7 +203,7 @@ defmodule NewspaperWeb.AdminLive.Articles do
               :if={!entry.extraction_eligible?}
               class="basis-full text-xs text-base-content/45 lg:text-right"
             >
-              No extraction pipeline
+              No output requests extraction
             </p>
             <p
               :if={entry.extraction_eligible? && processing?(entry.article)}
@@ -306,6 +306,7 @@ defmodule NewspaperWeb.AdminLive.Articles do
   end
 
   defp allowed_status(status) when status in @statuses, do: status
+  defp allowed_status("unprocessed"), do: "not_requested"
   defp allowed_status(_status), do: "all"
 
   defp parse_optional_id(value) when is_integer(value) and value > 0, do: value
@@ -325,14 +326,14 @@ defmodule NewspaperWeb.AdminLive.Articles do
     [
       {"all", "All", stats.total},
       {"succeeded", "Ready", stats.extracted},
-      {"unprocessed", "Unprocessed", stats.not_requested},
+      {"not_requested", "Not requested", stats.not_requested},
       {"processing", "Processing", stats.queued + stats.running},
       {"failed", "Failed", stats.failed}
     ]
   end
 
   defp status_label("succeeded"), do: "Ready"
-  defp status_label("not_requested"), do: "Unprocessed"
+  defp status_label("not_requested"), do: "Not requested"
   defp status_label(value), do: Format.status_label(value)
 
   defp status_badge_class("succeeded"), do: "badge badge-success badge-soft"

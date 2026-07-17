@@ -51,12 +51,8 @@ defmodule Newspaper.Processing do
   def enqueue_item(%GeneratedFeedItem{} = item, opts \\ []) do
     item = Repo.preload(item, [:generated_feed, article: :extraction])
     force? = Keyword.get(opts, :force, false)
-    ignore_process_toggle? = Keyword.get(opts, :ignore_process_toggle, false)
 
     cond do
-      not item.generated_feed.process_items and not force? and not ignore_process_toggle? ->
-        {:ok, []}
-
       item.article.extraction && not force? ->
         {:ok, []}
 
@@ -259,7 +255,7 @@ defmodule Newspaper.Processing do
           }
       )
 
-    Map.put(counts, :unprocessed, counts.items - counts.extracted - counts.unavailable)
+    Map.put(counts, :not_requested, counts.items - counts.extracted - counts.unavailable)
   end
 
   def list_queued_attempts do
@@ -437,11 +433,7 @@ defmodule Newspaper.Processing do
 
   defp enqueue_batch_items(items, batch_run_id) do
     Enum.reduce_while(items, :ok, fn item, :ok ->
-      case enqueue_item(item,
-             ignore_process_toggle: true,
-             force: false,
-             batch_run_id: batch_run_id
-           ) do
+      case enqueue_item(item, force: false, batch_run_id: batch_run_id) do
         {:ok, _attempts} -> {:cont, :ok}
         {:error, reason} -> {:halt, {:error, reason}}
       end

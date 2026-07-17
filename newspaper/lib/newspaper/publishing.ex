@@ -212,14 +212,14 @@ defmodule Newspaper.Publishing do
     }
   end
 
-  defp body_mode(%GeneratedFeed{process_items: true, use_extracted_content_body: true}, article) do
+  defp body_mode(%GeneratedFeed{use_extracted_content_body: true}, article) do
     if extracted_html(article), do: "extracted_content", else: "original_feed_body"
   end
 
   defp body_mode(_feed, _article), do: "original_feed_body"
 
   defp rendered_body(
-         %GeneratedFeed{process_items: true, use_extracted_content_body: true},
+         %GeneratedFeed{use_extracted_content_body: true},
          article,
          raw_item
        ) do
@@ -229,7 +229,7 @@ defmodule Newspaper.Publishing do
   defp rendered_body(_feed, _article, raw_item), do: raw_item && raw_item.body
 
   defp rendered_link_url(
-         %GeneratedFeed{process_items: true, link_to_hosted_article: true},
+         %GeneratedFeed{link_to_hosted_article: true},
          %Article{guid: guid} = article,
          raw_item
        ) do

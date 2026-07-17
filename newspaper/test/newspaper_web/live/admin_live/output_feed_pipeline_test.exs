@@ -12,8 +12,7 @@ defmodule NewspaperWeb.AdminLive.OutputFeedPipelineTest do
     {:ok, feed} =
       Publishing.create_generated_feed(%{
         "title" => "Technology Reading",
-        "guid" => "feed_pipeline_ui_test",
-        "process_items" => true
+        "guid" => "feed_pipeline_ui_test"
       })
 
     {:ok, view, _html} = live(conn, ~p"/output-feeds/#{feed.id}/pipeline")
@@ -63,8 +62,10 @@ defmodule NewspaperWeb.AdminLive.OutputFeedPipelineTest do
     assert has_element?(
              view,
              "#process-existing-items:not([disabled])",
-             "Extract 1 unprocessed article"
+             "Extract 1 existing article"
            )
+
+    assert has_element?(view, "#feed-processing-summary", "Not requested")
 
     assert has_element?(
              view,
@@ -115,7 +116,6 @@ defmodule NewspaperWeb.AdminLive.OutputFeedPipelineTest do
       Publishing.create_generated_feed(%{
         "title" => "Cars",
         "guid" => "feed_pipeline_progress_test",
-        "process_items" => false,
         "input_feed_ids" => [input_feed.id]
       })
 

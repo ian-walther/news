@@ -117,9 +117,12 @@ defmodule Newspaper.Content do
     where(query, [article: article], article.extraction_status == "failed")
   end
 
-  defp filter_article_status(query, "unprocessed") do
+  defp filter_article_status(query, "not_requested") do
     where(query, [article: article], article.extraction_status == "not_requested")
   end
+
+  defp filter_article_status(query, "unprocessed"),
+    do: filter_article_status(query, "not_requested")
 
   defp filter_article_status(query, "processing") do
     where(query, [article: article], article.extraction_status in ["queued", "running"])
