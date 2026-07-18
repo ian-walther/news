@@ -6,6 +6,7 @@ defmodule NewspaperWeb.AdminLive.ArticlesDiscoveryTest do
   alias Newspaper.Content
   alias Newspaper.Content.{Article, ArticleExtraction}
   alias Newspaper.Intake
+  alias Newspaper.Operations
   alias Newspaper.Pipeline
   alias Newspaper.Processing
   alias Newspaper.Publishing
@@ -42,6 +43,10 @@ defmodule NewspaperWeb.AdminLive.ArticlesDiscoveryTest do
 
     assert has_element?(view, "#article-#{headlights.id}", "Round or rectangular headlights?")
     refute has_element?(view, "#article-#{spaceflight.id}")
+    assert has_element?(view, "#article-stage-extraction[data-active='true']")
+    assert has_element?(view, "#article-status-all", "All 1")
+    assert has_element?(view, "#article-status-succeeded", "Ready 1")
+    assert has_element?(view, "#article-status-not_requested", "Not requested 0")
     assert has_element?(view, "#article-status-succeeded[data-active='true']")
     assert has_element?(view, "#articles-filter-form")
 
@@ -49,6 +54,60 @@ defmodule NewspaperWeb.AdminLive.ArticlesDiscoveryTest do
     assert has_element?(not_requested_view, "#article-status-not_requested", "Not requested")
     assert has_element?(not_requested_view, "#article-#{spaceflight.id}")
     refute has_element?(not_requested_view, "#article-#{headlights.id}")
+  end
+
+  test "filters articles by digestion state within the selected output feed", %{conn: conn} do
+    {autopian, headlights} =
+      source_article!(
+        "The Autopian",
+        "https://www.theautopian.com/feed/",
+        "https://www.theautopian.com/round-or-rectangular-headlights/",
+        "Round or rectangular headlights?",
+        ~U[2026-07-15 14:00:00Z]
+      )
+
+    {_ars, spaceflight} =
+      source_article!(
+        "Ars Technica",
+        "https://feeds.arstechnica.com/arstechnica/index",
+        "https://arstechnica.com/space/2026/07/new-spaceflight-hardware/",
+        "New spaceflight hardware reaches orbit",
+        ~U[2026-07-15 15:00:00Z]
+      )
+
+    extract!(headlights)
+
+    cars =
+      output_feed!("Cars", autopian, headlights,
+        extraction?: true,
+        digestion?: true
+      )
+
+    technology = output_feed!("Technology", nil, spaceflight)
+
+    {:ok, processing_view, _html} =
+      live(
+        conn,
+        ~p"/articles?#{%{stage: "digestion", status: "processing", generated_feed_id: cars.id}}"
+      )
+
+    assert has_element?(processing_view, "#article-stage-digestion[data-active='true']")
+    assert has_element?(processing_view, "#article-status-processing[data-active='true']")
+    assert has_element?(processing_view, "#article-status-processing", "Processing 1")
+    assert has_element?(processing_view, "#article-status-not_enabled", "Not enabled 0")
+    assert has_element?(processing_view, "#article-#{headlights.id}", "Digest: queued")
+    refute has_element?(processing_view, "#article-#{spaceflight.id}")
+
+    {:ok, not_enabled_view, _html} =
+      live(
+        conn,
+        ~p"/articles?#{%{stage: "digestion", status: "not_enabled", generated_feed_id: technology.id}}"
+      )
+
+    assert has_element?(not_enabled_view, "#article-status-not_enabled[data-active='true']")
+    assert has_element?(not_enabled_view, "#article-status-not_enabled", "Not enabled 1")
+    assert has_element?(not_enabled_view, "#article-#{spaceflight.id}")
+    refute has_element?(not_enabled_view, "#article-#{headlights.id}")
   end
 
   test "paginates the durable article pool", %{conn: conn} do
@@ -164,6 +223,12 @@ defmodule NewspaperWeb.AdminLive.ArticlesDiscoveryTest do
     if Keyword.get(opts, :extraction?, false) do
       {:ok, _step} =
         Processing.create_extraction_step(feed)
+    end
+
+    if Keyword.get(opts, :digestion?, false) do
+      settings = Operations.get_settings()
+      {:ok, _settings} = Operations.update_settings(settings, %{ollama_model: "qwen3.6:27b"})
+      {:ok, _step} = Processing.create_digest_step(feed)
     end
 
     if input_feed do

@@ -11,8 +11,8 @@ defmodule Newspaper.Content do
   }
 
   alias Newspaper.Intake.RawItem
-  alias Newspaper.Processing.Registry
-  alias Newspaper.Publishing.GeneratedFeedItem
+  alias Newspaper.Processing.{GeneratedFeedItemStep, PipelineStep, Registry}
+  alias Newspaper.Publishing.{GeneratedFeed, GeneratedFeedItem}
   alias Newspaper.Repo
 
   def list_articles(limit \\ 100) do
@@ -33,12 +33,13 @@ defmodule Newspaper.Content do
     per_page = Map.get(filters, :per_page, 25)
 
     query =
-      Article
-      |> from(as: :article)
-      |> filter_article_status(Map.get(filters, :status, "all"))
-      |> filter_article_search(Map.get(filters, :search, ""))
-      |> filter_article_source(Map.get(filters, :input_feed_id))
-      |> filter_generated_feed(Map.get(filters, :generated_feed_id))
+      filters
+      |> article_filter_query()
+      |> filter_article_stage_status(
+        Map.get(filters, :stage, "extraction"),
+        Map.get(filters, :status, "all"),
+        Map.get(filters, :generated_feed_id)
+      )
 
     total_count = Repo.aggregate(query, :count, :id)
     total_pages = max(ceil(total_count / per_page), 1)
@@ -93,6 +94,15 @@ defmodule Newspaper.Content do
     }
   end
 
+  def article_filter_counts(filters \\ %{}) do
+    query = article_filter_query(filters)
+
+    case Map.get(filters, :stage, "extraction") do
+      "digestion" -> digestion_filter_counts(query, Map.get(filters, :generated_feed_id))
+      _stage -> extraction_filter_counts(query)
+    end
+  end
+
   def list_recent_extracted_articles(limit \\ 8) do
     Article
     |> join(:inner, [article], extraction in ArticleExtraction,
@@ -114,26 +124,142 @@ defmodule Newspaper.Content do
     |> Repo.all()
   end
 
-  defp filter_article_status(query, "succeeded") do
+  defp article_filter_query(filters) do
+    Article
+    |> from(as: :article)
+    |> filter_article_search(Map.get(filters, :search, ""))
+    |> filter_article_source(Map.get(filters, :input_feed_id))
+    |> filter_generated_feed(Map.get(filters, :generated_feed_id))
+  end
+
+  defp extraction_filter_counts(query) do
+    counts =
+      query
+      |> group_by([article: article], article.extraction_status)
+      |> select([article: article], {article.extraction_status, count(article.id)})
+      |> Repo.all()
+      |> Map.new()
+
+    %{
+      all: Enum.sum(Map.values(counts)),
+      succeeded: Map.get(counts, "succeeded", 0),
+      waiting: 0,
+      not_requested: Map.get(counts, "not_requested", 0),
+      processing: Map.get(counts, "queued", 0) + Map.get(counts, "running", 0),
+      failed: Map.get(counts, "failed", 0),
+      not_enabled: 0
+    }
+  end
+
+  defp digestion_filter_counts(query, generated_feed_id) do
+    count = fn status ->
+      query
+      |> filter_article_digestion_status(status, generated_feed_id)
+      |> Repo.aggregate(:count, :id)
+    end
+
+    %{
+      all: Repo.aggregate(query, :count, :id),
+      succeeded: count.("succeeded"),
+      waiting: count.("waiting"),
+      not_requested: count.("not_requested"),
+      processing: count.("processing"),
+      failed: count.("failed"),
+      not_enabled: count.("not_enabled")
+    }
+  end
+
+  defp filter_article_stage_status(query, "digestion", status, generated_feed_id),
+    do: filter_article_digestion_status(query, status, generated_feed_id)
+
+  defp filter_article_stage_status(query, _stage, status, _generated_feed_id),
+    do: filter_article_extraction_status(query, status)
+
+  defp filter_article_extraction_status(query, "succeeded") do
     where(query, [article: article], article.extraction_status == "succeeded")
   end
 
-  defp filter_article_status(query, "failed") do
+  defp filter_article_extraction_status(query, "failed") do
     where(query, [article: article], article.extraction_status == "failed")
   end
 
-  defp filter_article_status(query, "not_requested") do
+  defp filter_article_extraction_status(query, "not_requested") do
     where(query, [article: article], article.extraction_status == "not_requested")
   end
 
-  defp filter_article_status(query, "unprocessed"),
-    do: filter_article_status(query, "not_requested")
-
-  defp filter_article_status(query, "processing") do
+  defp filter_article_extraction_status(query, "processing") do
     where(query, [article: article], article.extraction_status in ["queued", "running"])
   end
 
-  defp filter_article_status(query, _status), do: query
+  defp filter_article_extraction_status(query, _status), do: query
+
+  defp filter_article_digestion_status(query, "all", _generated_feed_id), do: query
+
+  defp filter_article_digestion_status(query, "not_enabled", generated_feed_id) do
+    where(query, [article: _article], not exists(current_digestion_items(generated_feed_id)))
+  end
+
+  defp filter_article_digestion_status(query, status, generated_feed_id) do
+    item_query =
+      generated_feed_id
+      |> current_digestion_items()
+      |> filter_digestion_item_status(status)
+
+    where(query, [article: _article], exists(item_query))
+  end
+
+  defp current_digestion_items(generated_feed_id) do
+    GeneratedFeedItem
+    |> from(as: :digestion_item)
+    |> join(:inner, [digestion_item: item], feed in GeneratedFeed,
+      as: :digestion_feed,
+      on: feed.id == item.generated_feed_id and feed.enabled == true
+    )
+    |> join(:inner, [digestion_item: item], step in PipelineStep,
+      as: :digestion_step,
+      on:
+        step.generated_feed_id == item.generated_feed_id and step.step_type == "digestion" and
+          step.enabled == true
+    )
+    |> join(:left, [digestion_item: item], item_step in GeneratedFeedItemStep,
+      as: :digestion_item_step,
+      on: item_step.generated_feed_item_id == item.id and item_step.step_type == "digestion"
+    )
+    |> where([digestion_item: item], item.article_id == parent_as(:article).id)
+    |> maybe_filter_digestion_feed(generated_feed_id)
+  end
+
+  defp maybe_filter_digestion_feed(query, nil), do: query
+
+  defp maybe_filter_digestion_feed(query, generated_feed_id) do
+    where(query, [digestion_item: item], item.generated_feed_id == ^generated_feed_id)
+  end
+
+  defp filter_digestion_item_status(query, "succeeded") do
+    where(query, [digestion_item_step: item_step], item_step.status == "succeeded")
+  end
+
+  defp filter_digestion_item_status(query, "waiting") do
+    where(query, [digestion_item_step: item_step], item_step.status in ["pending", "blocked"])
+  end
+
+  defp filter_digestion_item_status(query, "not_requested") do
+    where(
+      query,
+      [digestion_item_step: item_step],
+      is_nil(item_step.id) or item_step.status in ["not_requested", "skipped"]
+    )
+  end
+
+  defp filter_digestion_item_status(query, "processing") do
+    where(query, [digestion_item_step: item_step], item_step.status in ["queued", "running"])
+  end
+
+  defp filter_digestion_item_status(query, "failed") do
+    where(query, [digestion_item_step: item_step], item_step.status == "failed")
+  end
+
+  defp filter_digestion_item_status(query, _status), do: query
 
   defp filter_article_search(query, search) when is_binary(search) do
     case String.trim(search) do

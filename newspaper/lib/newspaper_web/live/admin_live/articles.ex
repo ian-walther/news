@@ -5,7 +5,9 @@ defmodule NewspaperWeb.AdminLive.Articles do
   alias NewspaperWeb.AdminLive.Format
   import NewspaperWeb.AdminLive.Nav
 
-  @statuses ~w(all succeeded not_requested processing failed)
+  @stages ~w(extraction digestion)
+  @extraction_statuses ~w(all succeeded not_requested processing failed)
+  @digestion_statuses ~w(all succeeded waiting not_requested processing failed not_enabled)
 
   def mount(_params, _session, socket) do
     if connected?(socket), do: Newspaper.Events.subscribe()
@@ -92,21 +94,45 @@ defmodule NewspaperWeb.AdminLive.Articles do
         </p>
       </header>
 
-      <nav class="mb-5 flex max-w-full gap-1 overflow-x-auto pb-1" aria-label="Article status">
-        <.link
-          :for={{value, label, count} <- status_options(@article_stats)}
-          id={"article-status-#{value}"}
-          patch={~p"/articles?#{filter_query(@filters, %{status: value, page: 1})}"}
-          data-active={to_string(@filters.status == value)}
-          class={[
-            "btn btn-sm shrink-0",
-            @filters.status == value && "btn-primary",
-            @filters.status != value && "btn-ghost"
-          ]}
-        >
-          {label} <span class="tabular-nums opacity-60">{count}</span>
-        </.link>
-      </nav>
+      <div class="mb-5 space-y-2">
+        <div class="flex min-w-0 items-center gap-3">
+          <p class="w-14 shrink-0 text-xs font-semibold uppercase text-base-content/45">Stage</p>
+          <nav class="flex max-w-full gap-1 overflow-x-auto pb-1" aria-label="Pipeline stage">
+            <.link
+              :for={{value, label} <- stage_options()}
+              id={"article-stage-#{value}"}
+              patch={~p"/articles?#{filter_query(@filters, %{stage: value, status: "all", page: 1})}"}
+              data-active={to_string(@filters.stage == value)}
+              class={[
+                "btn btn-sm shrink-0",
+                @filters.stage == value && "btn-primary",
+                @filters.stage != value && "btn-ghost"
+              ]}
+            >
+              {label}
+            </.link>
+          </nav>
+        </div>
+
+        <div class="flex min-w-0 items-center gap-3">
+          <p class="w-14 shrink-0 text-xs font-semibold uppercase text-base-content/45">Status</p>
+          <nav class="flex max-w-full gap-1 overflow-x-auto pb-1" aria-label="Stage status">
+            <.link
+              :for={{value, label, count} <- status_options(@article_stats, @filters.stage)}
+              id={"article-status-#{value}"}
+              patch={~p"/articles?#{filter_query(@filters, %{status: value, page: 1})}"}
+              data-active={to_string(@filters.status == value)}
+              class={[
+                "btn btn-sm shrink-0",
+                @filters.status == value && "btn-primary",
+                @filters.status != value && "btn-ghost"
+              ]}
+            >
+              {label} <span class="tabular-nums opacity-60">{count}</span>
+            </.link>
+          </nav>
+        </div>
+      </div>
 
       <.form
         for={@filter_form}
@@ -151,7 +177,9 @@ defmodule NewspaperWeb.AdminLive.Articles do
       >
         <div id="articles-empty" class="hidden py-12 text-center only:block">
           <p class="font-medium">No articles match these filters.</p>
-          <p class="mt-1 text-sm text-base-content/55">Try another status, source, or search.</p>
+          <p class="mt-1 text-sm text-base-content/55">
+            Try another stage, status, source, or search.
+          </p>
         </div>
 
         <article
@@ -315,7 +343,7 @@ defmodule NewspaperWeb.AdminLive.Articles do
     socket
     |> assign(:filters, Map.put(filters, :page, page.page))
     |> assign(:page, page)
-    |> assign(:article_stats, Content.article_status_counts())
+    |> assign(:article_stats, Content.article_filter_counts(filters))
     |> assign(:input_feed_options, Enum.map(Intake.list_input_feeds(), &{&1.name, &1.id}))
     |> assign(
       :generated_feed_options,
@@ -336,8 +364,11 @@ defmodule NewspaperWeb.AdminLive.Articles do
   end
 
   defp filters_from_params(params) do
+    stage = allowed_stage(params["stage"])
+
     %{
-      status: allowed_status(params["status"]),
+      stage: stage,
+      status: allowed_status(stage, params["status"]),
       search: String.trim(params["search"] || ""),
       input_feed_id: parse_optional_id(params["input_feed_id"]),
       generated_feed_id: parse_optional_id(params["generated_feed_id"]),
@@ -348,8 +379,9 @@ defmodule NewspaperWeb.AdminLive.Articles do
   defp filter_query(filters, overrides \\ %{}) do
     filters
     |> Map.merge(overrides)
-    |> Map.take([:status, :search, :input_feed_id, :generated_feed_id, :page])
+    |> Map.take([:stage, :status, :search, :input_feed_id, :generated_feed_id, :page])
     |> Enum.reject(fn
+      {:stage, "extraction"} -> true
       {:status, "all"} -> true
       {:search, ""} -> true
       {_key, nil} -> true
@@ -359,9 +391,15 @@ defmodule NewspaperWeb.AdminLive.Articles do
     |> Map.new()
   end
 
-  defp allowed_status(status) when status in @statuses, do: status
-  defp allowed_status("unprocessed"), do: "not_requested"
-  defp allowed_status(_status), do: "all"
+  defp allowed_stage(stage) when stage in @stages, do: stage
+  defp allowed_stage(_stage), do: "extraction"
+
+  defp allowed_status(_stage, "unprocessed"), do: "not_requested"
+  defp allowed_status(_stage, "ready"), do: "succeeded"
+
+  defp allowed_status("digestion", status) when status in @digestion_statuses, do: status
+  defp allowed_status("extraction", status) when status in @extraction_statuses, do: status
+  defp allowed_status(_stage, _status), do: "all"
 
   defp parse_optional_id(value) when is_integer(value) and value > 0, do: value
 
@@ -376,12 +414,26 @@ defmodule NewspaperWeb.AdminLive.Articles do
 
   defp parse_page(value), do: parse_optional_id(value) || 1
 
-  defp status_options(stats) do
+  defp stage_options, do: [{"extraction", "Extraction"}, {"digestion", "Digestion"}]
+
+  defp status_options(stats, "digestion") do
     [
-      {"all", "All", stats.total},
-      {"succeeded", "Ready", stats.extracted},
+      {"all", "All", stats.all},
+      {"succeeded", "Ready", stats.succeeded},
+      {"waiting", "Waiting", stats.waiting},
       {"not_requested", "Not requested", stats.not_requested},
-      {"processing", "Processing", stats.queued + stats.running},
+      {"processing", "Processing", stats.processing},
+      {"failed", "Failed", stats.failed},
+      {"not_enabled", "Not enabled", stats.not_enabled}
+    ]
+  end
+
+  defp status_options(stats, _stage) do
+    [
+      {"all", "All", stats.all},
+      {"succeeded", "Ready", stats.succeeded},
+      {"not_requested", "Not requested", stats.not_requested},
+      {"processing", "Processing", stats.processing},
       {"failed", "Failed", stats.failed}
     ]
   end
