@@ -112,13 +112,13 @@ Examples:
 
 The model should support feed, extraction, digestion, filtering, rendering, and worker contract failures.
 
-Re-rendering should be explicit. When extraction succeeds or settings change later, the system should update generated feed item snapshots through a deliberate reprocess path rather than changing output implicitly on every RSS request.
+Re-rendering should remain an explicit application operation rather than live computation on each RSS request. Successful extraction or digestion should refresh affected snapshots, and saving output title, body, or link rendering policy should deliberately start a scoped re-render from app-owned artifacts.
 
 ## Configuration Changes
 
-Configuration changes should be future-only by default.
+Processing and membership changes should be future-only by default.
 
-Changing output feed membership, source settings, or rendering settings should not automatically rewrite existing generated feed items or backfill old articles into feeds. The user should be able to trigger an explicit manual rebuild/backfill/re-render action when they want existing app-owned records to be reconsidered.
+Changing output feed membership or source settings should not automatically rewrite existing generated feed items or backfill old articles into feeds. Changing title, body, or link rendering policy is different: saving that policy should automatically re-render existing generated feed items from their stored artifacts so the published feed matches the selected presentation. A manual re-render remains available as a recovery and debugging action.
 
 ## Enabled / Disabled Semantics
 
@@ -129,7 +129,7 @@ Keep enabled/disabled behavior simple.
 - Disabled output feeds do not create new generated feed items.
 - Disabled pipeline steps do not schedule future attempts of that step type.
 - Disabling anything should not delete raw items, articles, source appearances, or existing generated feed items.
-- Re-enabling resumes future processing only unless the user explicitly runs a manual backfill/rebuild/re-render action.
+- Re-enabling resumes future processing only unless the user explicitly runs a manual backfill or rebuild action. Rendering-policy saves may re-render existing snapshots but must not request new extraction or digestion work.
 - A disabled output feed endpoint should return `404`.
 
 Avoid more elaborate semantics until real usage shows they are needed.
@@ -175,6 +175,8 @@ Use backfill when output feed rules change and the user explicitly wants older m
 Re-render updates rendered RSS snapshots for existing generated feed items.
 
 Re-render uses app-owned stored data, such as raw item data, article data, extraction data, and output feed rendering settings. It should not fetch upstream RSS again, mutate raw intake records, or change generated feed item GUIDs.
+
+Saving output title, body, or link rendering policy should automatically start this operation for the affected feed. The manual action remains useful when snapshots need to be repaired without changing policy.
 
 ### Extract
 

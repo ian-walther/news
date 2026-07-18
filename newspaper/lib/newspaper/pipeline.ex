@@ -179,19 +179,23 @@ defmodule Newspaper.Pipeline do
 
     feed = Newspaper.Publishing.get_generated_feed!(generated_feed_id)
     items = Publishing.list_items_for_feed(feed)
-    results = Enum.map(items, &Publishing.rerender_item/1)
+    results = Enum.map(items, &Publishing.rerender_item(&1, broadcast: false))
     errors = Enum.filter(results, &match?({:error, _}, &1))
 
     status = if errors == [], do: "succeeded", else: "failed"
 
-    Operations.finish_run(run, status, %{
-      summary_counts: %{
-        "items_considered" => length(items),
-        "items_rendered" => Enum.count(results, &match?({:ok, _}, &1)),
-        "items_failed" => length(errors)
-      },
-      error_summary: if(errors == [], do: nil, else: "#{length(errors)} item(s) failed")
-    })
+    result =
+      Operations.finish_run(run, status, %{
+        summary_counts: %{
+          "items_considered" => length(items),
+          "items_rendered" => Enum.count(results, &match?({:ok, _}, &1)),
+          "items_failed" => length(errors)
+        },
+        error_summary: if(errors == [], do: nil, else: "#{length(errors)} item(s) failed")
+      })
+
+    Newspaper.Events.broadcast_data_changed(:publishing_changed)
+    result
   end
 
   def retry_failure(failure_id, trigger \\ "manual_retry") do

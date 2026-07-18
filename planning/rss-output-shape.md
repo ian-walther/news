@@ -172,4 +172,4 @@ Generated feed item snapshots should include the rendered values needed for RSS 
 
 The goal is to store enough rendered metadata that the generated feed item can be understood and republished without needing to consult the original upstream feed entry.
 
-When article state changes, extraction succeeds, or output feed settings change, the system should use an explicit re-render/reprocess step to update generated feed item snapshots. GUIDs remain stable across re-rendering.
+When a selected article artifact changes or title/body/link rendering policy is saved, the system should deterministically re-render affected generated feed item snapshots from app-owned data. Saving rendering policy should start the feed-scoped re-render automatically; a manual re-render remains available for recovery. Re-rendering must not generate missing extraction or digestion artifacts, and GUIDs remain stable throughout.

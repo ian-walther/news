@@ -364,12 +364,12 @@ defmodule Newspaper.Processing do
   end
 
   def create_digest_step(%GeneratedFeed{} = feed) do
-    case Operations.get_settings().ollama_model do
-      model when is_binary(model) and model != "" ->
-        create_step(feed, %{"implementation_key" => Registry.article_digest_step_key()})
-
-      _model ->
-        {:error, :ollama_model_not_configured}
+    with [_extraction_step] <- list_enabled_steps(feed.id, "extraction"),
+         model when is_binary(model) and model != "" <- Operations.get_settings().ollama_model do
+      create_step(feed, %{"implementation_key" => Registry.article_digest_step_key()})
+    else
+      [] -> {:error, :extraction_step_required}
+      _model -> {:error, :ollama_model_not_configured}
     end
   end
 

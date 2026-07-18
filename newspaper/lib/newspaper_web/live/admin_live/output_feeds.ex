@@ -11,9 +11,6 @@ defmodule NewspaperWeb.AdminLive.OutputFeeds do
     {:ok,
      socket
      |> assign(:creating, false)
-     |> assign(:editing_feed_id, nil)
-     |> assign(:edit_intake_group_ids, [])
-     |> assign(:edit_input_feed_ids, [])
      |> assign_form()
      |> assign_data()}
   end
@@ -22,9 +19,6 @@ defmodule NewspaperWeb.AdminLive.OutputFeeds do
     {:noreply,
      socket
      |> assign(:creating, true)
-     |> assign(:editing_feed_id, nil)
-     |> assign(:edit_intake_group_ids, [])
-     |> assign(:edit_input_feed_ids, [])
      |> assign_form()}
   end
 
@@ -47,46 +41,6 @@ defmodule NewspaperWeb.AdminLive.OutputFeeds do
     end
   end
 
-  def handle_event("edit_feed", %{"id" => id}, socket) do
-    feed = Publishing.get_generated_feed!(to_id(id))
-
-    {:noreply,
-     socket
-     |> assign(:creating, false)
-     |> assign(:editing_feed_id, feed.id)
-     |> assign(:edit_form, to_form(Publishing.change_generated_feed(feed)))
-     |> assign(:edit_intake_group_ids, Enum.map(feed.intake_groups, & &1.id))
-     |> assign(:edit_input_feed_ids, Enum.map(feed.input_feeds, & &1.id))}
-  end
-
-  def handle_event("cancel_edit_feed", _params, socket) do
-    {:noreply,
-     socket
-     |> assign(:editing_feed_id, nil)
-     |> assign(:edit_form, nil)
-     |> assign(:edit_intake_group_ids, [])
-     |> assign(:edit_input_feed_ids, [])}
-  end
-
-  def handle_event("update_feed", %{"generated_feed" => params}, socket) do
-    feed = Publishing.get_generated_feed!(socket.assigns.editing_feed_id)
-
-    case Publishing.update_generated_feed(feed, params) do
-      {:ok, _feed} ->
-        {:noreply,
-         socket
-         |> put_flash(:info, "Output feed updated")
-         |> assign(:editing_feed_id, nil)
-         |> assign(:edit_form, nil)
-         |> assign(:edit_intake_group_ids, [])
-         |> assign(:edit_input_feed_ids, [])
-         |> assign_data()}
-
-      {:error, changeset} ->
-        {:noreply, assign(socket, :edit_form, to_form(changeset))}
-    end
-  end
-
   def handle_event("delete_feed", %{"id" => id}, socket) do
     feed = Publishing.get_generated_feed!(to_id(id))
 
@@ -95,10 +49,6 @@ defmodule NewspaperWeb.AdminLive.OutputFeeds do
         {:noreply,
          socket
          |> put_flash(:info, "Output feed deleted")
-         |> assign(:editing_feed_id, nil)
-         |> assign(:edit_form, nil)
-         |> assign(:edit_intake_group_ids, [])
-         |> assign(:edit_input_feed_ids, [])
          |> assign_data()}
 
       {:error, _changeset} ->
@@ -107,37 +57,6 @@ defmodule NewspaperWeb.AdminLive.OutputFeeds do
          |> put_flash(:error, "Output feed could not be deleted")
          |> assign_data()}
     end
-  end
-
-  def handle_event("toggle_feed", %{"id" => id}, socket) do
-    feed = Publishing.get_generated_feed!(to_id(id))
-    {:ok, _feed} = Publishing.update_generated_feed(feed, %{enabled: !feed.enabled})
-
-    {:noreply, assign_data(socket)}
-  end
-
-  def handle_event("publish_feed", %{"id" => id}, socket) do
-    handle_event("backfill_feed", %{"id" => id}, socket)
-  end
-
-  def handle_event("backfill_feed", %{"id" => id}, socket) do
-    id = to_id(id)
-
-    Task.Supervisor.start_child(Newspaper.Processing.TaskSupervisor, fn ->
-      Newspaper.Pipeline.backfill_output_feed(id, "manual")
-    end)
-
-    {:noreply, socket |> put_flash(:info, "Output feed backfill started") |> assign_data()}
-  end
-
-  def handle_event("rerender_feed", %{"id" => id}, socket) do
-    id = to_id(id)
-
-    Task.Supervisor.start_child(Newspaper.Processing.TaskSupervisor, fn ->
-      Newspaper.Pipeline.rerender_output_feed(id, "manual")
-    end)
-
-    {:noreply, socket |> put_flash(:info, "Output feed re-render started") |> assign_data()}
   end
 
   def handle_info({:newspaper_data_changed, _event}, socket) do
@@ -231,30 +150,14 @@ defmodule NewspaperWeb.AdminLive.OutputFeeds do
 
             <div class="flex items-center gap-2 lg:justify-end">
               <.link
-                navigate={~p"/output-feeds/#{feed.id}/pipeline"}
+                navigate={~p"/output-feeds/#{feed.id}"}
                 class="btn btn-sm"
-                id={"pipeline-output-feed-#{feed.id}"}
+                id={"open-output-feed-#{feed.id}"}
               >
-                <.icon name="hero-queue-list" class="size-4" /> Pipeline
+                <.icon name="hero-adjustments-horizontal" class="size-4" /> Configure
               </.link>
               <.output_feed_actions feed={feed} />
             </div>
-          </div>
-
-          <div :if={@editing_feed_id == feed.id} class="mt-5 border-t border-base-300 pt-5">
-            <h3 class="mb-4 text-sm font-semibold">Edit {feed.title}</h3>
-            <.output_feed_form
-              form={@edit_form}
-              id={"edit-output-feed-form-#{feed.id}"}
-              submit="update_feed"
-              groups={@groups}
-              input_feeds={@input_feeds}
-              intake_group_ids={@edit_intake_group_ids}
-              input_feed_ids={@edit_input_feed_ids}
-              submit_label="Save output feed"
-              editing_id={feed.id}
-            />
-            <button type="button" class="btn mt-3" phx-click="cancel_edit_feed">Cancel</button>
           </div>
         </article>
       </section>
@@ -270,61 +173,21 @@ defmodule NewspaperWeb.AdminLive.OutputFeeds do
   attr :intake_group_ids, :list, required: true
   attr :input_feed_ids, :list, required: true
   attr :submit_label, :string, required: true
-  attr :editing_id, :integer, default: nil
 
   defp output_feed_form(assigns) do
     ~H"""
     <.form for={@form} id={@id} phx-submit={@submit} class="grid gap-4 md:grid-cols-2">
+      <.input field={@form[:title]} label="Title" />
       <.input
-        id={edit_field_id("title", @editing_id)}
-        field={@form[:title]}
-        label="Title"
-      />
-      <.input
-        id={edit_field_id("item-limit", @editing_id)}
         field={@form[:item_limit]}
         label="Item limit"
         type="number"
       />
       <.input
-        id={edit_field_id("description", @editing_id)}
         field={@form[:description]}
         label="Description"
         type="textarea"
       />
-      <div class="grid content-start gap-2 pt-7">
-        <.input
-          :if={@editing_id}
-          id={edit_field_id("enabled", @editing_id)}
-          field={@form[:enabled]}
-          label="Enabled"
-          type="checkbox"
-        />
-        <.input
-          id={edit_field_id("link-to-hosted-article", @editing_id)}
-          field={@form[:link_to_hosted_article]}
-          label="Use hosted article links"
-          type="checkbox"
-        />
-        <.input
-          id={edit_field_id("title-source", @editing_id)}
-          field={@form[:title_source]}
-          label="Item title"
-          type="select"
-          options={[{"Original feed title", "original"}, {"Article digest title", "digest"}]}
-        />
-        <.input
-          id={edit_field_id("body-source", @editing_id)}
-          field={@form[:body_source]}
-          label="Item body"
-          type="select"
-          options={[
-            {"Original feed body", "original_feed"},
-            {"Extracted article", "extracted_content"},
-            {"Article digest summary", "digest_summary"}
-          ]}
-        />
-      </div>
       <.input
         name="generated_feed[intake_group_ids][]"
         label="Included intake groups"
@@ -368,37 +231,12 @@ defmodule NewspaperWeb.AdminLive.OutputFeeds do
       </summary>
       <ul class="menu dropdown-content z-20 mt-1 w-48 border border-base-300 bg-base-100 p-1 shadow-lg">
         <li>
-          <button phx-click="edit_feed" phx-value-id={@feed.id} id={"edit-output-feed-#{@feed.id}"}>
-            <.icon name="hero-pencil-square" class="size-4" /> Edit
-          </button>
-        </li>
-        <li>
-          <button
-            phx-click="backfill_feed"
-            phx-value-id={@feed.id}
-            id={"backfill-output-feed-#{@feed.id}"}
+          <.link
+            navigate={~p"/output-feeds/#{@feed.id}"}
+            id={"configure-output-feed-#{@feed.id}"}
           >
-            <.icon name="hero-plus-circle" class="size-4" /> Backfill
-          </button>
-        </li>
-        <li>
-          <button
-            phx-click="rerender_feed"
-            phx-value-id={@feed.id}
-            id={"rerender-output-feed-#{@feed.id}"}
-          >
-            <.icon name="hero-arrow-path-rounded-square" class="size-4" /> Re-render
-          </button>
-        </li>
-        <li>
-          <button
-            phx-click="toggle_feed"
-            phx-value-id={@feed.id}
-            id={"toggle-output-feed-#{@feed.id}"}
-          >
-            <.icon name={if(@feed.enabled, do: "hero-pause", else: "hero-play")} class="size-4" />
-            {if @feed.enabled, do: "Disable", else: "Enable"}
-          </button>
+            <.icon name="hero-adjustments-horizontal" class="size-4" /> Configure
+          </.link>
         </li>
         <li>
           <button
@@ -427,13 +265,12 @@ defmodule NewspaperWeb.AdminLive.OutputFeeds do
   end
 
   defp assign_form(socket) do
-    socket
-    |> assign(:form, to_form(Publishing.change_generated_feed(%GeneratedFeed{item_limit: 500})))
-    |> assign(:edit_form, nil)
+    assign(
+      socket,
+      :form,
+      to_form(Publishing.change_generated_feed(%GeneratedFeed{item_limit: 500}))
+    )
   end
-
-  defp edit_field_id(_field, nil), do: nil
-  defp edit_field_id(field, id), do: "edit-output-feed-#{field}-#{id}"
 
   defp feed_membership_label(feed) do
     group_count = length(feed.intake_groups)

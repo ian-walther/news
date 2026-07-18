@@ -22,6 +22,13 @@ defmodule Newspaper.Publishing do
     |> Repo.all()
   end
 
+  def get_generated_feed(id) do
+    case Repo.get(GeneratedFeed, id) do
+      nil -> nil
+      feed -> preload_feed(feed)
+    end
+  end
+
   def get_generated_feed!(id), do: Repo.get!(GeneratedFeed, id) |> preload_feed()
 
   def get_generated_feed_by_guid(guid) do
@@ -103,6 +110,16 @@ defmodule Newspaper.Publishing do
     |> Repo.all()
   end
 
+  def count_items_for_feed(%GeneratedFeed{id: feed_id}), do: count_items_for_feed(feed_id)
+
+  def count_items_for_feed(feed_id) when is_integer(feed_id) do
+    Repo.aggregate(
+      from(item in GeneratedFeedItem, where: item.generated_feed_id == ^feed_id),
+      :count,
+      :id
+    )
+  end
+
   def list_items_for_article(article_id) when is_integer(article_id) do
     GeneratedFeedItem
     |> where([i], i.article_id == ^article_id)
@@ -143,7 +160,7 @@ defmodule Newspaper.Publishing do
     end
   end
 
-  def rerender_item(%GeneratedFeedItem{} = item) do
+  def rerender_item(%GeneratedFeedItem{} = item, opts \\ []) do
     item =
       Repo.preload(item, [
         :generated_feed,
@@ -154,12 +171,18 @@ defmodule Newspaper.Publishing do
     raw_item =
       item.article.representative_raw_item || Repo.get(RawItem, item.representative_raw_item_id)
 
-    item
-    |> GeneratedFeedItem.changeset(
-      render_attrs(item.generated_feed, item.article, raw_item, selected_digest(item))
-    )
-    |> Repo.update()
-    |> broadcast_on_ok(:publishing_changed)
+    result =
+      item
+      |> GeneratedFeedItem.changeset(
+        render_attrs(item.generated_feed, item.article, raw_item, selected_digest(item))
+      )
+      |> Repo.update()
+
+    if Keyword.get(opts, :broadcast, true) do
+      broadcast_on_ok(result, :publishing_changed)
+    else
+      result
+    end
   end
 
   def feed_url(%GeneratedFeed{guid: guid}), do: "/feeds/#{guid}.xml"
