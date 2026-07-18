@@ -2,7 +2,7 @@
 
 ## Goal
 
-Prove extraction quality across the real source corpus and add a useful local-LLM article-digest step for successfully extracted articles.
+Prove extraction and digest quality through sustained use with real output feeds, then use observed failures and reading behavior to choose the next pipeline work.
 
 ## In Scope
 
@@ -10,11 +10,10 @@ Prove extraction quality across the real source corpus and add a useful local-LL
 - Headless browser extraction behind the shared extractor contract.
 - Headed browser extraction through the persistent host Chrome session.
 - App-owned escalation across extractor implementations.
-- A configurable Ollama base URL and live installed-model discovery.
-- An output-scoped `digestion.ollama.article_digest` step with a selected model.
-- One validated durable artifact containing a factual replacement title and reading summary.
-- Explicit RSS title and body source selection for digest rendering.
-- Operator-visible digestion backlog, attempts, failures, retry, and explicit bulk processing.
+- A small output-feed pilot using `qwen3.6:27b` digest titles and summaries in Reeder.
+- Prompt, length, and validation tuning driven by actual reading quality.
+- Revisit model selection only when the pilot exposes a concrete quality or throughput problem.
+- Digestion failure review before any automatic retry policy is introduced.
 
 ## Designed-In But Later
 
@@ -34,6 +33,5 @@ Prove extraction quality across the real source corpus and add a useful local-LL
 - Do not allow arbitrary database-defined code execution.
 - Do not build a general workflow engine.
 - Do not require every output feed to use extraction.
-- Do not wait for every source to support browser extraction before trying digestion on successfully extracted articles.
 - Do not use raw RSS bodies as a silent fallback input for digestion.
-- Do not turn the first digest implementation into a general LLM platform.
+- Do not turn article-digest tuning into a general LLM platform.

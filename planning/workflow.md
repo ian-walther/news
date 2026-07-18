@@ -42,8 +42,8 @@ generated feed item available
 generated feed item available
   -> enabled digestion step checks for successful extraction
   -> step attempt recorded
-  -> selected Ollama model produces one structured title and summary
-  -> result validated and stored as a durable article digest
+  -> snapshotted global Ollama model produces one structured title and summary
+  -> result validated and stored as a versioned article digest
   -> generated feed item re-rendered when configured to use digest output
   -> failure recorded when generation or validation fails
 ```
@@ -54,7 +54,7 @@ Articles without a successful extraction are not eligible for digestion. The dig
 
 Prefer simple, explicit state fields and failure records over a general-purpose workflow framework.
 
-Likely useful concepts:
+Useful state concepts should remain bounded to:
 
 - Source fetch status.
 - Intake group processing status.
@@ -64,6 +64,7 @@ Likely useful concepts:
 - Generated feed item eligibility/publication state.
 - Generated feed item render snapshot state.
 - Pipeline step configuration.
+- Generated feed item step snapshot and status.
 - Pipeline step attempt status.
 - Extraction status.
 - Failure type, message, retry count, and last attempt timestamp.
@@ -195,7 +196,7 @@ Filtering is a pipeline step type. Source-policy filtering and local-LLM topic f
 
 Digest produces one durable factual replacement title and reading summary from a successful article extraction.
 
-Digestion is a pipeline step type. The initial `digestion.ollama.article_digest` implementation stores the selected model and bounded config on the output-feed step. Existing eligible articles are processed through an explicit `Digest existing articles` bulk action; successful artifacts are regenerated only through an explicit re-digest action.
+Digestion is a pipeline step type. The `digestion.ollama.article_digest` implementation snapshots the global model and bounded config for each generated feed item. Existing eligible articles are processed through an explicit bulk action; explicit re-digestion creates a new artifact while preserving earlier artifacts and attempts.
 
 ### Rebuild
 

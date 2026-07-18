@@ -55,6 +55,28 @@ defmodule NewspaperWeb.AdminLive.Articles do
     end
   end
 
+  def handle_event("digest", %{"id" => article_id}, socket) do
+    case Processing.enqueue_article_step(String.to_integer(article_id), "digestion", force: true) do
+      {:ok, count} when count > 0 ->
+        {:noreply,
+         socket
+         |> put_flash(:info, "Queued article digestion")
+         |> assign_data(socket.assigns.filters)}
+
+      {:ok, 0} ->
+        {:noreply,
+         socket
+         |> put_flash(:info, "Article digestion requested")
+         |> assign_data(socket.assigns.filters)}
+
+      {:error, reason} ->
+        {:noreply,
+         socket
+         |> put_flash(:error, "Digestion could not be queued: #{inspect(reason)}")
+         |> assign_data(socket.assigns.filters)}
+    end
+  end
+
   def render(assigns) do
     ~H"""
     <Layouts.app flash={@flash}>
@@ -66,7 +88,7 @@ defmodule NewspaperWeb.AdminLive.Articles do
         </p>
         <h1 class="text-2xl font-semibold">Articles</h1>
         <p class="mt-1 text-sm text-base-content/65">
-          Search the durable article pool and review extraction state.
+          Search the durable article pool and review processing state.
         </p>
       </header>
 
@@ -136,6 +158,7 @@ defmodule NewspaperWeb.AdminLive.Articles do
           :for={{dom_id, entry} <- @streams.articles}
           id={dom_id}
           data-extraction-eligible={to_string(entry.extraction_eligible?)}
+          data-digestion-eligible={to_string(entry.digestion_eligible?)}
           class="grid gap-4 py-5 lg:grid-cols-[minmax(0,1fr)_11rem_12rem] lg:items-center"
         >
           <div class="min-w-0">
@@ -167,6 +190,14 @@ defmodule NewspaperWeb.AdminLive.Articles do
                 else: "appearances"}
             </p>
             <p class="mt-1 truncate text-xs">{article_outputs(entry.article)}</p>
+            <div :if={entry.pipeline_rows != []} class="mt-2 space-y-1.5">
+              <div :for={row <- entry.pipeline_rows} class="text-xs">
+                <span class="text-base-content/45">{row.feed_title}</span>
+                <span :for={step <- row.steps} class={pipeline_badge_class(step.status)}>
+                  {pipeline_step_label(step)}
+                </span>
+              </div>
+            </div>
           </div>
 
           <div class="flex flex-wrap items-center gap-2 lg:justify-end">
@@ -199,6 +230,17 @@ defmodule NewspaperWeb.AdminLive.Articles do
             >
               <.icon name="hero-bolt" class="size-4" /> {extract_action_label(entry.article)}
             </button>
+            <button
+              :if={digest_action?(entry)}
+              id={"digest-article-#{entry.article.id}"}
+              type="button"
+              phx-click="digest"
+              phx-value-id={entry.article.id}
+              phx-disable-with="Queueing..."
+              class="btn btn-sm"
+            >
+              <.icon name="hero-document-text" class="size-4" /> {digest_action_label(entry.article)}
+            </button>
             <p
               :if={!entry.extraction_eligible?}
               class="basis-full text-xs text-base-content/45 lg:text-right"
@@ -210,6 +252,12 @@ defmodule NewspaperWeb.AdminLive.Articles do
               class="basis-full text-xs text-base-content/55 lg:text-right"
             >
               Extraction {entry.article.extraction_status}
+            </p>
+            <p
+              :if={entry.digestion_eligible? && digest_processing?(entry)}
+              class="basis-full text-xs text-base-content/55 lg:text-right"
+            >
+              Digestion processing
             </p>
           </div>
         </article>
@@ -247,14 +295,20 @@ defmodule NewspaperWeb.AdminLive.Articles do
 
   defp assign_data(socket, filters) do
     page = Content.list_articles_page(Map.put(filters, :per_page, 25))
-    eligible_ids = Processing.extraction_eligible_article_ids(Enum.map(page.articles, & &1.id))
+    article_ids = Enum.map(page.articles, & &1.id)
+    extraction_eligible_ids = Processing.step_eligible_article_ids(article_ids, "extraction")
+    digestion_eligible_ids = Processing.step_eligible_article_ids(article_ids, "digestion")
 
     entries =
       Enum.map(page.articles, fn article ->
+        pipeline_rows = pipeline_rows(article, filters.generated_feed_id)
+
         %{
           id: article.id,
           article: article,
-          extraction_eligible?: MapSet.member?(eligible_ids, article.id)
+          extraction_eligible?: MapSet.member?(extraction_eligible_ids, article.id),
+          digestion_eligible?: MapSet.member?(digestion_eligible_ids, article.id),
+          pipeline_rows: pipeline_rows
         }
       end)
 
@@ -348,6 +402,17 @@ defmodule NewspaperWeb.AdminLive.Articles do
     entry.extraction_eligible? && not processing?(entry.article)
   end
 
+  defp digest_action?(entry) do
+    entry.digestion_eligible? && not is_nil(entry.article.extraction) &&
+      not digest_processing?(entry)
+  end
+
+  defp digest_processing?(entry) do
+    Enum.any?(entry.pipeline_rows, fn row ->
+      Enum.any?(row.steps, &(&1.step_type == "digestion" and &1.status in ["queued", "running"]))
+    end)
+  end
+
   defp processing?(article), do: article.extraction_status in ["queued", "running"]
 
   defp extract_action_label(%{extraction: extraction}) when not is_nil(extraction),
@@ -355,6 +420,64 @@ defmodule NewspaperWeb.AdminLive.Articles do
 
   defp extract_action_label(%{extraction_status: "failed"}), do: "Retry extraction"
   defp extract_action_label(_article), do: "Extract"
+
+  defp digest_action_label(%{digests: [_digest | _rest]}), do: "Regenerate digest"
+  defp digest_action_label(_article), do: "Digest"
+
+  defp pipeline_rows(article, selected_feed_id) do
+    article.generated_feed_items
+    |> Enum.filter(&(is_nil(selected_feed_id) or &1.generated_feed_id == selected_feed_id))
+    |> Enum.map(fn item ->
+      snapshots = Map.new(item.pipeline_item_steps, &{&1.step_type, &1})
+
+      current_steps =
+        item.generated_feed.pipeline_steps
+        |> Enum.filter(& &1.enabled)
+        |> Map.new(&{&1.step_type, &1})
+
+      step_types =
+        ["extraction", "digestion"]
+        |> Enum.filter(&(Map.has_key?(snapshots, &1) or Map.has_key?(current_steps, &1)))
+
+      steps =
+        Enum.map(step_types, fn step_type ->
+          case Map.get(snapshots, step_type) do
+            nil ->
+              %{step_type: step_type, status: "not_requested", current?: true}
+
+            item_step ->
+              %{
+                step_type: step_type,
+                status: item_step.status,
+                current?: Map.has_key?(current_steps, step_type)
+              }
+          end
+        end)
+
+      %{feed_title: item.generated_feed.title, steps: steps}
+    end)
+    |> Enum.reject(&(&1.steps == []))
+  end
+
+  defp pipeline_step_label(step) do
+    label = if step.step_type == "extraction", do: "Extract", else: "Digest"
+    suffix = if step.current?, do: pipeline_status_label(step.status), else: "historical"
+    "#{label}: #{suffix}"
+  end
+
+  defp pipeline_status_label("succeeded"), do: "ready"
+  defp pipeline_status_label("not_requested"), do: "not requested"
+  defp pipeline_status_label("blocked"), do: "waiting"
+  defp pipeline_status_label("pending"), do: "waiting"
+  defp pipeline_status_label(status), do: status
+
+  defp pipeline_badge_class("succeeded"), do: "badge badge-success badge-soft ml-1"
+  defp pipeline_badge_class("failed"), do: "badge badge-error badge-soft ml-1"
+
+  defp pipeline_badge_class(status) when status in ["queued", "running"],
+    do: "badge badge-info badge-soft ml-1"
+
+  defp pipeline_badge_class(_status), do: "badge badge-ghost ml-1"
 
   defp article_sources(article) do
     article.article_sources

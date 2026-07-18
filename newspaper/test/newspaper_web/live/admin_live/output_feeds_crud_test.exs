@@ -36,7 +36,8 @@ defmodule NewspaperWeb.AdminLive.OutputFeedsCrudTest do
         "description" => "Seeded from the FreshRSS Cars category.",
         "item_limit" => "25",
         "link_to_hosted_article" => "false",
-        "use_extracted_content_body" => "false",
+        "title_source" => "original",
+        "body_source" => "original_feed",
         "input_feed_ids" => [input_feed.id],
         "intake_group_ids" => []
       }
@@ -61,7 +62,8 @@ defmodule NewspaperWeb.AdminLive.OutputFeedsCrudTest do
         "item_limit" => "100",
         "enabled" => "true",
         "link_to_hosted_article" => "true",
-        "use_extracted_content_body" => "true",
+        "title_source" => "digest",
+        "body_source" => "digest_summary",
         "input_feed_ids" => [],
         "intake_group_ids" => [intake_group.id]
       }
@@ -77,7 +79,8 @@ defmodule NewspaperWeb.AdminLive.OutputFeedsCrudTest do
     assert output_feed.description == "Updated output feed"
     assert output_feed.item_limit == 100
     assert output_feed.link_to_hosted_article
-    assert output_feed.use_extracted_content_body
+    assert output_feed.title_source == "digest"
+    assert output_feed.body_source == "digest_summary"
     assert output_feed.input_feeds == []
     assert Enum.map(output_feed.intake_groups, & &1.id) == [intake_group.id]
 

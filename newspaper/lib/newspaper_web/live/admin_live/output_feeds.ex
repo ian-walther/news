@@ -307,10 +307,22 @@ defmodule NewspaperWeb.AdminLive.OutputFeeds do
           type="checkbox"
         />
         <.input
-          id={edit_field_id("use-extracted-content-body", @editing_id)}
-          field={@form[:use_extracted_content_body]}
-          label="Use extracted article bodies"
-          type="checkbox"
+          id={edit_field_id("title-source", @editing_id)}
+          field={@form[:title_source]}
+          label="Item title"
+          type="select"
+          options={[{"Original feed title", "original"}, {"Article digest title", "digest"}]}
+        />
+        <.input
+          id={edit_field_id("body-source", @editing_id)}
+          field={@form[:body_source]}
+          label="Item body"
+          type="select"
+          options={[
+            {"Original feed body", "original_feed"},
+            {"Extracted article", "extracted_content"},
+            {"Article digest summary", "digest_summary"}
+          ]}
         />
       </div>
       <.input
@@ -430,19 +442,42 @@ defmodule NewspaperWeb.AdminLive.OutputFeeds do
   end
 
   defp pipeline_label(feed) do
-    case Enum.find(feed.pipeline_steps, &(&1.step_type == "extraction")) do
-      nil -> "No automatic extraction"
-      %{enabled: true} -> "Extracts future articles"
-      %{enabled: false} -> "Future extraction paused"
+    enabled_types =
+      feed.pipeline_steps
+      |> Enum.filter(& &1.enabled)
+      |> Enum.map(& &1.step_type)
+
+    cond do
+      enabled_types == [] ->
+        "No active processing"
+
+      enabled_types == ["extraction"] ->
+        "Extracts future articles"
+
+      enabled_types == ["digestion"] ->
+        "Digests future articles"
+
+      "extraction" in enabled_types and "digestion" in enabled_types ->
+        "Extracts + digests future articles"
+
+      true ->
+        "#{length(enabled_types)} active steps"
     end
   end
 
-  defp body_label(%{use_extracted_content_body: true, link_to_hosted_article: true}),
-    do: "Extracted bodies + hosted links"
+  defp body_label(feed) do
+    title = if feed.title_source == "digest", do: "digest title", else: "original title"
 
-  defp body_label(%{use_extracted_content_body: true}), do: "Extracted body"
-  defp body_label(%{link_to_hosted_article: true}), do: "Hosted article links"
-  defp body_label(_feed), do: "Original body + links"
+    body =
+      case feed.body_source do
+        "extracted_content" -> "extracted body"
+        "digest_summary" -> "digest summary"
+        _body_source -> "original body"
+      end
+
+    link = if feed.link_to_hosted_article, do: "hosted link", else: "original link"
+    Enum.join([title, body, link], " · ")
+  end
 
   defp to_id(id) when is_integer(id), do: id
   defp to_id(id) when is_binary(id), do: String.to_integer(id)

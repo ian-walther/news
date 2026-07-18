@@ -1,7 +1,7 @@
 defmodule Newspaper.Publishing do
   import Ecto.Query
 
-  alias Newspaper.Content.{Article, ArticleExtraction}
+  alias Newspaper.Content.{Article, ArticleDigest, ArticleExtraction}
   alias Newspaper.Intake.{InputFeed, IntakeGroup, RawItem}
   alias Newspaper.Publishing.{GeneratedFeed, GeneratedFeedItem}
   alias Newspaper.Processing
@@ -95,14 +95,22 @@ defmodule Newspaper.Publishing do
       desc_nulls_last: i.published_at,
       desc: i.inserted_at
     )
-    |> preload([:generated_feed, article: [:representative_raw_item, :extraction]])
+    |> preload([
+      :generated_feed,
+      pipeline_item_steps: :article_digest,
+      article: [:representative_raw_item, :extraction]
+    ])
     |> Repo.all()
   end
 
   def list_items_for_article(article_id) when is_integer(article_id) do
     GeneratedFeedItem
     |> where([i], i.article_id == ^article_id)
-    |> preload([:generated_feed, article: [:representative_raw_item, :extraction]])
+    |> preload([
+      :generated_feed,
+      pipeline_item_steps: :article_digest,
+      article: [:representative_raw_item, :extraction]
+    ])
     |> Repo.all()
   end
 
@@ -136,13 +144,20 @@ defmodule Newspaper.Publishing do
   end
 
   def rerender_item(%GeneratedFeedItem{} = item) do
-    item = Repo.preload(item, [:generated_feed, article: [:representative_raw_item, :extraction]])
+    item =
+      Repo.preload(item, [
+        :generated_feed,
+        pipeline_item_steps: :article_digest,
+        article: [:representative_raw_item, :extraction]
+      ])
 
     raw_item =
       item.article.representative_raw_item || Repo.get(RawItem, item.representative_raw_item_id)
 
     item
-    |> GeneratedFeedItem.changeset(render_attrs(item.generated_feed, item.article, raw_item))
+    |> GeneratedFeedItem.changeset(
+      render_attrs(item.generated_feed, item.article, raw_item, selected_digest(item))
+    )
     |> Repo.update()
     |> broadcast_on_ok(:publishing_changed)
   end
@@ -162,10 +177,10 @@ defmodule Newspaper.Publishing do
         generated_feed_id: feed.id,
         article_id: article.id,
         representative_raw_item_id: raw_item && raw_item.id,
-        publication_status: "published",
+        publication_status: publication_status(feed, nil),
         first_eligible_at: now
       }
-      |> Map.merge(render_attrs(feed, article, raw_item, now))
+      |> Map.merge(render_attrs(feed, article, raw_item, nil, now))
 
     result =
       %GeneratedFeedItem{}
@@ -174,13 +189,14 @@ defmodule Newspaper.Publishing do
       |> broadcast_on_ok(:publishing_changed)
 
     with {:ok, item} <- result,
-         {:ok, _attempts} <- Processing.enqueue_item(item) do
+         {:ok, _attempts} <- Processing.enqueue_item(item),
+         {:ok, item} <- rerender_item(item) do
       {:ok, item}
     end
   end
 
-  defp render_attrs(feed, article, raw_item, now \\ DateTime.utc_now(:second)) do
-    body_mode = body_mode(feed, article)
+  defp render_attrs(feed, article, raw_item, digest, now \\ DateTime.utc_now(:second)) do
+    body_mode = body_mode(feed, article, digest)
 
     %{
       representative_raw_item_id: raw_item && raw_item.id,
@@ -189,13 +205,13 @@ defmodule Newspaper.Publishing do
       item_url: raw_item && raw_item.url,
       body_mode: body_mode,
       selection_metadata: %{"mode" => body_mode},
-      rendered_title: raw_item && raw_item.title,
+      rendered_title: rendered_title(feed, raw_item, digest),
       rendered_link_url: rendered_link_url(feed, article, raw_item),
       rendered_author: raw_item && raw_item.author,
       rendered_published_at: raw_item && (raw_item.published_at || raw_item.discovered_at),
       rendered_updated_at: raw_item && raw_item.feed_updated_at,
-      rendered_summary: raw_item && raw_item.summary,
-      rendered_body: rendered_body(feed, article, raw_item),
+      rendered_summary: rendered_summary(feed, raw_item, digest),
+      rendered_body: rendered_body(feed, article, raw_item, digest),
       rendered_source_name: raw_item && raw_item.source_name,
       rendered_source_url: raw_item && raw_item.source_url,
       rendered_categories: (raw_item && raw_item.categories) || [],
@@ -208,25 +224,87 @@ defmodule Newspaper.Publishing do
       },
       render_status: "rendered",
       render_error: nil,
+      publication_status: publication_status(feed, digest),
       last_rendered_at: now
     }
   end
 
-  defp body_mode(%GeneratedFeed{use_extracted_content_body: true}, article) do
-    if extracted_html(article), do: "extracted_content", else: "original_feed_body"
+  defp body_mode(%GeneratedFeed{body_source: "digest_summary"}, _article, %ArticleDigest{}),
+    do: "digest_summary"
+
+  defp body_mode(%GeneratedFeed{body_source: "extracted_content"}, article, _digest) do
+    if extracted_html(article), do: "extracted_content", else: "original_feed"
   end
 
-  defp body_mode(_feed, _article), do: "original_feed_body"
+  defp body_mode(_feed, _article, _digest), do: "original_feed"
 
   defp rendered_body(
-         %GeneratedFeed{use_extracted_content_body: true},
+         %GeneratedFeed{body_source: "digest_summary"},
+         _article,
+         _raw_item,
+         %ArticleDigest{generated_summary: summary}
+       ) do
+    summary_html(summary)
+  end
+
+  defp rendered_body(
+         %GeneratedFeed{body_source: "extracted_content"},
          article,
-         raw_item
+         raw_item,
+         _digest
        ) do
     extracted_html(article) || (raw_item && raw_item.body)
   end
 
-  defp rendered_body(_feed, _article, raw_item), do: raw_item && raw_item.body
+  defp rendered_body(_feed, _article, raw_item, _digest), do: raw_item && raw_item.body
+
+  defp rendered_title(
+         %GeneratedFeed{title_source: "digest"},
+         _raw_item,
+         %ArticleDigest{generated_title: title}
+       ),
+       do: title
+
+  defp rendered_title(_feed, raw_item, _digest), do: raw_item && raw_item.title
+
+  defp rendered_summary(
+         %GeneratedFeed{body_source: "digest_summary"},
+         _raw_item,
+         %ArticleDigest{generated_summary: summary}
+       ),
+       do: summary
+
+  defp rendered_summary(_feed, raw_item, _digest), do: raw_item && raw_item.summary
+
+  defp publication_status(%GeneratedFeed{title_source: "digest"}, nil),
+    do: "processing"
+
+  defp publication_status(%GeneratedFeed{body_source: "digest_summary"}, nil),
+    do: "processing"
+
+  defp publication_status(_feed, _digest), do: "published"
+
+  defp selected_digest(item) do
+    item.pipeline_item_steps
+    |> Enum.find(&(&1.step_type == "digestion" and &1.status == "succeeded"))
+    |> case do
+      nil -> nil
+      item_step -> item_step.article_digest
+    end
+  end
+
+  defp summary_html(summary) when is_binary(summary) do
+    summary
+    |> String.split(~r/\n\s*\n/, trim: true)
+    |> Enum.map_join(fn paragraph ->
+      escaped =
+        paragraph |> String.trim() |> Phoenix.HTML.html_escape() |> Phoenix.HTML.safe_to_string()
+
+      "<p>#{escaped}</p>"
+    end)
+  end
+
+  defp summary_html(_summary), do: nil
 
   defp rendered_link_url(
          %GeneratedFeed{link_to_hosted_article: true},

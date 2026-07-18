@@ -21,6 +21,7 @@ defmodule Newspaper.Content.Article do
     has_many :article_sources, Newspaper.Content.ArticleSource
     has_many :article_extraction_attempts, Newspaper.Content.ArticleExtractionAttempt
     has_one :extraction, Newspaper.Content.ArticleExtraction
+    has_many :digests, Newspaper.Content.ArticleDigest
     has_many :pipeline_step_attempts, Newspaper.Processing.PipelineStepAttempt
     has_many :generated_feed_items, Newspaper.Publishing.GeneratedFeedItem
 

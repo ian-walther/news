@@ -104,7 +104,7 @@ Each output feed should select its rendered item title source explicitly:
 - `original`
 - `digest`
 
-The default is `original`. `digest` uses the generated title from the current successful article-digest artifact for that output's configured digestion step.
+The default is `original`. `digest` uses the generated title from the successful article-digest artifact referenced by that generated feed item's digestion state.
 
 The title source is independent of body and link selection. A feed may use a digest title while retaining full extracted content and original article links.
 
@@ -124,7 +124,7 @@ An enabled extraction pipeline step is the only output-level switch that request
 
 Digest body behavior:
 
-- `digest_summary` uses the generated summary from the current successful article-digest artifact.
+- `digest_summary` uses the generated summary from the successful article-digest artifact referenced by that generated feed item's digestion state.
 - Model output remains plain text; the application escapes it and renders predictable feed-safe paragraphs.
 
 The body-source setting is one explicit selector:
@@ -135,7 +135,7 @@ The body-source setting is one explicit selector:
 
 The default is `original_feed`. Moving to one selector avoids overlapping booleans and unclear precedence as digest output becomes available.
 
-If a selected digest artifact is not ready, the item is not digest-ready. Whether publication waits for the digest or temporarily publishes original content is an open product decision that must be explicit and visible rather than an accidental fallback.
+If a digest title or body is selected and the item's digest artifact is not ready, publication waits. The item becomes publishable after successful digestion and an explicit render snapshot update; original content is not used as a silent digest fallback.
 
 ## Configurability
 

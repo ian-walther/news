@@ -7,14 +7,13 @@
 - Add the persistent headed browser implementation through host Chrome/CDP.
 - Exercise headless-to-headed escalation with real authenticated or browser-state-dependent failures.
 
-## Article Digestion
+## Digestion Evaluation
 
-- Add a configurable Ollama connection and live model discovery in the admin UI.
-- Add `digestion.ollama.article_digest` for successfully extracted articles.
-- Request and validate one structured factual title and summary.
-- Store the input extraction identity, selected model, prompt/schema version, config snapshot, output, and validation/debug metadata.
-- Add explicit output-feed title and body source selectors.
-- Make future processing automatic and existing-article digestion an explicit bulk action.
+- Pilot `qwen3.6:27b` digest titles and summaries in one real Reeder feed.
+- Compare alternate models only when representative pilot output exposes a specific weakness.
+- Tune prompt wording, summary length, and validation bounds from observed output.
+- Classify real connection, model, timeout, and structured-output failures before adding automatic retries.
+- Add review or correction controls only when repeated use demonstrates a concrete workflow.
 
 ## Semantic Filtering
 

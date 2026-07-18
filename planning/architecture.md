@@ -112,7 +112,7 @@ The digestion registry should initially include only:
 
 - `digestion.ollama.article_digest`
 
-Its config schema should require an Ollama model name discovered from the configured server. Prompt and output-schema revisions remain code-owned so persisted artifacts can identify their behavior without creating a general database-defined prompt system.
+The initial implementation uses the globally selected Ollama model. Each generated feed item step snapshots that model with code-owned prompt and output-schema revisions so queued work remains deterministic without creating a general database-defined prompt system. Per-step model selection should wait for a demonstrated need.
 
 ## Browser And Auth Strategy
 

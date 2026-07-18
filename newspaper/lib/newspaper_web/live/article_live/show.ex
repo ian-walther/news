@@ -14,6 +14,7 @@ defmodule NewspaperWeb.ArticleLive.Show do
     {:ok,
      socket
      |> assign(:article, article)
+     |> assign(:digest, latest_digest(article))
      |> assign(:page_title, article.title || "Article")}
   end
 
@@ -48,6 +49,23 @@ defmodule NewspaperWeb.ArticleLive.Show do
           </div>
         </header>
 
+        <section
+          :if={@digest}
+          id="article-digest"
+          class="mb-10 border-y border-base-300 py-6"
+        >
+          <p class="text-xs font-semibold uppercase text-base-content/50">Article digest</p>
+          <h2 class="mt-2 text-xl font-semibold leading-snug">
+            {@digest.generated_title}
+          </h2>
+          <div class="mt-4 whitespace-pre-line text-base leading-7 text-base-content/80">
+            {@digest.generated_summary}
+          </div>
+          <p class="mt-4 text-xs text-base-content/45">
+            {@digest.model} · {@digest.prompt_version}
+          </p>
+        </section>
+
         <div id="extracted-article-content" class="article-content">
           {Phoenix.HTML.raw(@article.extraction.content_html)}
         </div>
@@ -62,5 +80,11 @@ defmodule NewspaperWeb.ArticleLive.Show do
       </article>
     </Layouts.app>
     """
+  end
+
+  defp latest_digest(article) do
+    article.digests
+    |> Enum.sort_by(&{&1.generated_at, &1.id}, :desc)
+    |> List.first()
   end
 end

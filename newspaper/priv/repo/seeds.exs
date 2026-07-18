@@ -226,7 +226,8 @@ Enum.each(freshrss_categories, fn category ->
     item_limit: 500,
     enabled: true,
     link_to_hosted_article: false,
-    use_extracted_content_body: false,
+    title_source: "original",
+    body_source: "original_feed",
     policy_config: %{"seed_source" => "freshrss_opml"}
   })
   |> Ecto.Changeset.put_assoc(

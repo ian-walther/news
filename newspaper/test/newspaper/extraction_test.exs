@@ -38,7 +38,7 @@ defmodule Newspaper.ExtractionTest do
     output_feed = configure_extraction!(article, "feed_freshrss_tech_test")
 
     item = Repo.one!(GeneratedFeedItem)
-    assert item.body_mode == "original_feed_body"
+    assert item.body_mode == "original_feed"
 
     attempt = Repo.one!(PipelineStepAttempt)
     assert attempt.status == "queued"
@@ -87,8 +87,20 @@ defmodule Newspaper.ExtractionTest do
              |> URI.merge("/articles/#{article.guid}")
              |> URI.to_string()
 
-    assert output_feed.use_extracted_content_body
+    assert output_feed.body_source == "extracted_content"
     assert output_feed.link_to_hosted_article
+
+    assert {:ok, 1} = Processing.enqueue_article(article.id, force: true)
+
+    retry_attempt =
+      PipelineStepAttempt
+      |> where([pipeline_attempt], pipeline_attempt.article_id == ^article.id)
+      |> order_by([pipeline_attempt], desc: pipeline_attempt.id)
+      |> limit(1)
+      |> Repo.one!()
+
+    assert retry_attempt.id != attempt.id
+    assert retry_attempt.status == "queued"
   end
 
   test "rate limited extraction updates site backoff policy without escalating extractor capability" do
@@ -547,7 +559,7 @@ defmodule Newspaper.ExtractionTest do
         "title" => "Tech",
         "guid" => guid,
         "link_to_hosted_article" => true,
-        "use_extracted_content_body" => true,
+        "body_source" => "extracted_content",
         "input_feed_ids" => [article.representative_raw_item.input_feed_id]
       })
 

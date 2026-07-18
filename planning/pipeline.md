@@ -170,7 +170,9 @@ Pipeline step attempts should record:
 - error
 - started and finished timestamps
 
-Domain tables hold durable current results. Attempt records explain how those results were produced. Extraction artifacts are article-level reusable state; the output-feed step records why processing was requested, while site extraction policy and worker attempts record how extraction was performed.
+Each generated feed item should snapshot its enabled step definitions, ordered state, exact artifact references, and latest attempt. This separates a feed's current configuration from the work previously requested for an item. Deleting a current definition must preserve item snapshots and attempt history.
+
+Domain tables hold durable results. Attempt records explain how those results were produced. Extraction artifacts are article-level reusable state; digest artifacts are versioned and item steps reference the exact selected result. The output-feed step records why processing was requested, while site extraction policy and worker attempts record how extraction was performed.
 
 Bulk processing should create a durable run before attempts are queued. The run owns aggregate progress and completion state; individual attempts remain the deterministic execution history. Manual processing of existing items should skip articles with a successful current artifact unless the operator explicitly requests reprocessing.
 
@@ -190,7 +192,7 @@ article in pool
 
 Feed metadata can provide cheap hints, but content-aware filtering should rely on extracted article content when possible.
 
-The initial digest implementation is `digestion.ollama.article_digest`. It calls a configured Ollama server directly, uses a model selected from Ollama discovery, and stores a durable output-scoped digest artifact. This is intentionally a Newspaper-specific article transform, not a general LLM workflow layer.
+The digest implementation is `digestion.ollama.article_digest`. It calls a configured Ollama server directly, snapshots the globally selected discovered model for queued work, and stores versioned article artifacts referenced by generated feed item state. This is intentionally a Newspaper-specific article transform, not a general LLM workflow layer.
 
 Extraction should use an app-owned escalation chain. The extractor implementations are separate executables with a shared contract, but the Elixir app decides which implementation to try, when to escalate, and what to remember for a site.
 

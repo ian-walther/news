@@ -9,7 +9,8 @@ defmodule Newspaper.Publishing.GeneratedFeed do
     field :item_limit, :integer, default: 500
     field :enabled, :boolean, default: true
     field :link_to_hosted_article, :boolean, default: false
-    field :use_extracted_content_body, :boolean, default: false
+    field :title_source, :string, default: "original"
+    field :body_source, :string, default: "original_feed"
     field :policy_config, :map, default: %{}
 
     many_to_many :intake_groups, Newspaper.Intake.IntakeGroup,
@@ -35,12 +36,15 @@ defmodule Newspaper.Publishing.GeneratedFeed do
       :item_limit,
       :enabled,
       :link_to_hosted_article,
-      :use_extracted_content_body,
+      :title_source,
+      :body_source,
       :policy_config
     ])
     |> Newspaper.Guid.put_new(:guid, "feed")
     |> validate_required([:guid, :title, :item_limit])
     |> validate_number(:item_limit, greater_than: 0)
+    |> validate_inclusion(:title_source, ~w(original digest))
+    |> validate_inclusion(:body_source, ~w(original_feed extracted_content digest_summary))
     |> unique_constraint(:guid)
   end
 end

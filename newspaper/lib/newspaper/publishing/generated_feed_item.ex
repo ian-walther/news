@@ -7,7 +7,7 @@ defmodule Newspaper.Publishing.GeneratedFeedItem do
     field :rss_guid, :string
     field :published_at, :utc_datetime
     field :item_url, :string
-    field :body_mode, :string, default: "original_feed_body"
+    field :body_mode, :string, default: "original_feed"
     field :selection_metadata, :map, default: %{}
     field :rendered_guid, :string
     field :rendered_title, :string
@@ -33,6 +33,7 @@ defmodule Newspaper.Publishing.GeneratedFeedItem do
     belongs_to :article, Newspaper.Content.Article
     belongs_to :representative_raw_item, Newspaper.Intake.RawItem
     has_many :pipeline_step_attempts, Newspaper.Processing.PipelineStepAttempt
+    has_many :pipeline_item_steps, Newspaper.Processing.GeneratedFeedItemStep
 
     timestamps(type: :utc_datetime)
   end

@@ -14,6 +14,7 @@ defmodule Newspaper.Application do
       {Phoenix.PubSub, name: Newspaper.PubSub},
       {Task.Supervisor, name: Newspaper.Processing.TaskSupervisor},
       Newspaper.Processing.Dispatcher,
+      Newspaper.Digestion.Dispatcher,
       Newspaper.Pipeline.Scheduler,
       # Start to serve requests, typically the last entry
       NewspaperWeb.Endpoint

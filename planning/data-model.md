@@ -171,6 +171,7 @@ Application-level settings.
 - global fetch interval minutes, default `60`
 - run history/debug logging enabled, default true
 - Ollama base URL, initially `http://desktop.home:11434`
+- globally selected Ollama article-digestion model
 
 ### failures
 
@@ -203,13 +204,29 @@ Step implementations are registered in code. Database rows select and configure 
 
 An output-feed extraction row selects the site-policy coordinator. It does not store a concrete extractor choice or extractor-specific configuration.
 
-The enabled state of that row is the sole output-level extraction scheduling switch. Enabled steps schedule future generated feed items; existing items are only scheduled through an explicit bulk action. Output link/body booleans consume an available extraction artifact but do not request one.
+The enabled state of that row is the sole output-level extraction scheduling switch. Enabled steps schedule future generated feed items; existing items are only scheduled through an explicit bulk action. Output rendering selectors consume available artifacts but do not request processing.
+
+### generated_feed_item_steps
+
+The durable step definition and state snapshotted for one generated feed item.
+
+- generated feed item ID
+- current pipeline step ID when the definition still exists
+- step type, implementation key, and position
+- config snapshot and definition fingerprint
+- status and latest attempt ID
+- exact extraction or digest artifact reference
+- reused-artifact flag
+- error and execution timestamps
+
+These rows distinguish the output feed's current definition from the work requested and completed for an existing item. Deleting a current pipeline definition must not erase item state or execution history.
 
 ### pipeline_step_attempts
 
 Execution history for pipeline steps.
 
-- pipeline step ID
+- pipeline step ID when the definition still exists
+- generated feed item step ID when applicable
 - article ID when applicable
 - generated feed item ID when applicable
 - parent batch run ID when the attempt belongs to a bulk operation
@@ -267,21 +284,21 @@ New sites should start with `extraction.simple_html` unless an operator policy s
 
 ### article_digests
 
-Durable current article-digest output for one configured output-feed pipeline step.
+Versioned article-digest artifacts produced from successful extraction content.
 
 - article ID
-- pipeline step ID
-- extraction ID or deterministic extraction input hash
+- extraction ID
+- pipeline step attempt ID
 - implementation key, initially `digestion.ollama.article_digest`
 - Ollama model name
 - prompt/schema version
-- step config snapshot
+- deterministic input fingerprint
 - generated title
 - generated summary
-- validation/quality/debug metadata
-- generated and updated timestamps
+- input/output metadata
+- generated timestamp
 
-The current artifact is replaced only by explicit re-digestion. Pipeline attempts retain execution history. The model's chain-of-thought should not be requested or stored.
+Explicit re-digestion creates another artifact rather than mutating prior output. Generated feed item step rows reference the exact artifact selected for that item, while pipeline attempts retain execution history. The model's chain-of-thought should not be requested or stored.
 
 ### article_filter_decisions
 

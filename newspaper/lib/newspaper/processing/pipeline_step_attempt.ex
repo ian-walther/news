@@ -20,6 +20,7 @@ defmodule Newspaper.Processing.PipelineStepAttempt do
     belongs_to :pipeline_step, Newspaper.Processing.PipelineStep
     belongs_to :article, Newspaper.Content.Article
     belongs_to :generated_feed_item, Newspaper.Publishing.GeneratedFeedItem
+    belongs_to :generated_feed_item_step, Newspaper.Processing.GeneratedFeedItemStep
     belongs_to :batch_run, Newspaper.Operations.Run
     has_many :extraction_attempts, Newspaper.Content.ArticleExtractionAttempt
     has_one :article_extraction, Newspaper.Content.ArticleExtraction
@@ -33,6 +34,7 @@ defmodule Newspaper.Processing.PipelineStepAttempt do
       :pipeline_step_id,
       :article_id,
       :generated_feed_item_id,
+      :generated_feed_item_step_id,
       :implementation_key,
       :step_type,
       :status,
@@ -46,7 +48,6 @@ defmodule Newspaper.Processing.PipelineStepAttempt do
       :finished_at
     ])
     |> validate_required([
-      :pipeline_step_id,
       :article_id,
       :implementation_key,
       :step_type,

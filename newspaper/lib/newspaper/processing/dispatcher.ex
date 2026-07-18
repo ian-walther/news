@@ -39,7 +39,7 @@ defmodule Newspaper.Processing.Dispatcher do
     Processing.requeue_interrupted_attempts()
 
     state =
-      Processing.list_queued_attempts()
+      Processing.list_queued_attempts("extraction")
       |> Enum.reduce(state, fn attempt, state ->
         attempt = Processing.get_attempt!(attempt.id)
         url = attempt.article.resolved_url || attempt.article.canonical_url

@@ -36,6 +36,20 @@ defmodule NewspaperWeb.AdminLive.OutputFeedPipeline do
     end
   end
 
+  def handle_event("enable_digestion", _params, socket) do
+    case Processing.create_digest_step(socket.assigns.feed) do
+      {:ok, _step} ->
+        {:noreply,
+         socket
+         |> put_flash(:info, "Article digestion enabled for future items")
+         |> assign_steps()
+         |> assign_processing()}
+
+      {:error, reason} ->
+        {:noreply, put_flash(socket, :error, error_message(reason))}
+    end
+  end
+
   def handle_event("toggle_step", %{"id" => id}, socket) do
     step = Processing.get_step!(String.to_integer(id))
     {:ok, _step} = Processing.update_step(step, %{enabled: !step.enabled})
@@ -53,14 +67,17 @@ defmodule NewspaperWeb.AdminLive.OutputFeedPipeline do
      |> assign_processing()}
   end
 
-  def handle_event("process_existing", _params, socket) do
-    case Processing.start_feed_batch(socket.assigns.feed.id, "manual") do
+  def handle_event("process_existing", %{"step-type" => step_type}, socket) do
+    case Processing.start_feed_batch(socket.assigns.feed.id, "manual", step_type) do
       {:ok, batch} ->
         count = batch.summary_counts["total"]
 
         {:noreply,
          socket
-         |> put_flash(:info, "Queued #{count} existing articles for extraction")
+         |> put_flash(
+           :info,
+           "Queued #{count} #{step_label(step_type) |> String.downcase()} attempts"
+         )
          |> assign_processing()}
 
       {:error, reason} ->
@@ -77,42 +94,31 @@ defmodule NewspaperWeb.AdminLive.OutputFeedPipeline do
     <Layouts.app flash={@flash}>
       <.nav current="output-feeds" />
 
-      <div class="mb-6 flex flex-wrap items-center justify-between gap-3">
+      <div class="mb-6 flex flex-wrap items-end justify-between gap-3">
         <div>
           <p class="text-sm text-base-content/60">Output feed pipeline</p>
           <h1 class="text-2xl font-semibold">{@feed.title}</h1>
         </div>
-        <button
-          id="process-existing-items"
-          type="button"
-          phx-click="process_existing"
-          phx-disable-with="Queueing extraction..."
-          disabled={process_existing_disabled?(assigns)}
-          class="btn btn-primary"
-        >
-          <.icon name="hero-play" class="size-4" /> {process_existing_label(assigns)}
-        </button>
+        <.link navigate={~p"/output-feeds"} class="btn btn-sm">
+          <.icon name="hero-pencil-square" class="size-4" /> Output settings
+        </.link>
       </div>
 
       <section
         id="feed-processing-summary"
-        class="mb-8 grid border-y border-base-300 sm:grid-cols-4 sm:divide-x sm:divide-base-300"
+        class="mb-8 grid border-y border-base-300 sm:grid-cols-3 sm:divide-x sm:divide-base-300"
       >
         <div class="py-4 sm:px-5 sm:first:pl-0">
-          <div class="text-2xl font-semibold tabular-nums">{@processing_counts.items}</div>
+          <div class="text-2xl font-semibold tabular-nums">{@item_count}</div>
           <div class="text-sm text-base-content/60">Feed articles</div>
         </div>
         <div class="border-t border-base-300 py-4 sm:border-t-0 sm:px-5">
-          <div class="text-2xl font-semibold tabular-nums">{@processing_counts.extracted}</div>
-          <div class="text-sm text-base-content/60">Extracted</div>
+          <div class="text-2xl font-semibold tabular-nums">{@step_count}</div>
+          <div class="text-sm text-base-content/60">Defined steps</div>
         </div>
         <div class="border-t border-base-300 py-4 sm:border-t-0 sm:px-5">
-          <div class="text-2xl font-semibold tabular-nums">{@processing_counts.unavailable}</div>
-          <div class="text-sm text-base-content/60">Unavailable</div>
-        </div>
-        <div class="border-t border-base-300 py-4 sm:border-t-0 sm:px-5">
-          <div class="text-2xl font-semibold tabular-nums">{@processing_counts.not_requested}</div>
-          <div class="text-sm text-base-content/60">Not requested</div>
+          <div class="text-sm font-medium">{rendering_label(@feed)}</div>
+          <div class="text-sm text-base-content/60">Published content</div>
         </div>
       </section>
 
@@ -154,66 +160,145 @@ defmodule NewspaperWeb.AdminLive.OutputFeedPipeline do
         </div>
       </section>
 
-      <section :if={@extraction_step_count == 0} class="mb-8 border-y border-base-300 py-6">
-        <div class="flex flex-wrap items-center justify-between gap-4">
-          <div>
-            <h2 class="text-lg font-semibold">Article extraction</h2>
-            <p class="mt-1 text-sm text-base-content/60">Website policy</p>
-          </div>
-          <button
-            id="enable-extraction-step"
-            type="button"
-            phx-click="enable_extraction"
-            class="btn btn-primary"
-          >
-            <.icon name="hero-plus" class="size-4" /> Enable extraction
-          </button>
+      <div class="mb-3 flex items-baseline justify-between gap-4">
+        <div>
+          <h2 class="text-lg font-semibold">Processing steps</h2>
+          <p class="mt-1 text-sm text-base-content/60">
+            New articles snapshot enabled steps in this order.
+          </p>
         </div>
-      </section>
+      </div>
 
       <div
-        :if={@extraction_step_count > 0}
         id="pipeline-steps"
         phx-update="stream"
-        class="divide-y divide-base-300 border-y border-base-300"
+        class="mb-6 divide-y divide-base-300 border-y border-base-300"
       >
         <div
           :for={{id, step} <- @streams.steps}
           id={id}
-          class="grid gap-4 py-5 md:grid-cols-[1fr_auto] md:items-center"
+          class="py-5"
         >
-          <div>
-            <div class="flex flex-wrap items-center gap-2">
-              <span class="font-medium">Automatic extraction</span>
-              <span class={if(step.enabled, do: "badge badge-success badge-soft", else: "badge")}>
-                {if step.enabled, do: "Enabled", else: "Disabled"}
-              </span>
+          <div class="grid gap-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start">
+            <div>
+              <div class="flex flex-wrap items-center gap-2">
+                <span class="flex size-6 items-center justify-center border border-base-300 text-xs font-semibold">
+                  {step.position + 1}
+                </span>
+                <span class="font-medium">{step_label(step.step_type)}</span>
+                <span class={if(step.enabled, do: "badge badge-success badge-soft", else: "badge")}>
+                  {if step.enabled, do: "Enabled", else: "Disabled"}
+                </span>
+              </div>
+              <p class="mt-2 text-sm text-base-content/60">{step_description(step.step_type)}</p>
+              <.link
+                :if={step.step_type == "extraction"}
+                navigate={~p"/sites"}
+                class="link mt-2 inline-block text-sm"
+              >
+                Website policies
+              </.link>
+              <.link
+                :if={step.step_type == "digestion"}
+                navigate={~p"/settings"}
+                class="link mt-2 inline-block text-sm"
+              >
+                {@settings.ollama_model || "Configure Ollama model"}
+              </.link>
             </div>
-            <.link navigate={~p"/sites"} class="link mt-1 inline-block text-sm">
-              Website policies
-            </.link>
+            <div class="flex flex-wrap gap-2 lg:justify-end">
+              <button
+                id={"process-existing-#{step.step_type}"}
+                type="button"
+                class="btn btn-sm btn-primary"
+                phx-click="process_existing"
+                phx-value-step-type={step.step_type}
+                phx-disable-with="Queueing..."
+                disabled={process_existing_disabled?(assigns, step)}
+              >
+                <.icon name="hero-play" class="size-4" />
+                {process_existing_label(assigns, step)}
+              </button>
+              <button
+                id={"toggle-step-#{step.id}"}
+                class="btn btn-sm"
+                phx-click="toggle_step"
+                phx-value-id={step.id}
+              >
+                {if step.enabled, do: "Disable", else: "Enable"}
+              </button>
+              <button
+                id={"delete-step-#{step.id}"}
+                class="btn btn-sm btn-error btn-soft"
+                phx-click="delete_step"
+                phx-value-id={step.id}
+                data-confirm="Delete this pipeline step? Existing article history is preserved."
+              >
+                Delete
+              </button>
+            </div>
           </div>
-          <div class="flex flex-wrap gap-2">
-            <button
-              id={"toggle-step-#{step.id}"}
-              class="btn btn-sm"
-              phx-click="toggle_step"
-              phx-value-id={step.id}
-            >
-              {if step.enabled, do: "Disable", else: "Enable"}
-            </button>
-            <button
-              id={"delete-step-#{step.id}"}
-              class="btn btn-sm btn-error btn-soft"
-              phx-click="delete_step"
-              phx-value-id={step.id}
-              data-confirm="Delete this pipeline step?"
-            >
-              Delete
-            </button>
+
+          <div class="mt-4 flex flex-wrap gap-x-5 gap-y-2 border-t border-base-200 pt-3 text-sm">
+            <span>
+              <strong class="tabular-nums">{step_counts(@step_counts, step).ready}</strong> ready
+            </span>
+            <span>
+              <strong class="tabular-nums">{step_counts(@step_counts, step).not_requested}</strong>
+              not requested
+            </span>
+            <span :if={step_counts(@step_counts, step).blocked > 0}>
+              <strong class="tabular-nums">{step_counts(@step_counts, step).blocked}</strong> waiting
+            </span>
+            <span :if={
+              step_counts(@step_counts, step).queued + step_counts(@step_counts, step).running > 0
+            }>
+              <strong class="tabular-nums">
+                {step_counts(@step_counts, step).queued + step_counts(@step_counts, step).running}
+              </strong>
+              processing
+            </span>
+            <span :if={step_counts(@step_counts, step).failed > 0} class="text-error">
+              <strong class="tabular-nums">{step_counts(@step_counts, step).failed}</strong> failed
+            </span>
           </div>
         </div>
       </div>
+
+      <section :if={@missing_step_types != []} class="border-y border-base-300 py-5">
+        <div class="flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <h2 class="font-semibold">Add processing step</h2>
+            <p class="mt-1 text-sm text-base-content/60">
+              Changes apply automatically to future articles.
+            </p>
+          </div>
+          <div class="flex flex-wrap gap-2">
+            <button
+              :if={"extraction" in @missing_step_types}
+              id="enable-extraction-step"
+              type="button"
+              phx-click="enable_extraction"
+              class="btn btn-sm"
+            >
+              <.icon name="hero-plus" class="size-4" /> Extraction
+            </button>
+            <button
+              :if={"digestion" in @missing_step_types}
+              id="enable-digestion-step"
+              type="button"
+              phx-click="enable_digestion"
+              class="btn btn-sm"
+              disabled={is_nil(@settings.ollama_model)}
+              title={
+                if(is_nil(@settings.ollama_model), do: "Configure an Ollama model first", else: nil)
+              }
+            >
+              <.icon name="hero-plus" class="size-4" /> Article digestion
+            </button>
+          </div>
+        </div>
+      </section>
     </Layouts.app>
     """
   end
@@ -225,43 +310,90 @@ defmodule NewspaperWeb.AdminLive.OutputFeedPipeline do
   defp assign_processing(socket) do
     batches = Processing.list_feed_batches(socket.assigns.feed.id)
     steps = Processing.list_steps(socket.assigns.feed)
+    step_types = MapSet.new(steps, & &1.step_type)
 
     socket
-    |> assign(:processing_counts, Processing.feed_processing_counts(socket.assigns.feed.id))
-    |> assign(:extraction_step_count, Enum.count(steps, &(&1.step_type == "extraction")))
+    |> assign(:settings, Newspaper.Operations.get_settings())
+    |> assign(:item_count, Publishing.list_items_for_feed(socket.assigns.feed) |> length())
+    |> assign(:step_count, length(steps))
+    |> assign(:step_counts, Processing.feed_step_counts(socket.assigns.feed.id))
     |> assign(
-      :enabled_extraction_steps,
-      length(Processing.list_enabled_steps(socket.assigns.feed.id, "extraction"))
+      :missing_step_types,
+      Enum.reject(["extraction", "digestion"], &MapSet.member?(step_types, &1))
     )
-    |> assign(:active_batch, Enum.find(batches, &(&1.status == "running")))
+    |> assign(
+      :active_batches,
+      Map.new(
+        Enum.filter(batches, &(&1.status == "running")),
+        &{&1.related["step_type"] || "extraction", &1}
+      )
+    )
     |> assign(:batch_count, length(batches))
     |> stream(:batches, batches, reset: true)
   end
 
+  defp error_message({:no_enabled_step, step_type}),
+    do: "Add and enable #{step_label(step_type) |> String.downcase()} first"
+
   defp error_message({field, message}), do: "#{field} #{message}"
-  defp error_message(:no_enabled_extraction_step), do: "Add and enable an extraction step first"
+  defp error_message(:ollama_model_not_configured), do: "Choose an Ollama model in Settings first"
   defp error_message(%Ecto.Changeset{}), do: "Pipeline step could not be saved"
   defp error_message(reason), do: inspect(reason)
 
-  defp process_existing_disabled?(assigns) do
-    assigns.enabled_extraction_steps == 0 or assigns.processing_counts.not_requested == 0 or
-      not is_nil(assigns.active_batch)
+  defp process_existing_disabled?(assigns, step) do
+    counts = step_counts(assigns.step_counts, step)
+
+    not step.enabled or counts.not_requested == 0 or
+      Map.has_key?(assigns.active_batches, step.step_type)
   end
 
-  defp process_existing_label(%{active_batch: batch}) when not is_nil(batch) do
-    "Processing #{batch_completed(batch)} of #{batch.summary_counts["total"] || 0}"
+  defp process_existing_label(assigns, step) do
+    case Map.get(assigns.active_batches, step.step_type) do
+      nil ->
+        counts = step_counts(assigns.step_counts, step)
+
+        if step.step_type == "digestion" and counts.not_requested == 0 and counts.blocked > 0 do
+          "Waiting for extraction"
+        else
+          process_available_label(step.step_type, counts.not_requested)
+        end
+
+      batch ->
+        "Processing #{batch_completed(batch)} of #{batch.summary_counts["total"] || 0}"
+    end
   end
 
-  defp process_existing_label(%{enabled_extraction_steps: 0}), do: "Enable extraction first"
+  defp process_available_label(_step_type, 0), do: "No existing work"
+  defp process_available_label("extraction", 1), do: "Extract 1 existing article"
+  defp process_available_label("extraction", count), do: "Extract #{count} existing articles"
+  defp process_available_label("digestion", 1), do: "Digest 1 existing article"
+  defp process_available_label("digestion", count), do: "Digest #{count} existing articles"
 
-  defp process_existing_label(%{processing_counts: %{not_requested: 0}}),
-    do: "No articles awaiting extraction"
+  defp step_counts(counts, step), do: Map.fetch!(counts, step.id)
 
-  defp process_existing_label(%{processing_counts: %{not_requested: 1}}),
-    do: "Extract 1 existing article"
+  defp step_label("extraction"), do: "Article extraction"
+  defp step_label("digestion"), do: "Article digestion"
+  defp step_label(step_type), do: String.capitalize(step_type)
 
-  defp process_existing_label(assigns) do
-    "Extract #{assigns.processing_counts.not_requested} existing articles"
+  defp step_description("extraction"),
+    do: "Fetch and normalize full article content using the website's learned extraction policy."
+
+  defp step_description("digestion"),
+    do: "Generate one factual replacement title and reading summary from extracted content."
+
+  defp step_description(_step_type), do: "Process article content."
+
+  defp rendering_label(feed) do
+    title = if feed.title_source == "digest", do: "Digest title", else: "Original title"
+
+    body =
+      case feed.body_source do
+        "digest_summary" -> "digest summary"
+        "extracted_content" -> "extracted body"
+        _body_source -> "original body"
+      end
+
+    "#{title} · #{body}"
   end
 
   defp batch_completed(batch) do

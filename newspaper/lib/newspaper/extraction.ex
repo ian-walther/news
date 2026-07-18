@@ -185,15 +185,16 @@ defmodule Newspaper.Extraction do
   end
 
   defp finish_result(run, attempt, article, policy, %{"status" => "ok"} = result, input) do
-    with {:ok, {_article, _policy}} <-
+    with {:ok, {_article, _policy, extraction}} <-
            Content.record_extraction_success(article, policy, attempt.id, result),
-         :ok <- rerender_article_items(article),
          {:ok, attempt} <-
            Processing.finish_attempt(attempt, "succeeded", %{
              input_snapshot: input,
              output_snapshot: result,
              debug_metadata: result["debug_metadata"] || %{}
            }),
+         :ok <- Processing.attach_artifact(attempt, extraction),
+         :ok <- rerender_article_items(article),
          {:ok, _run} <-
            Operations.finish_run(run, "succeeded", %{
              summary_counts: %{"attempts" => 1, "succeeded" => 1, "failed" => 0}

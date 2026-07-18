@@ -3,6 +3,7 @@ defmodule Newspaper.Content do
 
   alias Newspaper.Content.{
     Article,
+    ArticleDigest,
     ArticleExtraction,
     ArticleExtractionAttempt,
     ArticleSource,
@@ -56,8 +57,12 @@ defmodule Newspaper.Content do
         :intake_group,
         :representative_raw_item,
         :extraction,
+        :digests,
         article_sources: [:input_feed, :raw_item],
-        generated_feed_items: :generated_feed
+        generated_feed_items: [
+          :pipeline_item_steps,
+          generated_feed: :pipeline_steps
+        ]
       ])
       |> Repo.all()
 
@@ -194,7 +199,16 @@ defmodule Newspaper.Content do
   def get_article_by_guid!(guid) do
     Article
     |> Repo.get_by!(guid: guid)
-    |> Repo.preload([:extraction, :article_extraction_attempts, :pipeline_step_attempts])
+    |> Repo.preload([
+      :extraction,
+      :digests,
+      :article_extraction_attempts,
+      :pipeline_step_attempts,
+      generated_feed_items: [
+        :pipeline_item_steps,
+        generated_feed: :pipeline_steps
+      ]
+    ])
   end
 
   def get_article_by_dedupe_key(dedupe_scope, dedupe_key) do
@@ -410,9 +424,10 @@ defmodule Newspaper.Content do
 
       extraction = Repo.get_by(ArticleExtraction, article_id: article.id) || %ArticleExtraction{}
 
-      extraction
-      |> ArticleExtraction.changeset(extraction_attrs)
-      |> Repo.insert_or_update!()
+      extraction =
+        extraction
+        |> ArticleExtraction.changeset(extraction_attrs)
+        |> Repo.insert_or_update!()
 
       article =
         article
@@ -438,8 +453,30 @@ defmodule Newspaper.Content do
         })
         |> Repo.update!()
 
-      {article, policy}
+      {article, policy, extraction}
     end)
+  end
+
+  def record_digest_success(article, extraction, pipeline_step_attempt_id, digest, metadata) do
+    attrs = %{
+      article_id: article.id,
+      article_extraction_id: extraction.id,
+      pipeline_step_attempt_id: pipeline_step_attempt_id,
+      implementation_key: Newspaper.Digestion.implementation_key(),
+      model: metadata.model,
+      prompt_version: Newspaper.Digestion.prompt_version(),
+      schema_version: Newspaper.Digestion.schema_version(),
+      input_fingerprint: metadata.input_fingerprint,
+      generated_title: digest.title,
+      generated_summary: digest.summary,
+      input_metadata: metadata.input_metadata,
+      output_metadata: metadata.output_metadata,
+      generated_at: DateTime.utc_now(:second)
+    }
+
+    %ArticleDigest{}
+    |> ArticleDigest.changeset(attrs)
+    |> Repo.insert()
   end
 
   def record_extraction_failure(%Article{} = article, %SiteExtractionPolicy{} = policy, result) do

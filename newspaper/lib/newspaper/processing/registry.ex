@@ -1,5 +1,6 @@
 defmodule Newspaper.Processing.Registry do
   @site_policy_step_key "extraction.site_policy"
+  @article_digest_step_key "digestion.ollama.article_digest"
 
   @extraction_order [
     "extraction.simple_html",
@@ -12,6 +13,13 @@ defmodule Newspaper.Processing.Registry do
       key: @site_policy_step_key,
       step_type: "extraction",
       label: "Website-directed extraction",
+      default_config: %{},
+      config_schema: []
+    },
+    @article_digest_step_key => %{
+      key: @article_digest_step_key,
+      step_type: "digestion",
+      label: "Article digest",
       default_config: %{},
       config_schema: []
     }
@@ -71,6 +79,13 @@ defmodule Newspaper.Processing.Registry do
   def fetch_step(key), do: Map.fetch(@step_implementations, key)
 
   def site_policy_step_key, do: @site_policy_step_key
+  def article_digest_step_key, do: @article_digest_step_key
+
+  def step_implementations do
+    @step_implementations
+    |> Map.values()
+    |> Enum.sort_by(&{step_type_index(&1.step_type), &1.label})
+  end
 
   def extractors do
     @extractors
@@ -133,4 +148,8 @@ defmodule Newspaper.Processing.Registry do
   defp extraction_index(key) do
     Enum.find_index(@extraction_order, &(&1 == key)) || 0
   end
+
+  defp step_type_index("extraction"), do: 0
+  defp step_type_index("digestion"), do: 1
+  defp step_type_index(_step_type), do: 99
 end

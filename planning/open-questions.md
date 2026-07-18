@@ -38,7 +38,6 @@
 
 ## Workflow
 
-- Which pipeline attempt states are enough without overbuilding a workflow engine?
 - What failure types need a first-class queue?
 - What failure lifecycle states are needed after real usage?
 - When, if ever, does the job surface justify moving from supervised GenServers to Oban or another job system?
@@ -69,11 +68,8 @@
 
 ## Article Digestion
 
-- When digest rendering is selected, should publication wait for a successful digest, or publish original content immediately and re-render later?
 - What summary length and paragraph shape work best in Reeder?
 - What prompt and validation bounds reliably produce a factual one-sentence title without clickbait framing?
-- Which installed Ollama model should be selected after testing representative extracted articles?
-- What Ollama concurrency limit keeps desktop inference responsive while processing a backlog?
 - Which connection, model, and structured-output failures should retry automatically?
 
 ## Home Assistant

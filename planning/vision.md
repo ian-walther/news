@@ -55,7 +55,7 @@ Article digestion is a discrete generated-feed feature built on successful durab
 
 - Produce one factual replacement title and reading summary from each selected article.
 - Let each output feed independently choose original or digest titles and original, extracted, or digest bodies.
-- Discover installed models from a configurable local Ollama server and persist the selected model per digestion step.
+- Discover installed models from a configurable local Ollama server and use one global article-digestion model until real usage justifies per-step configuration.
 - Keep this single-article transform separate from future cross-source synthesis and World Radar behavior.
 
 ### Morning Newspaper
