@@ -17,6 +17,62 @@ defmodule Newspaper.DigestionPipelineTest do
     :ok
   end
 
+  test "digestion dispatcher recovers an attempt interrupted by application restart" do
+    article = extracted_article!()
+
+    settings = Operations.get_settings()
+
+    assert {:ok, _settings} =
+             Operations.update_settings(settings, %{ollama_model: "qwen3.6:27b"})
+
+    {:ok, feed} =
+      Publishing.create_generated_feed(%{
+        "title" => "Restart recovery",
+        "guid" => "feed_digest_restart_recovery_test",
+        "input_feed_ids" => [article.representative_raw_item.input_feed_id]
+      })
+
+    assert {:ok, _step} = Processing.create_extraction_step(feed)
+    assert {:ok, _step} = Processing.create_digest_step(feed)
+    assert {:ok, _run} = Pipeline.backfill_output_feed(feed.id, "test")
+
+    attempt = Repo.one!(PipelineStepAttempt)
+    assert attempt.step_type == "digestion"
+    assert {:ok, attempt} = Processing.mark_attempt_running(attempt)
+
+    assert {:ok, run} =
+             Operations.start_run("pipeline_step", "pipeline", %{
+               "pipeline_step_attempt_id" => attempt.id,
+               "step_type" => "digestion"
+             })
+
+    item_step = Repo.get_by!(GeneratedFeedItemStep, step_type: "digestion")
+    assert item_step.status == "running"
+
+    assert {:noreply, recovered_state} =
+             Newspaper.Digestion.Dispatcher.handle_info(:recover, %{
+               queue: :queue.new(),
+               running?: true
+             })
+
+    assert :queue.to_list(recovered_state.queue) == [attempt.id]
+
+    attempt = Repo.get!(PipelineStepAttempt, attempt.id)
+    assert attempt.status == "queued"
+    assert attempt.started_at == nil
+    assert attempt.error_message == "Application restarted while attempt was running"
+
+    item_step = Repo.get!(GeneratedFeedItemStep, item_step.id)
+    assert item_step.status == "queued"
+    assert item_step.started_at == nil
+    assert item_step.error_message == "Application restarted while attempt was running"
+
+    run = Operations.get_run!(run.id)
+    assert run.status == "failed"
+    assert run.finished_at
+    assert run.error_summary == "Application restarted while run was in progress"
+  end
+
   test "digests an extracted article and publishes the selected title and summary" do
     article = extracted_article!()
 

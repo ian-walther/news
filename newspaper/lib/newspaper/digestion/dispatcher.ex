@@ -21,6 +21,8 @@ defmodule Newspaper.Digestion.Dispatcher do
 
   @impl true
   def handle_info(:recover, state) do
+    Processing.requeue_interrupted_attempts("digestion")
+
     state =
       Processing.list_queued_attempts("digestion")
       |> Enum.reduce(state, fn attempt, state -> enqueue_attempt(state, attempt.id) end)

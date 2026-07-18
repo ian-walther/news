@@ -36,7 +36,7 @@ defmodule Newspaper.Processing.Dispatcher do
 
   @impl true
   def handle_info(:recover, state) do
-    Processing.requeue_interrupted_attempts()
+    Processing.requeue_interrupted_attempts("extraction")
 
     state =
       Processing.list_queued_attempts("extraction")

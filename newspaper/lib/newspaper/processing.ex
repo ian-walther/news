@@ -494,16 +494,23 @@ defmodule Newspaper.Processing do
     |> Repo.all()
   end
 
-  def requeue_interrupted_attempts do
-    interrupted_ids =
+  def requeue_interrupted_attempts(step_type \\ nil) do
+    interrupted_query =
       PipelineStepAttempt
       |> where([attempt], attempt.status == "running")
+      |> then(fn query ->
+        if is_binary(step_type),
+          do: where(query, [attempt], attempt.step_type == ^step_type),
+          else: query
+      end)
+
+    interrupted_ids =
+      interrupted_query
       |> select([attempt], attempt.id)
       |> Repo.all()
 
     {count, _rows} =
-      PipelineStepAttempt
-      |> where([attempt], attempt.status == "running")
+      interrupted_query
       |> Repo.update_all(
         set: [
           status: "queued",
@@ -524,8 +531,36 @@ defmodule Newspaper.Processing do
       ]
     )
 
+    close_interrupted_runs(interrupted_ids)
+
     refresh_active_batch_runs()
     count
+  end
+
+  defp close_interrupted_runs([]), do: :ok
+
+  defp close_interrupted_runs(interrupted_ids) do
+    attempt_ids = Enum.map(interrupted_ids, &Integer.to_string/1)
+
+    Run
+    |> where(
+      [run],
+      run.run_type == "pipeline_step" and run.status == "running" and
+        fragment(
+          "jsonb_extract_path_text(?, 'pipeline_step_attempt_id') = ANY(?)",
+          run.related,
+          ^attempt_ids
+        )
+    )
+    |> Repo.update_all(
+      set: [
+        status: "failed",
+        finished_at: DateTime.utc_now(:second),
+        error_summary: "Application restarted while run was in progress"
+      ]
+    )
+
+    :ok
   end
 
   def get_attempt!(id) do
