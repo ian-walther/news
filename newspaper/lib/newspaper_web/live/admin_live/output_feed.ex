@@ -77,14 +77,12 @@ defmodule NewspaperWeb.AdminLive.OutputFeed do
 
   def handle_event("process_existing", %{"step-type" => step_type}, socket) do
     case Processing.start_feed_batch(socket.assigns.feed.id, "manual", step_type) do
-      {:ok, batch} ->
-        count = batch.summary_counts["total"]
-
+      {:ok, _batch} ->
         {:noreply,
          socket
          |> put_flash(
            :info,
-           "Queued #{count} #{step_label(step_type) |> String.downcase()} attempts"
+           "#{step_label(step_type)} batch started"
          )
          |> assign_processing()}
 
@@ -682,7 +680,11 @@ defmodule NewspaperWeb.AdminLive.OutputFeed do
   end
 
   defp process_existing_label(_state, batch) do
-    "Processing #{batch_completed(batch)} of #{batch.summary_counts["total"] || 0}"
+    if Map.has_key?(batch.summary_counts, "total") do
+      "Processing #{batch_completed(batch)} of #{batch.summary_counts["total"]}"
+    else
+      "Starting batch..."
+    end
   end
 
   defp process_available_label(_step_type, 0), do: "No existing work"

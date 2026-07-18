@@ -4,10 +4,11 @@ defmodule Newspaper.ProcessingBatchTest do
   alias Newspaper.Extraction
   alias Newspaper.Content.Article
   alias Newspaper.Intake
+  alias Newspaper.Operations
   alias Newspaper.Operations.Run
   alias Newspaper.Pipeline
   alias Newspaper.Processing
-  alias Newspaper.Processing.PipelineStepAttempt
+  alias Newspaper.Processing.{BatchDispatcher, PipelineStepAttempt}
   alias Newspaper.Publishing
   alias Newspaper.Repo
 
@@ -26,7 +27,7 @@ defmodule Newspaper.ProcessingBatchTest do
     worker = worker_script!(success_payload())
     Application.put_env(:newspaper, :extractors, simple_html_command: worker)
 
-    assert {:ok, batch} = Processing.start_feed_batch(feed.id, "test")
+    batch = start_feed_batch_and_wait!(feed)
     assert batch.run_type == "pipeline_batch"
     assert batch.status == "running"
 
@@ -66,7 +67,7 @@ defmodule Newspaper.ProcessingBatchTest do
     worker = worker_script!(success_payload())
     Application.put_env(:newspaper, :extractors, simple_html_command: worker)
 
-    assert {:ok, first_batch} = Processing.start_feed_batch(feed.id, "test")
+    first_batch = start_feed_batch_and_wait!(feed)
 
     first_batch.id
     |> Processing.list_attempts_for_batch()
@@ -74,7 +75,7 @@ defmodule Newspaper.ProcessingBatchTest do
       assert {:ok, _attempt} = Extraction.execute_attempt(attempt.id)
     end)
 
-    assert {:ok, second_batch} = Processing.start_feed_batch(feed.id, "test")
+    second_batch = start_feed_batch_and_wait!(feed)
     assert second_batch.status == "succeeded"
     assert second_batch.summary_counts["items_considered"] == 2
     assert second_batch.summary_counts["total"] == 0
@@ -108,7 +109,7 @@ defmodule Newspaper.ProcessingBatchTest do
              not_requested: 1
            }
 
-    assert {:ok, batch} = Processing.start_feed_batch(feed.id, "test")
+    batch = start_feed_batch_and_wait!(feed)
     assert batch.summary_counts["items_considered"] == 2
     assert batch.summary_counts["total"] == 1
     assert batch.summary_counts["skipped"] == 1
@@ -117,6 +118,77 @@ defmodule Newspaper.ProcessingBatchTest do
     assert attempt.article_id == pending_article.id
 
     assert {:ok, 1} = Processing.enqueue_article(missing_article.id)
+  end
+
+  test "batch enrollment survives the initiating caller exiting" do
+    article_count = 40
+    feed = extraction_feed_with_article_count!(article_count)
+    Newspaper.Events.subscribe()
+    parent = self()
+
+    {caller, caller_ref} =
+      spawn_monitor(fn ->
+        result = Processing.start_feed_batch(feed.id, "test")
+        send(parent, {:batch_start_result, result})
+      end)
+
+    assert_receive {:newspaper_data_changed, :operations_changed}
+
+    if Process.alive?(caller), do: Process.exit(caller, :kill)
+    assert_receive {:DOWN, ^caller_ref, :process, ^caller, reason}
+    assert reason in [:normal, :killed]
+
+    assert_receive {:newspaper_data_changed, :operations_changed}, 5_000
+
+    [batch] = Processing.list_feed_batches(feed.id)
+    assert :ok = BatchDispatcher.await(batch.id)
+    batch = Repo.get!(Run, batch.id)
+    assert length(Processing.list_attempts_for_batch(batch.id)) == article_count
+    assert batch.summary_counts["queued"] == article_count
+  end
+
+  test "recovers durable batch enrollment left running by an application restart" do
+    feed = extraction_feed_with_articles!()
+    [step] = Processing.list_enabled_steps(feed.id, "extraction")
+
+    assert {:ok, batch} =
+             Operations.start_run(
+               "pipeline_batch",
+               "test",
+               %{
+                 "batch_type" => "process_existing_extraction",
+                 "generated_feed_id" => feed.id,
+                 "generated_feed_title" => feed.title,
+                 "step_type" => "extraction"
+               },
+               %{"pipeline_step_ids" => [step.id]}
+             )
+
+    Newspaper.Events.subscribe()
+    assert {:ok, 1} = BatchDispatcher.recover()
+    assert :ok = BatchDispatcher.await(batch.id)
+    assert_receive {:newspaper_data_changed, :operations_changed}
+
+    batch = Repo.get!(Run, batch.id)
+    assert batch.summary_counts["items_considered"] == 2
+    assert length(Processing.list_attempts_for_batch(batch.id)) == 2
+  end
+
+  test "closes a durable batch when its saved enrollment context is invalid" do
+    assert {:ok, batch} =
+             Operations.start_run(
+               "pipeline_batch",
+               "test",
+               %{"batch_type" => "process_existing_digestion"}
+             )
+
+    assert {:ok, 1} = BatchDispatcher.recover()
+    assert :ok = BatchDispatcher.await(batch.id)
+
+    batch = Repo.get!(Run, batch.id)
+    assert batch.status == "failed"
+    assert batch.error_summary == ":invalid_batch_context"
+    assert batch.finished_at
   end
 
   defp extraction_feed_with_articles! do
@@ -162,6 +234,65 @@ defmodule Newspaper.ProcessingBatchTest do
     assert {:ok, _run} = Pipeline.backfill_output_feed(output_feed.id, "test")
     {:ok, _step} = Processing.update_step(step, %{enabled: true})
     output_feed
+  end
+
+  defp extraction_feed_with_article_count!(count) do
+    {:ok, input_feed} =
+      Intake.create_input_feed(%{
+        name: "The Verge",
+        outlet_name: "The Verge",
+        url: "https://www.theverge.com/rss/index.xml"
+      })
+
+    Enum.each(1..count, fn index ->
+      published_at = DateTime.add(~U[2026-07-18 14:00:00Z], -index * 60, :second)
+
+      assert {:ok, _raw_item} =
+               Intake.upsert_raw_item(input_feed, %{
+                 feed_guid: "verge-batch-#{index}",
+                 url: "https://www.theverge.com/tech/batch-#{index}",
+                 title: "Technology article #{index}",
+                 published_at: published_at,
+                 body: "<p>Original technology feed body.</p>",
+                 source_name: "The Verge",
+                 source_url: "https://www.theverge.com/",
+                 discovered_at: DateTime.add(published_at, 60, :second)
+               })
+    end)
+
+    assert {:ok, _run} = Pipeline.process_input_feed(input_feed.id, "test")
+
+    {:ok, output_feed} =
+      Publishing.create_generated_feed(%{
+        "title" => "Technology",
+        "guid" => "feed_batch_caller_exit_test",
+        "input_feed_ids" => [input_feed.id]
+      })
+
+    {:ok, step} = Processing.create_extraction_step(output_feed)
+    {:ok, step} = Processing.update_step(step, %{enabled: false})
+    assert {:ok, _run} = Pipeline.backfill_output_feed(output_feed.id, "test")
+    {:ok, _step} = Processing.update_step(step, %{enabled: true})
+    output_feed
+  end
+
+  defp start_feed_batch_and_wait!(feed, step_type \\ "extraction") do
+    Newspaper.Events.subscribe()
+    flush_operations_events()
+
+    assert {:ok, batch} = Processing.start_feed_batch(feed.id, "test", step_type)
+    assert :ok = BatchDispatcher.await(batch.id)
+    assert_receive {:newspaper_data_changed, :operations_changed}
+
+    Repo.get!(Run, batch.id)
+  end
+
+  defp flush_operations_events do
+    receive do
+      {:newspaper_data_changed, :operations_changed} -> flush_operations_events()
+    after
+      0 -> :ok
+    end
   end
 
   defp worker_script!(payload) do

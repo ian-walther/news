@@ -6,7 +6,15 @@ defmodule Newspaper.Processing do
   alias Newspaper.Digestion
   alias Newspaper.Operations
   alias Newspaper.Operations.Run
-  alias Newspaper.Processing.{GeneratedFeedItemStep, PipelineStep, PipelineStepAttempt, Registry}
+
+  alias Newspaper.Processing.{
+    BatchDispatcher,
+    GeneratedFeedItemStep,
+    PipelineStep,
+    PipelineStepAttempt,
+    Registry
+  }
+
   alias Newspaper.Publishing.{GeneratedFeed, GeneratedFeedItem}
   alias Newspaper.Repo
 
@@ -95,24 +103,54 @@ defmodule Newspaper.Processing do
     if steps == [] do
       {:error, {:no_enabled_step, step_type}}
     else
-      items = Newspaper.Publishing.list_items_for_feed(feed)
+      with {:ok, batch} <- create_feed_batch(feed, steps, trigger, step_type) do
+        case BatchDispatcher.enqueue(batch.id) do
+          :ok ->
+            {:ok, batch}
 
-      with {:ok, batch} <-
-             Operations.start_run(
-               "pipeline_batch",
-               trigger,
-               %{
-                 "batch_type" => "process_existing_#{step_type}",
-                 "generated_feed_id" => feed.id,
-                 "generated_feed_title" => feed.title,
-                 "step_type" => step_type
-               },
-               %{"pipeline_step_ids" => Enum.map(steps, & &1.id)}
-             ),
+          {:error, reason} ->
+            _ = fail_feed_batch(batch.id, reason)
+            {:error, reason}
+        end
+      end
+    end
+  end
+
+  def list_running_feed_batches do
+    Run
+    |> where([run], run.run_type == "pipeline_batch" and run.status == "running")
+    |> order_by([run], asc: run.started_at, asc: run.id)
+    |> Repo.all()
+  end
+
+  def resume_feed_batch(batch_id) when is_integer(batch_id) do
+    batch = Operations.get_run!(batch_id)
+
+    if batch.run_type == "pipeline_batch" and batch.status == "running" do
+      with {:ok, feed_id, step_type} <- feed_batch_context(batch),
+           feed <- Newspaper.Publishing.get_generated_feed!(feed_id),
+           items <- Newspaper.Publishing.list_items_for_feed(feed),
            :ok <- enqueue_batch_items(items, batch.id, step_type),
            {:ok, batch} <- refresh_batch_run(batch.id, length(items)) do
         {:ok, batch}
+      else
+        {:error, reason} -> fail_feed_batch(batch.id, reason)
       end
+    else
+      {:ok, batch}
+    end
+  end
+
+  def fail_feed_batch(batch_id, reason) when is_integer(batch_id) do
+    case Repo.get(Run, batch_id) do
+      %Run{run_type: "pipeline_batch", status: "running"} = batch ->
+        Operations.finish_run(batch, "failed", %{error_summary: format_batch_error(reason)})
+
+      %Run{} = batch ->
+        {:ok, batch}
+
+      nil ->
+        {:error, :batch_not_found}
     end
   end
 
@@ -879,6 +917,33 @@ defmodule Newspaper.Processing do
       end
     end)
   end
+
+  defp create_feed_batch(feed, steps, trigger, step_type) do
+    Operations.start_run(
+      "pipeline_batch",
+      trigger,
+      %{
+        "batch_type" => "process_existing_#{step_type}",
+        "generated_feed_id" => feed.id,
+        "generated_feed_title" => feed.title,
+        "step_type" => step_type
+      },
+      %{"pipeline_step_ids" => Enum.map(steps, & &1.id)}
+    )
+  end
+
+  defp feed_batch_context(batch) do
+    with feed_id when is_integer(feed_id) <- batch.related["generated_feed_id"],
+         step_type when step_type in ["extraction", "digestion"] <-
+           batch.related["step_type"] do
+      {:ok, feed_id, step_type}
+    else
+      _ -> {:error, :invalid_batch_context}
+    end
+  end
+
+  defp format_batch_error(reason) when is_binary(reason), do: reason
+  defp format_batch_error(reason), do: inspect(reason)
 
   defp enqueue_item_step(item, item_step, opts) do
     article = item.article

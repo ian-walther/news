@@ -5,6 +5,7 @@ defmodule NewspaperWeb.AdminLive.OutputFeedTest do
 
   alias Newspaper.Content.{Article, ArticleDigest, ArticleExtraction}
   alias Newspaper.Processing
+  alias Newspaper.Processing.BatchDispatcher
   alias Newspaper.Processing.PipelineStepAttempt
   alias Newspaper.Publishing
   alias Newspaper.Publishing.GeneratedFeedItem
@@ -191,6 +192,8 @@ defmodule NewspaperWeb.AdminLive.OutputFeedTest do
     |> render_click()
 
     [batch] = Processing.list_feed_batches(feed.id)
+    assert :ok = BatchDispatcher.await(batch.id)
+    _ = :sys.get_state(view.pid)
     [attempt] = Processing.list_attempts_for_batch(batch.id)
 
     assert has_element?(view, "#pipeline-batch-#{batch.id}")
