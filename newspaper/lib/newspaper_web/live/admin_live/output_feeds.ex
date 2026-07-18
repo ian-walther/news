@@ -156,7 +156,17 @@ defmodule NewspaperWeb.AdminLive.OutputFeeds do
               >
                 <.icon name="hero-adjustments-horizontal" class="size-4" /> Configure
               </.link>
-              <.output_feed_actions feed={feed} />
+              <button
+                class="btn btn-error btn-soft btn-sm btn-square"
+                phx-click="delete_feed"
+                phx-value-id={feed.id}
+                data-confirm="Delete this output feed?"
+                id={"delete-output-feed-#{feed.id}"}
+                title="Delete output feed"
+                aria-label="Delete output feed"
+              >
+                <.icon name="hero-trash" class="size-4" />
+              </button>
             </div>
           </div>
         </article>
@@ -210,47 +220,6 @@ defmodule NewspaperWeb.AdminLive.OutputFeeds do
         <.button><.icon name="hero-check" class="size-4" /> {@submit_label}</.button>
       </div>
     </.form>
-    """
-  end
-
-  attr :feed, GeneratedFeed, required: true
-
-  defp output_feed_actions(assigns) do
-    ~H"""
-    <details
-      id={"output-feed-actions-#{@feed.id}"}
-      class="dropdown dropdown-end"
-      phx-click-away={JS.remove_attribute("open")}
-    >
-      <summary
-        class="btn btn-ghost btn-sm btn-square"
-        title="Output feed actions"
-        aria-label="Output feed actions"
-      >
-        <.icon name="hero-ellipsis-horizontal" class="size-5" />
-      </summary>
-      <ul class="menu dropdown-content z-20 mt-1 w-48 border border-base-300 bg-base-100 p-1 shadow-lg">
-        <li>
-          <.link
-            navigate={~p"/output-feeds/#{@feed.id}"}
-            id={"configure-output-feed-#{@feed.id}"}
-          >
-            <.icon name="hero-adjustments-horizontal" class="size-4" /> Configure
-          </.link>
-        </li>
-        <li>
-          <button
-            class="text-error"
-            phx-click="delete_feed"
-            phx-value-id={@feed.id}
-            data-confirm="Delete this output feed?"
-            id={"delete-output-feed-#{@feed.id}"}
-          >
-            <.icon name="hero-trash" class="size-4" /> Delete
-          </button>
-        </li>
-      </ul>
-    </details>
     """
   end
 

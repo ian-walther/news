@@ -114,20 +114,4 @@ defmodule NewspaperWeb.AdminLive.OutputFeedsCrudTest do
     assert has_element?(view, "#backfill-output-feed")
     assert has_element?(view, "#rerender-output-feed")
   end
-
-  test "dismisses the output feed action menu when clicking elsewhere", %{conn: conn} do
-    {:ok, output_feed} =
-      Publishing.create_generated_feed(%{
-        "title" => "Cars",
-        "guid" => "feed_freshrss_cars_menu_test",
-        "description" => "Seeded from the FreshRSS Cars category."
-      })
-
-    {:ok, view, _html} = live(conn, ~p"/output-feeds")
-
-    assert has_element?(
-             view,
-             "#output-feed-actions-#{output_feed.id}[phx-click-away*='remove_attr']"
-           )
-  end
 end
