@@ -132,10 +132,9 @@ defmodule Newspaper.Extraction do
          %{
            "implementation" => "extraction.simple_html",
            "failure_kind" => "rate_limited"
-         } = result
+         }
        ) do
-    is_nil(get_in(result, ["debug_metadata", "retry_after_ms"])) and
-      policy.consecutive_rate_limits >= 1
+    policy.consecutive_rate_limits >= 1
   end
 
   defp escalate?(%{escalation_enabled: true}, result) do

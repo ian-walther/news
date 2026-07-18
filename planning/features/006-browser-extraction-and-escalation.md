@@ -30,7 +30,7 @@ Escalation-worthy failures include:
 - `blocked`
 - repeated `insufficient_content`
 
-Network failures and timeouts should remain transient scheduling or availability failures. An ordinary rate limit or a response with an explicit `Retry-After` should use site backoff without escalation. Repeated rate limits without `Retry-After` from the simple client may indicate bot classification rather than request volume, so they may trigger a headless probe. A successful probe may teach headless as the site's minimum implementation. A headless rate limit must not automatically escalate into the persistent headed browser.
+Network failures and timeouts should remain transient scheduling or availability failures. The first simple-client rate limit should use site backoff without escalation and honor any explicit `Retry-After`. If Simple is rate-limited again on a later attempt, that attempt should probe Headless even when the response supplies another retry interval. A successful probe may teach Headless as the site's minimum implementation. A rate-limited headless probe should preserve adaptive site backoff and must not automatically escalate into the persistent headed browser.
 
 Active site backoff should remain operator-overridable. A manual retry should bypass the current timer once without erasing rate-limit history; failure resumes adaptive backoff, while success clears it naturally.
 

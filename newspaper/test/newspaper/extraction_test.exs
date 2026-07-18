@@ -187,18 +187,18 @@ defmodule Newspaper.ExtractionTest do
     assert policy.backoff_until == nil
   end
 
-  test "explicit retry-after does not escalate a repeated rate limit" do
+  test "a repeated retry-after rate limit escalates to headless and learns it" do
     article = create_article!("https://racer.com/retry-after-example")
 
     simple_worker =
       worker_script!(
         "simple-retry-after",
-        rate_limited_payload(article.canonical_url, 10 * 60 * 1000)
+        rate_limited_payload(article.canonical_url, 5_000)
       )
 
     headless_worker =
       worker_script!(
-        "unused-headless-retry-after",
+        "headless-after-retry-after",
         success_payload()
         |> Map.put(:implementation, "extraction.headless_browser")
         |> Map.put(:final_url, article.canonical_url)
@@ -209,23 +209,87 @@ defmodule Newspaper.ExtractionTest do
       headless_browser_command: headless_worker
     )
 
-    configure_extraction!(article, "feed_retry_after_no_escalation_test")
+    configure_extraction!(article, "feed_retry_after_escalation_test")
 
-    {:ok, policy} = Content.get_site_extraction_policy_for_url(article.canonical_url)
-
-    {:ok, _policy} =
-      Content.update_site_extraction_policy(policy, %{consecutive_rate_limits: 1})
-
-    attempt = Repo.one!(PipelineStepAttempt)
-    assert {:ok, attempt} = Extraction.execute_attempt(attempt.id)
-    assert attempt.status == "failed"
+    first_attempt = Repo.one!(PipelineStepAttempt)
+    assert {:ok, first_attempt} = Extraction.execute_attempt(first_attempt.id)
+    assert first_attempt.status == "failed"
 
     assert [%ArticleExtractionAttempt{implementation: "extraction.simple_html"}] =
              Repo.all(ArticleExtractionAttempt)
 
     policy = Repo.one!(SiteExtractionPolicy)
+    assert policy.consecutive_rate_limits == 1
+
+    assert {:ok, second_attempt} = Processing.retry_attempt(first_attempt.id)
+    assert {:ok, second_attempt} = Extraction.execute_attempt(second_attempt.id)
+    assert second_attempt.status == "succeeded"
+
+    attempts =
+      ArticleExtractionAttempt
+      |> Repo.all()
+      |> Enum.sort_by(& &1.id)
+
+    assert Enum.map(attempts, &{&1.implementation, &1.status}) == [
+             {"extraction.simple_html", "failed"},
+             {"extraction.simple_html", "failed"},
+             {"extraction.headless_browser", "ok"}
+           ]
+
+    policy = Repo.one!(SiteExtractionPolicy)
+    assert policy.minimum_implementation == "extraction.headless_browser"
+    assert policy.last_successful_implementation == "extraction.headless_browser"
+    assert policy.consecutive_rate_limits == 0
+    assert policy.backoff_until == nil
+  end
+
+  test "a rate-limited headless probe stops escalation and preserves adaptive backoff" do
+    article = create_article!("https://racer.com/headless-rate-limited-example")
+
+    simple_worker =
+      worker_script!(
+        "simple-retry-after-before-headless-rate-limit",
+        rate_limited_payload(article.canonical_url, 5_000)
+      )
+
+    headless_worker =
+      worker_script!(
+        "headless-rate-limited",
+        rate_limited_payload(article.canonical_url, 5_000)
+        |> Map.put(:implementation, "extraction.headless_browser")
+      )
+
+    Application.put_env(:newspaper, :extractors,
+      simple_html_command: simple_worker,
+      headless_browser_command: headless_worker
+    )
+
+    configure_extraction!(article, "feed_headless_rate_limited_test")
+
+    first_attempt = Repo.one!(PipelineStepAttempt)
+    assert {:ok, first_attempt} = Extraction.execute_attempt(first_attempt.id)
+    assert first_attempt.status == "failed"
+
+    assert {:ok, second_attempt} = Processing.retry_attempt(first_attempt.id)
+    assert {:ok, second_attempt} = Extraction.execute_attempt(second_attempt.id)
+    assert second_attempt.status == "failed"
+
+    attempts =
+      ArticleExtractionAttempt
+      |> Repo.all()
+      |> Enum.sort_by(& &1.id)
+
+    assert Enum.map(attempts, &{&1.implementation, &1.status}) == [
+             {"extraction.simple_html", "failed"},
+             {"extraction.simple_html", "failed"},
+             {"extraction.headless_browser", "failed"}
+           ]
+
+    policy = Repo.one!(SiteExtractionPolicy)
     assert policy.minimum_implementation == "extraction.simple_html"
     assert policy.consecutive_rate_limits == 2
+
+    assert DateTime.diff(policy.backoff_until, policy.last_rate_limited_at, :second) in 299..300
   end
 
   test "rate limit backoff grows to a thirty minute cap" do
