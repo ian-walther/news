@@ -97,7 +97,7 @@ defmodule Newspaper.Digestion.OllamaClient do
   defp validate_digest(%{"title" => title, "summary" => summary})
        when is_binary(title) and is_binary(summary) do
     title = title |> String.trim() |> String.replace(~r/\s+/, " ")
-    summary = String.trim(summary)
+    summary = normalize_summary(summary)
     summary_words = summary |> String.split(~r/\s+/, trim: true) |> length()
     summary_paragraphs = summary |> String.split(~r/\n\s*\n/, trim: true) |> length()
 
@@ -126,6 +126,52 @@ defmodule Newspaper.Digestion.OllamaClient do
   end
 
   defp validate_digest(_output), do: {:error, "Structured output must contain title and summary"}
+
+  defp normalize_summary(summary) do
+    paragraphs =
+      summary
+      |> String.trim()
+      |> String.split(~r/\n\s*\n/, trim: true)
+      |> Enum.map(&normalize_inline_whitespace/1)
+
+    if length(paragraphs) in 3..5 do
+      Enum.join(paragraphs, "\n\n")
+    else
+      summary
+      |> normalize_inline_whitespace()
+      |> reflow_summary()
+    end
+  end
+
+  defp reflow_summary(summary) do
+    words = String.split(summary, ~r/\s+/, trim: true)
+    paragraph_count = paragraph_count(length(words))
+    sentences = String.split(summary, ~r/(?<=[.!?])\s+/u, trim: true)
+
+    units = if length(sentences) >= paragraph_count, do: sentences, else: words
+
+    units
+    |> split_evenly(paragraph_count)
+    |> Enum.map_join("\n\n", &Enum.join(&1, " "))
+  end
+
+  defp paragraph_count(word_count) when word_count < 180, do: 3
+  defp paragraph_count(word_count) when word_count < 320, do: 4
+  defp paragraph_count(_word_count), do: 5
+
+  defp split_evenly(items, chunk_count) do
+    item_count = length(items)
+    base_size = div(item_count, chunk_count)
+    extra_items = rem(item_count, chunk_count)
+
+    0..(chunk_count - 1)
+    |> Enum.map(fn index -> base_size + if(index < extra_items, do: 1, else: 0) end)
+    |> Enum.map_reduce(items, fn chunk_size, remaining -> Enum.split(remaining, chunk_size) end)
+    |> elem(0)
+  end
+
+  defp normalize_inline_whitespace(value),
+    do: value |> String.trim() |> String.replace(~r/\s+/, " ")
 
   defp model_name(%{"name" => name}) when is_binary(name), do: name
   defp model_name(%{"model" => model}) when is_binary(model), do: model

@@ -102,8 +102,13 @@ defmodule Newspaper.DigestionTest do
              })
   end
 
-  test "rejects summaries that do not have three to five readable paragraphs" do
-    summary = Enum.map_join(1..100, " ", &"word#{&1}")
+  test "normalizes a one-paragraph model response into a readable shape" do
+    summary =
+      1..6
+      |> Enum.map_join(" ", fn sentence ->
+        words = Enum.map_join(1..20, " ", &"sentence#{sentence}word#{&1}")
+        words <> "."
+      end)
 
     Req.Test.stub(Newspaper.Digestion.OllamaClient, fn conn ->
       Req.Test.json(conn, %{
@@ -119,11 +124,14 @@ defmodule Newspaper.DigestionTest do
 
     extraction = %ArticleExtraction{content_text: "Article content."}
 
-    assert {:error, "Generated summary must contain 3 to 5 paragraphs"} =
+    assert {:ok, digest, _metadata} =
              Digestion.generate(extraction, %{
                ollama_base_url: "http://desktop.home:11434",
                ollama_model: "qwen3.6:27b"
              })
+
+    assert digest.summary |> String.split("\n\n") |> length() == 3
+    assert String.replace(digest.summary, "\n\n", " ") == summary
   end
 
   defp verify_on_exit!(_context) do
