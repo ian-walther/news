@@ -46,6 +46,12 @@ defmodule Newspaper.DigestionPipelineTest do
                "step_type" => "digestion"
              })
 
+    assert run.pipeline_step_attempt_id == attempt.id
+
+    run
+    |> Ecto.Changeset.change(%{related: %{}})
+    |> Repo.update!()
+
     item_step = Repo.get_by!(GeneratedFeedItemStep, step_type: "digestion")
     assert item_step.status == "running"
 

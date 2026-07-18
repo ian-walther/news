@@ -51,7 +51,12 @@ defmodule NewspaperWeb.AdminLive.Nav do
       },
       %{key: "articles", label: "Articles", path: ~p"/articles", icon: "hero-newspaper"},
       %{key: "sites", label: "Sites", path: ~p"/sites", icon: "hero-globe-alt"},
-      %{key: "runs", label: "Runs", path: ~p"/runs", icon: "hero-queue-list"},
+      %{
+        key: "processing",
+        label: "Processing",
+        path: ~p"/processing",
+        icon: "hero-queue-list"
+      },
       %{key: "settings", label: "Settings", path: ~p"/settings", icon: "hero-cog-6-tooth"}
     ]
   end

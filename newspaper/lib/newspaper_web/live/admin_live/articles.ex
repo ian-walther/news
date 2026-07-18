@@ -221,9 +221,16 @@ defmodule NewspaperWeb.AdminLive.Articles do
             <div :if={entry.pipeline_rows != []} class="mt-2 space-y-1.5">
               <div :for={row <- entry.pipeline_rows} class="text-xs">
                 <span class="text-base-content/45">{row.feed_title}</span>
-                <span :for={step <- row.steps} class={pipeline_badge_class(step.status)}>
+                <.link
+                  :for={step <- row.steps}
+                  id={"article-processing-#{entry.article.id}-#{row.feed_id}-#{step.step_type}"}
+                  navigate={
+                    ~p"/processing?#{%{article_id: entry.article.id, generated_feed_id: row.feed_id, stage: step.step_type}}"
+                  }
+                  class={pipeline_badge_class(step.status)}
+                >
                   {pipeline_step_label(step)}
-                </span>
+                </.link>
               </div>
             </div>
           </div>
@@ -506,7 +513,7 @@ defmodule NewspaperWeb.AdminLive.Articles do
           end
         end)
 
-      %{feed_title: item.generated_feed.title, steps: steps}
+      %{feed_id: item.generated_feed.id, feed_title: item.generated_feed.title, steps: steps}
     end)
     |> Enum.reject(&(&1.steps == []))
   end

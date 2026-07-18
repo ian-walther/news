@@ -63,7 +63,7 @@ Avoid both of these failure modes:
 - Local article pages once extraction exists.
 - Later paper planning, delivery, and Home Assistant integration.
 
-Operator-facing views should lead with domain state and meaningful parent operations. Low-level child runs, snapshots, and raw metadata remain available as expandable debug evidence instead of dominating routine workflows. Time values should be stored in UTC and rendered in the operator's browser-local timezone.
+Operator-facing views should lead with domain state and meaningful parent operations. Processing is the authoritative operational window: it combines currently running attempts, stage-specific queues, prerequisite and site-policy delays, completed attempt history, parent batches, and non-pipeline operations. Output-feed and article views remain useful scoped projections and should link into Processing with their context preserved. Low-level execution runs, snapshots, and raw metadata remain available as expandable debug evidence instead of dominating routine workflows. Time values should be stored in UTC and rendered in the operator's browser-local timezone.
 
 ## Worker Responsibilities
 

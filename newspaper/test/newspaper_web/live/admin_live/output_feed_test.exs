@@ -179,6 +179,7 @@ defmodule NewspaperWeb.AdminLive.OutputFeedTest do
            )
 
     assert has_element?(view, "#processing-extraction", "1 not requested")
+    assert has_element?(view, "#view-extraction-processing[href*='/processing']")
 
     assert has_element?(
              view,
@@ -193,6 +194,12 @@ defmodule NewspaperWeb.AdminLive.OutputFeedTest do
     [attempt] = Processing.list_attempts_for_batch(batch.id)
 
     assert has_element?(view, "#pipeline-batch-#{batch.id}")
+
+    assert has_element?(
+             view,
+             "#view-pipeline-batch-#{batch.id}[href*='batch_run_id=#{batch.id}']"
+           )
+
     assert has_element?(view, "#process-existing-extraction[disabled]", "Processing 0 of 1")
 
     assert {:ok, _attempt} = Processing.finish_attempt(attempt, "succeeded")

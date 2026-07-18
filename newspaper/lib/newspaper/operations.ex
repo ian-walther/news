@@ -50,6 +50,21 @@ defmodule Newspaper.Operations do
     |> attach_run_context()
   end
 
+  def list_processing_run_entries(opts \\ []) do
+    limit = Keyword.get(opts, :limit, 50)
+
+    Run
+    |> where([run], run.run_type != "pipeline_step")
+    |> filter_processing_run_stage(Keyword.get(opts, :stage))
+    |> filter_processing_run_feed(Keyword.get(opts, :generated_feed_id))
+    |> filter_processing_run_article(Keyword.get(opts, :article_id))
+    |> filter_processing_run_batch(Keyword.get(opts, :batch_run_id))
+    |> order_by([run], desc: run.started_at, desc: run.id)
+    |> limit(^limit)
+    |> Repo.all()
+    |> attach_run_context()
+  end
+
   def start_run(run_type, trigger, related \\ %{}, debug_metadata \\ %{}) do
     %Run{}
     |> Run.changeset(%{
@@ -58,7 +73,8 @@ defmodule Newspaper.Operations do
       status: "running",
       started_at: DateTime.utc_now(:second),
       related: related,
-      debug_metadata: debug_metadata
+      debug_metadata: debug_metadata,
+      pipeline_step_attempt_id: related_id(related, "pipeline_step_attempt_id")
     })
     |> Repo.insert()
     |> broadcast_on_ok(:operations_changed)
@@ -189,6 +205,57 @@ defmodule Newspaper.Operations do
   end
 
   defp run_status(query, _status), do: query
+
+  defp filter_processing_run_stage(query, stage)
+       when stage in ["extraction", "digestion"] do
+    where(
+      query,
+      [run],
+      run.run_type == "pipeline_batch" and
+        fragment("jsonb_extract_path_text(?, 'step_type') = ?", run.related, ^stage)
+    )
+  end
+
+  defp filter_processing_run_stage(query, "operations") do
+    where(query, [run], run.run_type != "pipeline_batch")
+  end
+
+  defp filter_processing_run_stage(query, _stage), do: query
+
+  defp filter_processing_run_feed(query, generated_feed_id)
+       when is_integer(generated_feed_id) do
+    generated_feed_id = Integer.to_string(generated_feed_id)
+
+    where(
+      query,
+      [run],
+      fragment(
+        "jsonb_extract_path_text(?, 'generated_feed_id') = ?",
+        run.related,
+        ^generated_feed_id
+      )
+    )
+  end
+
+  defp filter_processing_run_feed(query, _generated_feed_id), do: query
+
+  defp filter_processing_run_article(query, article_id) when is_integer(article_id) do
+    article_id = Integer.to_string(article_id)
+
+    where(
+      query,
+      [run],
+      fragment("jsonb_extract_path_text(?, 'article_id') = ?", run.related, ^article_id)
+    )
+  end
+
+  defp filter_processing_run_article(query, _article_id), do: query
+
+  defp filter_processing_run_batch(query, batch_run_id) when is_integer(batch_run_id) do
+    where(query, [run], run.id == ^batch_run_id)
+  end
+
+  defp filter_processing_run_batch(query, _batch_run_id), do: query
 
   defp attach_run_context(runs) do
     input_feed_ids = related_ids(runs, "input_feed_id")

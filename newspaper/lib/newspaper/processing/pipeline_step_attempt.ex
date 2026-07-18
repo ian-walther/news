@@ -22,6 +22,11 @@ defmodule Newspaper.Processing.PipelineStepAttempt do
     belongs_to :generated_feed_item, Newspaper.Publishing.GeneratedFeedItem
     belongs_to :generated_feed_item_step, Newspaper.Processing.GeneratedFeedItemStep
     belongs_to :batch_run, Newspaper.Operations.Run
+    has_many :runs, Newspaper.Operations.Run
+
+    has_many :affected_item_steps, Newspaper.Processing.GeneratedFeedItemStep,
+      foreign_key: :latest_attempt_id
+
     has_many :extraction_attempts, Newspaper.Content.ArticleExtractionAttempt
     has_one :article_extraction, Newspaper.Content.ArticleExtraction
 

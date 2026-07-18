@@ -247,11 +247,13 @@ defmodule NewspaperWeb.AdminLive.OutputFeed do
 
           <div class="divide-y divide-base-300 border-y border-base-300">
             <.processing_step
+              feed_id={@feed.id}
               state={@extraction_state}
               active_batch={@active_batches["extraction"]}
               toggle_disabled={false}
             />
             <.processing_step
+              feed_id={@feed.id}
               state={@digestion_state}
               active_batch={@active_batches["digestion"]}
               toggle_disabled={digestion_toggle_disabled?(assigns)}
@@ -274,7 +276,11 @@ defmodule NewspaperWeb.AdminLive.OutputFeed do
               >
                 <div class="min-w-0">
                   <div class="flex flex-wrap items-center gap-2">
-                    <span class="font-medium">{batch_status_label(batch)}</span>
+                    <span class="font-medium">
+                      {step_label(batch.related["step_type"] || "extraction")} · {batch_status_label(
+                        batch
+                      )}
+                    </span>
                     <.local_time
                       id={"pipeline-batch-started-#{batch.id}"}
                       value={batch.started_at}
@@ -291,6 +297,15 @@ defmodule NewspaperWeb.AdminLive.OutputFeed do
                 </div>
                 <div class="text-sm text-base-content/60 md:text-right">
                   {Format.duration(batch)}
+                  <.link
+                    id={"view-pipeline-batch-#{batch.id}"}
+                    navigate={
+                      ~p"/processing?#{%{generated_feed_id: @feed.id, batch_run_id: batch.id, stage: batch.related["step_type"] || "extraction"}}"
+                    }
+                    class="mt-1 block link text-xs"
+                  >
+                    View processing
+                  </.link>
                 </div>
               </div>
             </div>
@@ -396,6 +411,7 @@ defmodule NewspaperWeb.AdminLive.OutputFeed do
   end
 
   attr :state, :map, required: true
+  attr :feed_id, :integer, required: true
   attr :active_batch, :any, default: nil
   attr :toggle_disabled, :boolean, default: false
   attr :toggle_title, :string, default: nil
@@ -429,6 +445,13 @@ defmodule NewspaperWeb.AdminLive.OutputFeed do
             </span>
           </div>
           <div class="mt-2">
+            <.link
+              id={"view-#{@state.step_type}-processing"}
+              navigate={~p"/processing?#{%{generated_feed_id: @feed_id, stage: @state.step_type}}"}
+              class="mr-4 link text-sm"
+            >
+              View processing
+            </.link>
             <.link
               :if={@state.step_type == "extraction"}
               navigate={~p"/sites"}

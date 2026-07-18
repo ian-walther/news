@@ -31,6 +31,7 @@ defmodule Newspaper.Extraction do
         "pipeline_step_attempt_id" => attempt.id,
         "pipeline_step_id" => attempt.pipeline_step_id,
         "article_id" => article.id,
+        "step_type" => "extraction",
         "url" => url,
         "url_candidates" => url_candidates
       })

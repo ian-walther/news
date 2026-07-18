@@ -164,6 +164,7 @@ Pipeline step attempts should record:
 
 - article and generated feed item references when applicable
 - parent run reference for bulk execution
+- associated execution runs, including interrupted and repeated executions
 - input snapshot
 - output snapshot
 - status
@@ -174,7 +175,7 @@ Each generated feed item should snapshot its enabled step definitions, ordered s
 
 Domain tables hold durable results. Attempt records explain how those results were produced. Extraction artifacts are article-level reusable state; digest artifacts are versioned and item steps reference the exact selected result. The output-feed step records why processing was requested, while site extraction policy and worker attempts record how extraction was performed.
 
-Bulk processing should create a durable run before attempts are queued. The run owns aggregate progress and completion state; individual attempts remain the deterministic execution history. Queued pipeline attempts must survive application restarts. Each step dispatcher should recover its own interrupted work by returning persisted `running` attempts to `queued`, closing the abandoned per-attempt diagnostic run as interrupted, and executing the attempt again from the beginning. Completed artifacts remain durable and reusable; an external HTTP or worker call is not resumed mid-request. Manual processing of existing items should skip articles with a successful current artifact unless the operator explicitly requests reprocessing.
+Bulk processing should create a durable run before attempts are queued. The run owns aggregate progress and completion state; individual attempts remain the deterministic work history, and each execution run points back to its attempt. Queued pipeline attempts must survive application restarts. Each step dispatcher should recover its own interrupted work by returning persisted `running` attempts to `queued`, closing the abandoned per-attempt diagnostic run as interrupted, and executing the attempt again from the beginning. Completed artifacts remain durable and reusable; an external HTTP or worker call is not resumed mid-request. Manual processing of existing items should skip articles with a successful current artifact unless the operator explicitly requests reprocessing.
 
 ## Extraction, Digestion, And Filtering
 

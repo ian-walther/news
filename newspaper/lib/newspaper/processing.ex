@@ -436,6 +436,62 @@ defmodule Newspaper.Processing do
     |> Repo.all()
   end
 
+  def list_processing_attempts(statuses, opts \\ []) when is_list(statuses) do
+    limit = Keyword.get(opts, :limit, 100)
+    order = Keyword.get(opts, :order, :asc)
+
+    PipelineStepAttempt
+    |> where([attempt], attempt.status in ^statuses)
+    |> filter_processing_attempts(opts)
+    |> order_processing_attempts(order)
+    |> limit(^limit)
+    |> preload([
+      :article,
+      :pipeline_step,
+      :batch_run,
+      :runs,
+      generated_feed_item: :generated_feed,
+      generated_feed_item_step: [generated_feed_item: :generated_feed],
+      affected_item_steps: [generated_feed_item: :generated_feed]
+    ])
+    |> Repo.all()
+  end
+
+  def processing_attempt_counts(opts \\ []) do
+    PipelineStepAttempt
+    |> filter_processing_attempts(opts)
+    |> group_by([attempt], [attempt.step_type, attempt.status])
+    |> select([attempt], {attempt.step_type, attempt.status, count(attempt.id)})
+    |> Repo.all()
+    |> Enum.reduce(%{}, fn {step_type, status, count}, counts ->
+      Map.update(counts, step_type, %{status => count}, &Map.put(&1, status, count))
+    end)
+  end
+
+  def list_waiting_item_steps(opts \\ []) do
+    limit = Keyword.get(opts, :limit, 100)
+
+    GeneratedFeedItemStep
+    |> where([item_step], item_step.status in ["blocked", "pending"])
+    |> filter_waiting_item_steps(opts)
+    |> order_by([item_step], asc: item_step.inserted_at, asc: item_step.id)
+    |> limit(^limit)
+    |> preload([:pipeline_step, generated_feed_item: [:generated_feed, :article]])
+    |> Repo.all()
+  end
+
+  def waiting_item_step_counts(opts \\ []) do
+    GeneratedFeedItemStep
+    |> where([item_step], item_step.status in ["blocked", "pending"])
+    |> filter_waiting_item_steps(opts)
+    |> group_by([item_step], [item_step.step_type, item_step.status])
+    |> select([item_step], {item_step.step_type, item_step.status, count(item_step.id)})
+    |> Repo.all()
+    |> Enum.reduce(%{}, fn {step_type, status, count}, counts ->
+      Map.update(counts, step_type, %{status => count}, &Map.put(&1, status, count))
+    end)
+  end
+
   def list_feed_batches(feed_id, limit \\ 5) when is_integer(feed_id) do
     feed_id = Integer.to_string(feed_id)
 
@@ -448,6 +504,104 @@ defmodule Newspaper.Processing do
     |> order_by([run], desc: run.started_at, desc: run.id)
     |> limit(^limit)
     |> Repo.all()
+  end
+
+  defp filter_processing_attempts(query, opts) do
+    query
+    |> filter_attempt_step_type(Keyword.get(opts, :step_type))
+    |> filter_attempt_article(Keyword.get(opts, :article_id))
+    |> filter_attempt_batch(Keyword.get(opts, :batch_run_id))
+    |> filter_attempt_feed(Keyword.get(opts, :generated_feed_id))
+  end
+
+  defp filter_attempt_step_type(query, step_type)
+       when step_type in ["extraction", "digestion"] do
+    where(query, [attempt], attempt.step_type == ^step_type)
+  end
+
+  defp filter_attempt_step_type(query, _step_type), do: query
+
+  defp filter_attempt_article(query, article_id) when is_integer(article_id) do
+    where(query, [attempt], attempt.article_id == ^article_id)
+  end
+
+  defp filter_attempt_article(query, _article_id), do: query
+
+  defp filter_attempt_batch(query, batch_run_id) when is_integer(batch_run_id) do
+    where(query, [attempt], attempt.batch_run_id == ^batch_run_id)
+  end
+
+  defp filter_attempt_batch(query, _batch_run_id), do: query
+
+  defp filter_attempt_feed(query, generated_feed_id) when is_integer(generated_feed_id) do
+    feed_item_ids =
+      from item in GeneratedFeedItem,
+        where: item.generated_feed_id == ^generated_feed_id,
+        select: item.id
+
+    affected_attempt_ids =
+      from item_step in GeneratedFeedItemStep,
+        join: item in GeneratedFeedItem,
+        on: item.id == item_step.generated_feed_item_id,
+        where:
+          item.generated_feed_id == ^generated_feed_id and
+            not is_nil(item_step.latest_attempt_id),
+        select: item_step.latest_attempt_id
+
+    where(
+      query,
+      [attempt],
+      attempt.generated_feed_item_id in subquery(feed_item_ids) or
+        attempt.id in subquery(affected_attempt_ids)
+    )
+  end
+
+  defp filter_attempt_feed(query, _generated_feed_id), do: query
+
+  defp filter_waiting_item_steps(query, opts) do
+    query
+    |> filter_waiting_step_type(Keyword.get(opts, :step_type))
+    |> filter_waiting_article(Keyword.get(opts, :article_id))
+    |> filter_waiting_feed(Keyword.get(opts, :generated_feed_id))
+  end
+
+  defp filter_waiting_step_type(query, step_type)
+       when step_type in ["extraction", "digestion"] do
+    where(query, [item_step], item_step.step_type == ^step_type)
+  end
+
+  defp filter_waiting_step_type(query, _step_type), do: query
+
+  defp filter_waiting_article(query, article_id) when is_integer(article_id) do
+    query
+    |> join(:inner, [item_step], item in GeneratedFeedItem,
+      on: item.id == item_step.generated_feed_item_id
+    )
+    |> where([_item_step, item], item.article_id == ^article_id)
+  end
+
+  defp filter_waiting_article(query, _article_id), do: query
+
+  defp filter_waiting_feed(query, generated_feed_id) when is_integer(generated_feed_id) do
+    query
+    |> join(:inner, [item_step], item in GeneratedFeedItem,
+      on: item.id == item_step.generated_feed_item_id
+    )
+    |> where([_item_step, item], item.generated_feed_id == ^generated_feed_id)
+  end
+
+  defp filter_waiting_feed(query, _generated_feed_id), do: query
+
+  defp order_processing_attempts(query, :desc) do
+    order_by(query, [attempt],
+      desc_nulls_last: attempt.finished_at,
+      desc: attempt.inserted_at,
+      desc: attempt.id
+    )
+  end
+
+  defp order_processing_attempts(query, _order) do
+    order_by(query, [attempt], asc: attempt.inserted_at, asc: attempt.id)
   end
 
   def list_recent_batches(limit \\ 5) do
@@ -540,17 +694,11 @@ defmodule Newspaper.Processing do
   defp close_interrupted_runs([]), do: :ok
 
   defp close_interrupted_runs(interrupted_ids) do
-    attempt_ids = Enum.map(interrupted_ids, &Integer.to_string/1)
-
     Run
     |> where(
       [run],
       run.run_type == "pipeline_step" and run.status == "running" and
-        fragment(
-          "jsonb_extract_path_text(?, 'pipeline_step_attempt_id') = ANY(?)",
-          run.related,
-          ^attempt_ids
-        )
+        run.pipeline_step_attempt_id in ^interrupted_ids
     )
     |> Repo.update_all(
       set: [

@@ -1,14 +1,14 @@
 defmodule NewspaperWeb.AdminLive.Format do
   @moduledoc false
 
-  def run_type_label("pipeline_batch"), do: "Extraction batch"
+  def run_type_label("pipeline_batch"), do: "Pipeline batch"
   def run_type_label("fetch_all"), do: "Feed refresh"
   def run_type_label("fetch_input_feed"), do: "Feed fetch"
   def run_type_label("process_input_feed"), do: "Feed processing"
   def run_type_label("process_intake_group"), do: "Group processing"
   def run_type_label("backfill_output_feed"), do: "Output backfill"
   def run_type_label("rerender_output_feed"), do: "Output re-render"
-  def run_type_label("pipeline_step"), do: "Extraction attempt"
+  def run_type_label("pipeline_step"), do: "Pipeline attempt"
   def run_type_label(value), do: humanize(value)
 
   def run_subject(entry) do

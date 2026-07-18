@@ -96,6 +96,12 @@ defmodule NewspaperWeb.AdminLive.ArticlesDiscoveryTest do
     assert has_element?(processing_view, "#article-status-processing", "Processing 1")
     assert has_element?(processing_view, "#article-status-not_enabled", "Not enabled 0")
     assert has_element?(processing_view, "#article-#{headlights.id}", "Digest: queued")
+
+    assert has_element?(
+             processing_view,
+             "#article-processing-#{headlights.id}-#{cars.id}-digestion[href*='/processing']"
+           )
+
     refute has_element?(processing_view, "#article-#{spaceflight.id}")
 
     {:ok, not_enabled_view, _html} =

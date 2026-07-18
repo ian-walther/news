@@ -13,10 +13,10 @@ defmodule Newspaper.Operations.Run do
     field :error_summary, :string
     field :debug_metadata, :map, default: %{}
 
+    belongs_to :pipeline_step_attempt, Newspaper.Processing.PipelineStepAttempt
     has_many :failures, Newspaper.Operations.Failure
 
-    has_many :pipeline_step_attempts, Newspaper.Processing.PipelineStepAttempt,
-      foreign_key: :batch_run_id
+    has_many :batch_attempts, Newspaper.Processing.PipelineStepAttempt, foreign_key: :batch_run_id
 
     timestamps(type: :utc_datetime)
   end
@@ -32,8 +32,10 @@ defmodule Newspaper.Operations.Run do
       :summary_counts,
       :related,
       :error_summary,
-      :debug_metadata
+      :debug_metadata,
+      :pipeline_step_attempt_id
     ])
     |> validate_required([:run_type, :trigger, :status, :started_at])
+    |> assoc_constraint(:pipeline_step_attempt)
   end
 end

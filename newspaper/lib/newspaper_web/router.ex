@@ -24,7 +24,8 @@ defmodule NewspaperWeb.Router do
     live "/articles", AdminLive.Articles, :index
     live "/articles/:guid", ArticleLive.Show, :show
     live "/sites", AdminLive.SiteExtractionPolicies, :index
-    live "/runs", AdminLive.Runs, :index
+    live "/processing", AdminLive.Processing, :index
+    live "/runs", AdminLive.Processing, :legacy
     live "/settings", AdminLive.Settings, :index
 
     get "/feeds/*path", FeedController, :show
