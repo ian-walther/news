@@ -60,6 +60,46 @@ test("extractFromRequest reports insufficient content", async () => {
   assert.equal(result.retryable, false);
 });
 
+for (const fixture of [
+  "footer-only-racer.html",
+  "footer-only-publisher.html",
+  "cookie-consent-only.html"
+]) {
+  test(`extractFromRequest rejects production-derived boilerplate in ${fixture}`, async () => {
+    const html = await readFixture(fixture);
+    const parsed = parseReadableArticle(html, `https://example.com/${fixture}`);
+    const result = await extractFixture(html, `https://example.com/${fixture}`);
+
+    assert.equal(parsed.length, 0);
+    assert.equal(result.status, "failed");
+    assert.equal(result.failure_kind, "insufficient_content");
+    assert.equal(result.retryable, false);
+    assert.equal(result.debug_metadata.content_length, 0);
+    assert.equal(result.quality.reason, "boilerplate_only");
+    assert.ok(result.quality.candidate_content_length > 0);
+    assert.ok(result.quality.removed_boilerplate_characters > 0);
+  });
+}
+
+for (const fixture of [
+  "short-article-with-footer.html",
+  "structured-schedule-with-navigation.html",
+  "link-rich-article-with-footer.html"
+]) {
+  test(`extractFromRequest preserves production-derived editorial content in ${fixture}`, async () => {
+    const html = await readFixture(fixture);
+    const result = await extractFixture(html, `https://example.com/${fixture}`);
+
+    assert.equal(result.status, "ok");
+    assert.ok(result.content_text.length >= 500);
+    assert.doesNotMatch(result.content_text, /Privacy Policy|All rights reserved/);
+
+    if (fixture === "short-article-with-footer.html") {
+      assert.ok(result.quality.removed_boilerplate_nodes > 0);
+    }
+  });
+}
+
 test("extractFromRequest reports HTTP errors", async () => {
   const result = await extractFromRequest(
     {
@@ -149,4 +189,20 @@ function fixtureFetch(html, url) {
       status: 200,
       headers: { "content-type": "text/html; charset=utf-8" }
     });
+}
+
+function readFixture(name) {
+  return readFile(new URL(`./fixtures/${name}`, import.meta.url), "utf8");
+}
+
+function extractFixture(html, url) {
+  return extractFromRequest(
+    {
+      schema_version: 1,
+      implementation: "extraction.simple_html",
+      url,
+      options: { minimum_text_length: 500 }
+    },
+    { fetchImpl: fixtureFetch(html, url) }
+  );
 }

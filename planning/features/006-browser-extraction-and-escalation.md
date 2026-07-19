@@ -58,8 +58,12 @@ The review corpus should include:
 - logged-out and expired-auth pages
 - paywall interstitials
 - bot challenges
+- cookie and consent interstitials
 - image-heavy articles
 - very short legitimate articles
+- embedded-media pages whose only readable text is footer navigation
+- structured schedules and other useful non-prose content
+- link-rich editorial copy beside navigation and legal boilerplate
 - malformed or unusually structured pages
 
 Quality decisions should remain deterministic and auditable. Local LLMs can classify or digest extracted text later, but they should not silently rewrite extraction output into an unverifiable canonical article.

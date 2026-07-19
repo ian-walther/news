@@ -5,6 +5,46 @@ import sanitizeHtml from "sanitize-html";
 export const DEFAULT_TIMEOUT_MS = 20_000;
 export const DEFAULT_MINIMUM_TEXT_LENGTH = 500;
 
+const STRUCTURAL_BOILERPLATE_SELECTORS = [
+  "footer",
+  "nav",
+  "[role='contentinfo']",
+  "[role='navigation']",
+  "[aria-label*='footer' i]",
+  "[aria-label*='navigation' i]",
+  "[data-testid*='footer' i]",
+  "[class*='site-footer' i]",
+  "[class*='site_footer' i]",
+  "[id*='site-footer' i]",
+  "[id*='site_footer' i]"
+];
+
+const BOILERPLATE_PATTERNS = [
+  /\bprivacy policy\b/i,
+  /\bterms (?:&|and|of) (?:conditions|service|use)\b/i,
+  /\buser agreement\b/i,
+  /\ball rights reserved\b/i,
+  /\bcopyright\b/i,
+  /\bconsent preferences\b/i,
+  /\bcalifornia privacy rights\b/i,
+  /\baccessibility help\b/i,
+  /\bad choices\b/i,
+  /\bcontact us\b/i,
+  /\bmaterial (?:on this site )?may not be (?:published|reproduced|distributed)\b/i,
+  /\bnot to be redistributed, copied, or modified\b/i,
+  /\bwe use essential cookies\b/i,
+  /\bnon-essential cookies to\b/i,
+  /\bby (?:clicking|selecting) .{0,20}accept\b/i,
+  /\bchange your cookie settings\b/i
+];
+
+const STRONG_BOILERPLATE_PATTERNS = [
+  /\ball rights reserved\b/i,
+  /\bcopyright\b/i,
+  /\bmaterial (?:on this site )?may not be (?:published|reproduced|distributed)\b/i,
+  /\bnot to be redistributed, copied, or modified\b/i
+];
+
 export function validateRequest(request, implementation, startedAt) {
   const schemaVersion = request?.schema_version ?? 1;
 
@@ -60,6 +100,9 @@ export function extractArticleFromHtml({
       debugMetadata: {
         ...debugMetadata,
         content_length: contentText.length,
+        candidate_content_length: quality.candidate_content_length,
+        removed_boilerplate_characters: quality.removed_boilerplate_characters,
+        removed_boilerplate_nodes: quality.removed_boilerplate_nodes,
         title_present: Boolean(parsed.title)
       }
     });
@@ -136,17 +179,15 @@ export function sanitizeArticleHtml(html, baseUrl) {
 export function parseReadableArticle(html, url) {
   const virtualConsole = new VirtualConsole();
   const dom = new JSDOM(html, { url, virtualConsole });
+  const structuralCleanup = removeStructuralBoilerplate(dom.window.document);
   const reader = new Readability(dom.window.document, { keepClasses: false });
   const article = reader.parse();
 
-  return article || {
-    title: null,
-    byline: null,
-    content: null,
-    textContent: "",
-    excerpt: null,
-    siteName: null
-  };
+  if (!article) {
+    return emptyArticle(structuralCleanup);
+  }
+
+  return cleanReadableArticle(article, url, structuralCleanup);
 }
 
 export function failure(attrs) {
@@ -276,22 +317,164 @@ function parseDate(value) {
 
 function scoreQuality(contentText, parsed, minimumTextLength) {
   const contentLength = contentText.length;
+  const cleanup = parsed.newspaperCleanup || {};
+  const metrics = {
+    content_length: contentLength,
+    candidate_content_length: cleanup.candidateContentLength ?? contentLength,
+    removed_boilerplate_characters: cleanup.removedCharacters ?? 0,
+    removed_boilerplate_nodes: cleanup.removedNodes ?? 0
+  };
 
   if (!parsed.content || contentLength === 0) {
-    return { score: 0, reason: "readability_returned_no_content" };
+    const reason = cleanup.boilerplateOnly
+      ? "boilerplate_only"
+      : "readability_returned_no_content";
+
+    return { score: 0, reason, ...metrics };
   }
 
   if (contentLength < minimumTextLength) {
     return {
       score: Math.max(0.1, contentLength / minimumTextLength / 2),
-      reason: `content_text_shorter_than_${minimumTextLength}`
+      reason: `content_text_shorter_than_${minimumTextLength}`,
+      ...metrics
     };
   }
 
   return {
     score: Number(Math.min(1, 0.5 + contentLength / 4_000).toFixed(2)),
-    reason: "sufficient_content"
+    reason: "sufficient_content",
+    ...metrics
   };
+}
+
+function cleanReadableArticle(article, url, structuralCleanup) {
+  const candidateContentLength = normalizeText(article.textContent).length;
+  const virtualConsole = new VirtualConsole();
+  const dom = new JSDOM(`<body>${article.content || ""}</body>`, {
+    url,
+    virtualConsole
+  });
+  const semanticCleanup = removeSemanticBoilerplate(dom.window.document);
+  const content = dom.window.document.body.innerHTML.trim();
+  const cleanedText = normalizeText(dom.window.document.body.textContent);
+  const boilerplateOnly =
+    semanticCleanup.removedNodes > 0 &&
+    cleanedText.length <= 100 &&
+    semanticCleanup.removedCharacters > cleanedText.length;
+  const textContent = boilerplateOnly ? "" : cleanedText;
+
+  return {
+    ...article,
+    content: textContent ? content : null,
+    textContent,
+    length: textContent.length,
+    newspaperCleanup: {
+      candidateContentLength,
+      removedCharacters: structuralCleanup.removedCharacters + semanticCleanup.removedCharacters,
+      removedNodes: structuralCleanup.removedNodes + semanticCleanup.removedNodes,
+      boilerplateOnly
+    }
+  };
+}
+
+function emptyArticle(cleanup) {
+  return {
+    title: null,
+    byline: null,
+    content: null,
+    textContent: "",
+    length: 0,
+    excerpt: null,
+    siteName: null,
+    newspaperCleanup: {
+      candidateContentLength: cleanup.removedCharacters,
+      removedCharacters: cleanup.removedCharacters,
+      removedNodes: cleanup.removedNodes,
+      boilerplateOnly: cleanup.removedNodes > 0
+    }
+  };
+}
+
+function removeStructuralBoilerplate(document) {
+  return removeNodes(document.querySelectorAll(STRUCTURAL_BOILERPLATE_SELECTORS.join(",")));
+}
+
+function removeSemanticBoilerplate(document) {
+  const candidates = [...document.querySelectorAll("p, li, ul, ol, section, div")].sort(
+    (left, right) => elementDepth(right) - elementDepth(left)
+  );
+  let removedCharacters = 0;
+  let removedNodes = 0;
+
+  for (const node of candidates) {
+    if (!node.isConnected || !boilerplateNode(node)) {
+      continue;
+    }
+
+    removedCharacters += normalizeText(node.textContent).length;
+    removedNodes += 1;
+    node.remove();
+  }
+
+  return { removedCharacters, removedNodes };
+}
+
+function boilerplateNode(node) {
+  const text = normalizeText(node.textContent);
+
+  if (!text || text.length > 2_000) {
+    return false;
+  }
+
+  const markerCount = matchingPatternCount(text, BOILERPLATE_PATTERNS);
+  const strongMarker = matchingPatternCount(text, STRONG_BOILERPLATE_PATTERNS) > 0;
+
+  if (markerCount >= 3 || (strongMarker && markerCount >= 2)) {
+    return true;
+  }
+
+  const links = [...node.querySelectorAll("a")];
+
+  if (links.length < 2 || text.length > 600) {
+    return false;
+  }
+
+  const linkTextLength = normalizeText(links.map(link => link.textContent).join(" ")).length;
+  return linkTextLength / text.length >= 0.8;
+}
+
+function removeNodes(nodes) {
+  let removedCharacters = 0;
+  let removedNodes = 0;
+
+  for (const node of nodes) {
+    if (!node.isConnected) {
+      continue;
+    }
+
+    removedCharacters += normalizeText(node.textContent).length;
+    removedNodes += 1;
+    node.remove();
+  }
+
+  return { removedCharacters, removedNodes };
+}
+
+function matchingPatternCount(text, patterns) {
+  return patterns.filter(pattern => pattern.test(text)).length;
+}
+
+function elementDepth(element) {
+  let depth = 0;
+  let parent = element.parentElement;
+
+  while (parent) {
+    depth += 1;
+    parent = parent.parentElement;
+  }
+
+  return depth;
 }
 
 function normalizeText(text) {
