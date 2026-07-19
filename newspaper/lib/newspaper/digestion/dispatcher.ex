@@ -3,11 +3,12 @@ defmodule Newspaper.Digestion.Dispatcher do
 
   alias Newspaper.Digestion
   alias Newspaper.Processing
+  alias Newspaper.Processing.PriorityQueue
 
   def start_link(_opts), do: GenServer.start_link(__MODULE__, %{}, name: __MODULE__)
 
-  def enqueue(attempt_id) when is_integer(attempt_id) do
-    GenServer.cast(__MODULE__, {:enqueue, attempt_id})
+  def enqueue(attempt_id, priority \\ :foreground) when is_integer(attempt_id) do
+    GenServer.cast(__MODULE__, {:enqueue, attempt_id, priority})
   end
 
   @impl true
@@ -16,7 +17,7 @@ defmodule Newspaper.Digestion.Dispatcher do
       send(self(), :recover)
     end
 
-    {:ok, %{queue: :queue.new(), running?: false}}
+    {:ok, %{queue: PriorityQueue.new(), running?: false}}
   end
 
   @impl true
@@ -25,14 +26,16 @@ defmodule Newspaper.Digestion.Dispatcher do
 
     state =
       Processing.list_queued_attempts("digestion")
-      |> Enum.reduce(state, fn attempt, state -> enqueue_attempt(state, attempt.id) end)
+      |> Enum.reduce(state, fn attempt, state ->
+        enqueue_attempt(state, attempt.id, PriorityQueue.priority_for(attempt))
+      end)
 
     {:noreply, start_next(state)}
   end
 
   @impl true
-  def handle_cast({:enqueue, attempt_id}, state) do
-    state = state |> enqueue_attempt(attempt_id) |> start_next()
+  def handle_cast({:enqueue, attempt_id, priority}, state) do
+    state = state |> enqueue_attempt(attempt_id, priority) |> start_next()
     {:noreply, state}
   end
 
@@ -40,18 +43,14 @@ defmodule Newspaper.Digestion.Dispatcher do
     {:noreply, state |> Map.put(:running?, false) |> start_next()}
   end
 
-  defp enqueue_attempt(state, attempt_id) do
-    if attempt_id in :queue.to_list(state.queue) do
-      state
-    else
-      %{state | queue: :queue.in(attempt_id, state.queue)}
-    end
+  defp enqueue_attempt(state, attempt_id, priority) do
+    %{state | queue: PriorityQueue.put(state.queue, attempt_id, priority)}
   end
 
   defp start_next(%{running?: true} = state), do: state
 
   defp start_next(state) do
-    case :queue.out(state.queue) do
+    case PriorityQueue.pop(state.queue) do
       {{:value, attempt_id}, queue} ->
         state = %{state | queue: queue, running?: true}
 

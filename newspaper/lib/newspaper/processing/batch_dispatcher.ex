@@ -31,7 +31,13 @@ defmodule Newspaper.Processing.BatchDispatcher do
   end
 
   @impl true
-  def init(state), do: {:ok, state, {:continue, :recover}}
+  def init(state) do
+    if Application.get_env(:newspaper, :pipeline_batch_recovery_enabled, true) do
+      {:ok, state, {:continue, :recover}}
+    else
+      {:ok, state}
+    end
+  end
 
   @impl true
   def handle_continue(:recover, state) do

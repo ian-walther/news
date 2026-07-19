@@ -144,7 +144,7 @@ Fetch gets new raw feed entries from configured input feeds.
 
 Fetch may create raw items, but it should not rewrite generated feed item history directly.
 
-Fetch triggering should stay simple: manual fetch and a global scheduled fetch interval. Per-feed schedules remain deferred.
+Fetch triggering should stay simple: manual fetch and a global scheduled fetch interval, defaulting to five minutes. The scheduler should collect immediately after application startup, re-arm its current timer when the global interval changes, and prevent scheduled and manual global fetches from overlapping. Per-feed schedules remain deferred.
 
 Use supervised GenServer-style orchestration for now. Do not introduce Oban unless later job complexity makes it worthwhile.
 

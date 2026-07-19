@@ -7,7 +7,7 @@ defmodule Newspaper.DigestionPipelineTest do
   alias Newspaper.Operations
   alias Newspaper.Pipeline
   alias Newspaper.Processing
-  alias Newspaper.Processing.{GeneratedFeedItemStep, PipelineStepAttempt}
+  alias Newspaper.Processing.{GeneratedFeedItemStep, PipelineStepAttempt, PriorityQueue}
   alias Newspaper.Publishing
   alias Newspaper.Publishing.GeneratedFeedItem
   alias Newspaper.Repo
@@ -57,11 +57,11 @@ defmodule Newspaper.DigestionPipelineTest do
 
     assert {:noreply, recovered_state} =
              Newspaper.Digestion.Dispatcher.handle_info(:recover, %{
-               queue: :queue.new(),
+               queue: PriorityQueue.new(),
                running?: true
              })
 
-    assert :queue.to_list(recovered_state.queue) == [attempt.id]
+    assert PriorityQueue.to_list(recovered_state.queue) == [attempt.id]
 
     attempt = Repo.get!(PipelineStepAttempt, attempt.id)
     assert attempt.status == "queued"

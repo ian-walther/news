@@ -3,7 +3,7 @@ defmodule Newspaper.Operations.AppSettings do
   import Ecto.Changeset
 
   schema "app_settings" do
-    field :fetch_interval_minutes, :integer, default: 60
+    field :fetch_interval_minutes, :integer, default: 5
     field :run_history_enabled, :boolean, default: true
     field :ollama_base_url, :string, default: "http://desktop.home:11434"
     field :ollama_model, :string

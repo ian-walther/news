@@ -179,6 +179,8 @@ Bulk processing should create a durable run before attempts are queued. The run 
 
 Queued pipeline attempts must also survive application restarts. Each step dispatcher should recover its own interrupted work by returning persisted `running` attempts to `queued`, closing the abandoned per-attempt diagnostic run as interrupted, and executing the attempt again from the beginning. Completed artifacts remain durable and reusable; an external HTTP or worker call is not resumed mid-request. Manual processing of existing items should skip articles with a successful current artifact unless the operator explicitly requests reprocessing.
 
+Normal work created as new articles arrive should take priority over queued bulk processing. A running attempt should finish normally, then each dispatcher should select foreground work before older batch attempts. This priority is derivable from durable attempt ownership: attempts without a parent batch are foreground, while attempts attached to a bulk run are backfill work. Restart recovery must preserve the same ordering without requiring a separate in-memory-only priority flag.
+
 ## Extraction, Digestion, And Filtering
 
 Content extraction comes before semantic filtering and article digestion. When both filtering and digestion are enabled, filtering should normally run first so excluded articles do not consume digest work. The first digest implementation produces a replacement title and summary together from the same extracted article and model call.

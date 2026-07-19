@@ -4,14 +4,18 @@ defmodule Newspaper.Processing.Dispatcher do
   alias Newspaper.Content
   alias Newspaper.Extraction
   alias Newspaper.Processing
+  alias Newspaper.Processing.PriorityQueue
 
   def start_link(_opts), do: GenServer.start_link(__MODULE__, %{}, name: __MODULE__)
 
-  def enqueue(attempt_id, site_host) when is_integer(attempt_id) and is_binary(site_host) do
-    GenServer.cast(__MODULE__, {:enqueue, attempt_id, site_host})
+  def enqueue(attempt_id, site_host, priority \\ :foreground)
+
+  def enqueue(attempt_id, site_host, priority)
+      when is_integer(attempt_id) and is_binary(site_host) do
+    GenServer.cast(__MODULE__, {:enqueue, attempt_id, site_host, priority})
   end
 
-  def enqueue(_attempt_id, _site_host), do: :ok
+  def enqueue(_attempt_id, _site_host, _priority), do: :ok
 
   def retry_now(site_host) when is_binary(site_host) do
     site_host =
@@ -43,7 +47,13 @@ defmodule Newspaper.Processing.Dispatcher do
       |> Enum.reduce(state, fn attempt, state ->
         attempt = Processing.get_attempt!(attempt.id)
         url = attempt.article.resolved_url || attempt.article.canonical_url
-        enqueue_attempt(state, attempt.id, Content.site_host(url))
+
+        enqueue_attempt(
+          state,
+          attempt.id,
+          Content.site_host(url),
+          PriorityQueue.priority_for(attempt)
+        )
       end)
 
     {:noreply, state}
@@ -71,7 +81,7 @@ defmodule Newspaper.Processing.Dispatcher do
         {:reply, :already_running, state}
 
       host_state ->
-        if :queue.is_empty(host_state.queue) do
+        if PriorityQueue.empty?(host_state.queue) do
           {:reply, :empty, state}
         else
           state = put_host(state, site_host, cancel_timer(host_state))
@@ -82,8 +92,8 @@ defmodule Newspaper.Processing.Dispatcher do
   end
 
   @impl true
-  def handle_cast({:enqueue, attempt_id, site_host}, state) do
-    {:noreply, enqueue_attempt(state, attempt_id, site_host)}
+  def handle_cast({:enqueue, attempt_id, site_host, priority}, state) do
+    {:noreply, enqueue_attempt(state, attempt_id, site_host, priority)}
   end
 
   def handle_cast({:finished, site_host, _result}, state) do
@@ -92,17 +102,11 @@ defmodule Newspaper.Processing.Dispatcher do
     {:noreply, schedule_host(state, site_host)}
   end
 
-  defp enqueue_attempt(state, _attempt_id, nil), do: state
+  defp enqueue_attempt(state, _attempt_id, nil, _priority), do: state
 
-  defp enqueue_attempt(state, attempt_id, site_host) do
+  defp enqueue_attempt(state, attempt_id, site_host, priority) do
     host_state = Map.get(state.hosts, site_host, new_host_state())
-
-    host_state =
-      if attempt_id in :queue.to_list(host_state.queue) do
-        host_state
-      else
-        %{host_state | queue: :queue.in(attempt_id, host_state.queue)}
-      end
+    host_state = %{host_state | queue: PriorityQueue.put(host_state.queue, attempt_id, priority)}
 
     state
     |> put_host(site_host, host_state)
@@ -113,7 +117,7 @@ defmodule Newspaper.Processing.Dispatcher do
     host_state = Map.fetch!(state.hosts, site_host)
 
     cond do
-      host_state.running? or host_state.timer != nil or :queue.is_empty(host_state.queue) ->
+      host_state.running? or host_state.timer != nil or PriorityQueue.empty?(host_state.queue) ->
         state
 
       true ->
@@ -130,13 +134,13 @@ defmodule Newspaper.Processing.Dispatcher do
   end
 
   defp new_host_state do
-    %{queue: :queue.new(), running?: false, timer: nil, timer_token: nil}
+    %{queue: PriorityQueue.new(), running?: false, timer: nil, timer_token: nil}
   end
 
   defp start_next(state, site_host) do
     host_state = Map.fetch!(state.hosts, site_host)
 
-    case :queue.out(host_state.queue) do
+    case PriorityQueue.pop(host_state.queue) do
       {{:value, attempt_id}, queue} ->
         host_state = %{clear_timer(host_state) | queue: queue, running?: true}
         state = put_host(state, site_host, host_state)

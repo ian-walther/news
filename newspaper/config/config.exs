@@ -17,6 +17,8 @@ config :newspaper, :extractors,
     Path.expand("../../workers/extraction-headless-browser/bin/extract", __DIR__)
 
 config :newspaper, :processing_dispatcher_enabled, true
+config :newspaper, :pipeline_scheduler_enabled, true
+config :newspaper, :pipeline_batch_recovery_enabled, true
 
 # Configure the endpoint
 config :newspaper, NewspaperWeb.Endpoint,

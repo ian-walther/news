@@ -12,6 +12,7 @@ defmodule Newspaper.Processing do
     GeneratedFeedItemStep,
     PipelineStep,
     PipelineStepAttempt,
+    PriorityQueue,
     Registry
   }
 
@@ -682,7 +683,11 @@ defmodule Newspaper.Processing do
         do: where(query, [attempt], attempt.step_type == ^step_type),
         else: query
     end)
-    |> order_by([attempt], asc: attempt.inserted_at)
+    |> order_by([attempt],
+      asc_nulls_first: attempt.batch_run_id,
+      asc: attempt.inserted_at,
+      asc: attempt.id
+    )
     |> Repo.all()
   end
 
@@ -1281,13 +1286,19 @@ defmodule Newspaper.Processing do
       article
       |> extraction_url()
       |> Content.site_host()
-      |> then(&Newspaper.Processing.Dispatcher.enqueue(attempt.id, &1))
+      |> then(
+        &Newspaper.Processing.Dispatcher.enqueue(
+          attempt.id,
+          &1,
+          PriorityQueue.priority_for(attempt)
+        )
+      )
     end
   end
 
   defp dispatch(%PipelineStepAttempt{step_type: "digestion"} = attempt, _article) do
     if Application.get_env(:newspaper, :processing_dispatcher_enabled, true) do
-      Newspaper.Digestion.Dispatcher.enqueue(attempt.id)
+      Newspaper.Digestion.Dispatcher.enqueue(attempt.id, PriorityQueue.priority_for(attempt))
     end
   end
 

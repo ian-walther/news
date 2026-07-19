@@ -24,6 +24,8 @@ config :newspaper, NewspaperWeb.Endpoint,
 config :logger, level: :warning
 
 config :newspaper, :processing_dispatcher_enabled, false
+config :newspaper, :pipeline_scheduler_enabled, false
+config :newspaper, :pipeline_batch_recovery_enabled, false
 
 config :newspaper, :ollama_req_options, plug: {Req.Test, Newspaper.Digestion.OllamaClient}
 

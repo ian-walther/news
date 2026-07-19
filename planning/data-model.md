@@ -169,7 +169,7 @@ Durable execution records for fetch, publish, extraction, classification, and bu
 
 Application-level settings.
 
-- global fetch interval minutes, default `60`
+- global fetch interval minutes, default `5`
 - run history/debug logging enabled, default true
 - Ollama base URL, initially `http://desktop.home:11434`
 - globally selected Ollama article-digestion model
