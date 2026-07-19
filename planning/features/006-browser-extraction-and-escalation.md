@@ -22,13 +22,13 @@ Every implementation must preserve the shared JSON request/response contract, no
 
 The configured extraction step enables processing for an output feed but does not select an extractor. Site extraction policy determines the cheapest implementation worth attempting for a particular host and owns escalation, request pacing, timeout, and extraction-quality thresholds.
 
-Escalation-worthy failures include:
+Escalation conditions include:
 
 - `javascript_required`
 - `auth_required`
 - `paywall`
 - `blocked`
-- repeated `insufficient_content`
+- `no_content` from a lower-capability extractor
 
 Network failures and timeouts should remain transient scheduling or availability failures. The first simple-client rate limit should use site backoff without escalation and honor any explicit `Retry-After`. If Simple is rate-limited again on a later attempt, that attempt should probe Headless even when the response supplies another retry interval. A successful probe may teach Headless as the site's minimum implementation. A rate-limited headless probe should preserve adaptive site backoff and must not automatically escalate into the persistent headed browser.
 

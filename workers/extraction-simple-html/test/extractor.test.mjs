@@ -42,7 +42,7 @@ test("extractFromRequest returns the normalized success contract", async () => {
   assert.equal(result.quality.reason, "sufficient_content");
 });
 
-test("extractFromRequest reports insufficient content", async () => {
+test("extractFromRequest reports no content as a non-error outcome", async () => {
   const html = "<html><head><title>Tiny</title></head><body><article><p>Too short.</p></article></body></html>";
 
   const result = await extractFromRequest(
@@ -55,9 +55,10 @@ test("extractFromRequest reports insufficient content", async () => {
     { fetchImpl: fixtureFetch(html, "https://example.com/tiny") }
   );
 
-  assert.equal(result.status, "failed");
-  assert.equal(result.failure_kind, "insufficient_content");
-  assert.equal(result.retryable, false);
+  assert.equal(result.status, "no_content");
+  assert.equal(result.reason, "content_text_shorter_than_100");
+  assert.equal(result.failure_kind, undefined);
+  assert.equal(result.retryable, undefined);
 });
 
 for (const fixture of [
@@ -71,9 +72,10 @@ for (const fixture of [
     const result = await extractFixture(html, `https://example.com/${fixture}`);
 
     assert.equal(parsed.length, 0);
-    assert.equal(result.status, "failed");
-    assert.equal(result.failure_kind, "insufficient_content");
-    assert.equal(result.retryable, false);
+    assert.equal(result.status, "no_content");
+    assert.equal(result.reason, "boilerplate_only");
+    assert.equal(result.failure_kind, undefined);
+    assert.equal(result.retryable, undefined);
     assert.equal(result.debug_metadata.content_length, 0);
     assert.equal(result.quality.reason, "boilerplate_only");
     assert.ok(result.quality.candidate_content_length > 0);

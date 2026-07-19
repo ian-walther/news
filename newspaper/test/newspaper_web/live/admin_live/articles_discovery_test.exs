@@ -138,6 +138,33 @@ defmodule NewspaperWeb.AdminLive.ArticlesDiscoveryTest do
     refute has_element?(not_enabled_view, "#article-#{headlights.id}")
   end
 
+  test "filters articles whose extraction completed without content", %{conn: conn} do
+    {autopian, article} =
+      source_article!(
+        "The Autopian",
+        "https://www.theautopian.com/feed/",
+        "https://www.theautopian.com/video-only-post/",
+        "A video without article copy",
+        ~U[2026-07-15 16:00:00Z]
+      )
+
+    _cars = output_feed!("Cars", autopian, article, extraction?: true)
+
+    article
+    |> Article.changeset(%{
+      extraction_status: "skipped",
+      extraction_metadata: %{"reason" => "boilerplate_only"}
+    })
+    |> Repo.update!()
+
+    {:ok, view, _html} = live(conn, ~p"/articles?status=skipped")
+
+    assert has_element?(view, "#article-status-skipped[data-active='true']")
+    assert has_element?(view, "#article-status-skipped", "Skipped 1")
+    assert has_element?(view, "#article-#{article.id}", "Skipped")
+    refute has_element?(view, "#article-#{article.id}", "Failed")
+  end
+
   test "paginates the durable article pool", %{conn: conn} do
     for number <- 1..26 do
       %Article{}

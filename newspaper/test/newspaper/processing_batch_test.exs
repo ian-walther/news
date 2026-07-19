@@ -83,6 +83,42 @@ defmodule Newspaper.ProcessingBatchTest do
     assert Processing.list_attempts_for_batch(second_batch.id) == []
   end
 
+  test "no-content extraction attempts count as skipped without failing the batch" do
+    feed = extraction_feed_with_articles!()
+
+    worker =
+      worker_script!(%{
+        schema_version: 1,
+        implementation: "extraction.simple_html",
+        status: "no_content",
+        final_url: "https://www.theautopian.com/video-only-post/",
+        reason: "boilerplate_only",
+        message: "boilerplate_only",
+        quality: %{"score" => 0, "reason" => "boilerplate_only", "content_length" => 0},
+        debug_metadata: %{"content_length" => 0}
+      })
+
+    Application.put_env(:newspaper, :extractors,
+      simple_html_command: worker,
+      headless_browser_command: worker
+    )
+
+    batch = start_feed_batch_and_wait!(feed)
+
+    batch.id
+    |> Processing.list_attempts_for_batch()
+    |> Enum.each(fn attempt ->
+      assert {:ok, attempt} = Extraction.execute_attempt(attempt.id)
+      assert attempt.status == "skipped"
+    end)
+
+    batch = Repo.get!(Run, batch.id)
+    assert batch.status == "succeeded"
+    assert batch.summary_counts["failed"] == 0
+    assert batch.summary_counts["skipped"] == 2
+    assert batch.summary_counts["succeeded"] == 0
+  end
+
   test "a batch skips terminal article failures while preserving manual retry" do
     feed = extraction_feed_with_articles!()
 

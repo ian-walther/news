@@ -419,7 +419,7 @@ defmodule NewspaperWeb.AdminLive.Processing do
       if attempts_visible?,
         do:
           Processing.list_processing_attempts(
-            ["succeeded", "failed"],
+            ["succeeded", "failed", "skipped"],
             attempt_opts |> Keyword.put(:limit, 75) |> Keyword.put(:order, :desc)
           ),
         else: []

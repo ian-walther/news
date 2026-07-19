@@ -669,7 +669,7 @@ defmodule Newspaper.Processing do
         %{
           items: counts.total,
           extracted: counts.ready,
-          unavailable: counts.failed,
+          unavailable: counts.failed + counts.skipped,
           not_requested: counts.not_requested + counts.blocked
         }
     end
@@ -811,7 +811,7 @@ defmodule Newspaper.Processing do
   end
 
   def finish_attempt(%PipelineStepAttempt{} = attempt, status, attrs \\ %{})
-      when status in ["succeeded", "failed"] do
+      when status in ["succeeded", "failed", "skipped"] do
     now = DateTime.utc_now(:second)
 
     attrs =
@@ -914,7 +914,8 @@ defmodule Newspaper.Processing do
       "queued" => Map.get(status_counts, "queued", 0),
       "running" => Map.get(status_counts, "running", 0),
       "succeeded" => Map.get(status_counts, "succeeded", 0),
-      "failed" => Map.get(status_counts, "failed", 0)
+      "failed" => Map.get(status_counts, "failed", 0),
+      "skipped" => Map.get(status_counts, "skipped", 0)
     }
 
     total = Enum.sum(Map.values(counts))
@@ -924,7 +925,7 @@ defmodule Newspaper.Processing do
       counts
       |> Map.put("total", total)
       |> Map.put("items_considered", items_considered)
-      |> Map.put("skipped", max(items_considered - total, 0))
+      |> Map.update!("skipped", &(&1 + max(items_considered - total, 0)))
 
     active = counts["queued"] + counts["running"]
 
@@ -1103,6 +1104,8 @@ defmodule Newspaper.Processing do
        when is_map(metadata) do
     if Map.get(metadata, "retryable") in [false, "false"], do: "failed", else: "pending"
   end
+
+  defp requested_status(%Article{extraction_status: "skipped"}, "extraction"), do: "skipped"
 
   defp requested_status(_article, "extraction"), do: "pending"
 

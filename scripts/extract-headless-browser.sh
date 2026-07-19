@@ -34,6 +34,7 @@ process.stdin.on("end", () => {
   const result = JSON.parse(input);
   const summary = {
     status: result.status,
+    reason: result.reason,
     failure_kind: result.failure_kind,
     retryable: result.retryable,
     title: result.title,

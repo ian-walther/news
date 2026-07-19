@@ -88,12 +88,10 @@ export function extractArticleFromHtml({
   const quality = scoreQuality(contentText, parsed, minimumTextLength);
 
   if (quality.score < 0.35) {
-    return failure({
+    return noContent({
       schemaVersion,
       implementation,
-      failureKind: "insufficient_content",
-      retryable: false,
-      message: quality.reason,
+      reason: quality.reason,
       finalUrl,
       quality,
       startedAt,
@@ -199,6 +197,24 @@ export function failure(attrs) {
     failure_kind: attrs.failureKind,
     retryable: attrs.retryable,
     message: attrs.message,
+    quality: attrs.quality || null,
+    debug_metadata: {
+      status_code: attrs.statusCode ?? null,
+      retry_after_ms: attrs.retryAfterMs ?? null,
+      elapsed_ms: elapsedMs(attrs.startedAt),
+      ...(attrs.debugMetadata || {})
+    }
+  };
+}
+
+export function noContent(attrs) {
+  return {
+    schema_version: attrs.schemaVersion,
+    implementation: attrs.implementation,
+    status: "no_content",
+    final_url: attrs.finalUrl || null,
+    reason: attrs.reason,
+    message: attrs.reason,
     quality: attrs.quality || null,
     debug_metadata: {
       status_code: attrs.statusCode ?? null,

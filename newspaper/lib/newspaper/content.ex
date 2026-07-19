@@ -147,7 +147,7 @@ defmodule Newspaper.Content do
       not_requested: Map.get(counts, "not_requested", 0),
       processing: Map.get(counts, "queued", 0) + Map.get(counts, "running", 0),
       failed: Map.get(counts, "failed", 0),
-      skipped: 0,
+      skipped: Map.get(counts, "skipped", 0),
       not_enabled: 0
     }
   end
@@ -183,6 +183,10 @@ defmodule Newspaper.Content do
 
   defp filter_article_extraction_status(query, "failed") do
     where(query, [article: article], article.extraction_status == "failed")
+  end
+
+  defp filter_article_extraction_status(query, "skipped") do
+    where(query, [article: article], article.extraction_status == "skipped")
   end
 
   defp filter_article_extraction_status(query, "not_requested") do
@@ -627,6 +631,33 @@ defmodule Newspaper.Content do
     end)
   end
 
+  def record_extraction_no_content(
+        %Article{} = article,
+        %SiteExtractionPolicy{} = policy,
+        result
+      ) do
+    Repo.transaction(fn ->
+      article =
+        article
+        |> Article.changeset(%{
+          extraction_status: "skipped",
+          extraction_metadata: extraction_metadata(result)
+        })
+        |> Repo.update!()
+
+      policy =
+        policy
+        |> SiteExtractionPolicy.changeset(%{
+          last_failure_kind: nil,
+          consecutive_rate_limits: 0,
+          backoff_until: nil
+        })
+        |> Repo.update!()
+
+      {article, policy}
+    end)
+  end
+
   defp update_policy_after_failure!(
          %SiteExtractionPolicy{} = policy,
          %{"failure_kind" => "rate_limited"} = result
@@ -667,16 +698,20 @@ defmodule Newspaper.Content do
   end
 
   defp extraction_metadata(result) do
-    %{
-      "implementation" => result["implementation"],
-      "final_url" => result["final_url"],
-      "failure_kind" => result["failure_kind"],
-      "retryable" => result["retryable"],
-      "message" => result["message"],
-      "quality" => result["quality"] || %{},
-      "debug_metadata" => result["debug_metadata"] || %{},
-      "extracted_at" => DateTime.utc_now(:second) |> DateTime.to_iso8601()
-    }
+    [
+      {"status", result["status"]},
+      {"implementation", result["implementation"]},
+      {"final_url", result["final_url"]},
+      {"reason", result["reason"]},
+      {"failure_kind", result["failure_kind"]},
+      {"retryable", result["retryable"]},
+      {"message", result["message"]},
+      {"quality", result["quality"] || %{}},
+      {"debug_metadata", result["debug_metadata"] || %{}},
+      {"extracted_at", DateTime.utc_now(:second) |> DateTime.to_iso8601()}
+    ]
+    |> Enum.reject(fn {_key, value} -> is_nil(value) end)
+    |> Map.new()
   end
 
   defp article_attrs(raw_item, dedupe_scope, dedupe_key) do

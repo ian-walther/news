@@ -139,13 +139,13 @@ defmodule Newspaper.Extraction do
   end
 
   defp escalate?(%{escalation_enabled: true}, result) do
-    result["failure_kind"] in [
-      "javascript_required",
-      "auth_required",
-      "paywall",
-      "blocked",
-      "insufficient_content"
-    ]
+    result["status"] == "no_content" or
+      result["failure_kind"] in [
+        "javascript_required",
+        "auth_required",
+        "paywall",
+        "blocked"
+      ]
   end
 
   defp escalate?(_policy, _result), do: false
@@ -206,6 +206,42 @@ defmodule Newspaper.Extraction do
     end
   end
 
+  defp finish_result(
+         run,
+         attempt,
+         article,
+         policy,
+         %{"status" => "no_content"} = result,
+         input
+       ) do
+    with {:ok, {_article, _policy}} <-
+           Content.record_extraction_no_content(article, policy, result),
+         {:ok, attempt} <-
+           Processing.finish_attempt(attempt, "skipped", %{
+             failure_kind: nil,
+             retryable: false,
+             error_message: nil,
+             input_snapshot: input,
+             output_snapshot: result,
+             debug_metadata: result["debug_metadata"] || %{}
+           }),
+         :ok <- skip_downstream_content_steps(article) do
+      Operations.finish_run(run, "succeeded", %{
+        summary_counts: %{
+          "attempts" => 1,
+          "succeeded" => 0,
+          "failed" => 0,
+          "skipped" => 1
+        }
+      })
+
+      {:ok, attempt}
+    else
+      {:error, reason} ->
+        fail_execution(attempt, inspect(reason), "persistence_error", run)
+    end
+  end
+
   defp finish_result(run, attempt, article, policy, result, input) do
     with {:ok, {_article, _policy}} <- Content.record_extraction_failure(article, policy, result),
          {:ok, attempt} <-
@@ -216,8 +252,7 @@ defmodule Newspaper.Extraction do
              input_snapshot: input,
              output_snapshot: result,
              debug_metadata: result["debug_metadata"] || %{}
-           }),
-         :ok <- maybe_skip_downstream_steps(article, result) do
+           }) do
       create_failure(run, attempt, result["failure_kind"], result["message"], result["retryable"])
 
       Operations.finish_run(run, "failed", %{
@@ -252,18 +287,13 @@ defmodule Newspaper.Extraction do
     result
   end
 
-  defp maybe_skip_downstream_steps(article, %{
-         "failure_kind" => "insufficient_content",
-         "retryable" => false
-       }) do
+  defp skip_downstream_content_steps(article) do
     Processing.skip_article_steps(
       article.id,
       "digestion",
       "Skipped because no usable article content was extracted"
     )
   end
-
-  defp maybe_skip_downstream_steps(_article, _result), do: :ok
 
   defp create_failure(run, attempt, failure_kind, message, retryable) do
     Operations.create_failure(%{

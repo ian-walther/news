@@ -64,23 +64,24 @@ Successful extraction:
 }
 ```
 
-Failed extraction:
+Valid no-content outcome:
 
 ```json
 {
   "schema_version": 1,
   "implementation": "extraction.simple_html",
-  "status": "failed",
+  "status": "no_content",
   "final_url": "https://example.com/article",
-  "failure_kind": "insufficient_content",
-  "retryable": false,
-  "message": "content_text_shorter_than_500",
+  "reason": "boilerplate_only",
+  "message": "boilerplate_only",
   "quality": {
-    "score": 0.2,
-    "reason": "content_text_shorter_than_500"
+    "score": 0,
+    "reason": "boilerplate_only"
   },
   "debug_metadata": {}
 }
 ```
 
-Rate-limited responses use `failure_kind: "rate_limited"`. When the server provides a valid `Retry-After` header, `debug_metadata.retry_after_ms` carries the requested delay for app-owned per-host scheduling.
+A no-content response is successful execution with no usable article body. It allows the application to try a more capable extractor and, if the chain is exhausted, record a valid skipped outcome rather than a failure.
+
+Network, HTTP, and worker failures use `status: "failed"`. Rate-limited responses use `failure_kind: "rate_limited"`. When the server provides a valid `Retry-After` header, `debug_metadata.retry_after_ms` carries the requested delay for app-owned per-host scheduling.

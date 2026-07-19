@@ -2,7 +2,7 @@ defmodule Newspaper.Processing.PipelineStepAttempt do
   use Ecto.Schema
   import Ecto.Changeset
 
-  @statuses ~w(queued running succeeded failed)
+  @statuses ~w(queued running succeeded failed skipped)
 
   schema "pipeline_step_attempts" do
     field :implementation_key, :string

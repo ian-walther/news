@@ -371,17 +371,16 @@ defmodule Newspaper.ExtractionTest do
                                                                                            1)..retry_after_seconds
   end
 
-  test "escalates insufficient static HTML to headless extraction and learns the site minimum" do
+  test "escalates static HTML without content to headless extraction and learns the site minimum" do
     article = create_article!("https://example.com/browser-rendered-story")
 
     simple_worker =
       worker_script!("simple-insufficient", %{
         schema_version: 1,
         implementation: "extraction.simple_html",
-        status: "failed",
+        status: "no_content",
         final_url: article.canonical_url,
-        failure_kind: "insufficient_content",
-        retryable: false,
+        reason: "readability_returned_no_content",
         message: "readability_returned_no_content",
         quality: %{"score" => 0, "reason" => "readability_returned_no_content"},
         debug_metadata: %{"fixture" => true}
@@ -412,7 +411,7 @@ defmodule Newspaper.ExtractionTest do
       |> Enum.sort_by(& &1.id)
 
     assert Enum.map(attempts, &{&1.implementation, &1.status}) == [
-             {"extraction.simple_html", "failed"},
+             {"extraction.simple_html", "no_content"},
              {"extraction.headless_browser", "ok"}
            ]
 
@@ -421,17 +420,16 @@ defmodule Newspaper.ExtractionTest do
     assert policy.last_successful_implementation == "extraction.headless_browser"
   end
 
-  test "terminal insufficient content skips downstream digestion" do
+  test "terminal no-content extraction is skipped without creating a failure" do
     article = create_article!("https://example.com/video-without-article-copy")
 
     worker =
       worker_script!("boilerplate-only", %{
         schema_version: 1,
         implementation: "extraction.simple_html",
-        status: "failed",
+        status: "no_content",
         final_url: article.canonical_url,
-        failure_kind: "insufficient_content",
-        retryable: false,
+        reason: "boilerplate_only",
         message: "boilerplate_only",
         quality: %{
           "score" => 0,
@@ -467,7 +465,20 @@ defmodule Newspaper.ExtractionTest do
     extraction_attempt = Repo.one!(PipelineStepAttempt)
     assert extraction_attempt.step_type == "extraction"
     assert {:ok, extraction_attempt} = Extraction.execute_attempt(extraction_attempt.id)
-    assert extraction_attempt.status == "failed"
+    assert extraction_attempt.status == "skipped"
+    assert extraction_attempt.failure_kind == nil
+    assert extraction_attempt.retryable == false
+
+    article = Repo.get!(Article, article.id)
+    assert article.extraction_status == "skipped"
+    assert article.extraction_metadata["reason"] == "boilerplate_only"
+    refute Map.has_key?(article.extraction_metadata, "failure_kind")
+    refute Map.has_key?(article.extraction_metadata, "retryable")
+
+    policy = Repo.get!(SiteExtractionPolicy, policy.id)
+    assert policy.last_failure_kind == nil
+
+    refute Repo.exists?(Failure)
 
     item_steps =
       GeneratedFeedItemStep
@@ -475,7 +486,7 @@ defmodule Newspaper.ExtractionTest do
       |> Repo.all()
 
     assert Enum.map(item_steps, &{&1.step_type, &1.status}) == [
-             {"extraction", "failed"},
+             {"extraction", "skipped"},
              {"digestion", "skipped"}
            ]
 

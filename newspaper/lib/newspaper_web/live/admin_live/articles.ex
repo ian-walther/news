@@ -6,7 +6,7 @@ defmodule NewspaperWeb.AdminLive.Articles do
   import NewspaperWeb.AdminLive.Nav
 
   @stages ~w(extraction digestion)
-  @extraction_statuses ~w(all succeeded not_requested processing failed)
+  @extraction_statuses ~w(all succeeded not_requested processing failed skipped)
   @digestion_statuses ~w(all succeeded waiting not_requested processing failed skipped not_enabled)
 
   def mount(_params, _session, socket) do
@@ -196,6 +196,12 @@ defmodule NewspaperWeb.AdminLive.Articles do
               </span>
               <span :if={entry.article.extraction_metadata["failure_kind"]} class="text-xs text-error">
                 {Format.failure_type_label(entry.article.extraction_metadata["failure_kind"])}
+              </span>
+              <span
+                :if={entry.article.extraction_metadata["reason"]}
+                class="text-xs text-base-content/50"
+              >
+                {no_content_reason(entry.article.extraction_metadata["reason"])}
               </span>
             </div>
             <h2 class="mt-2 text-base font-semibold leading-snug">
@@ -442,7 +448,8 @@ defmodule NewspaperWeb.AdminLive.Articles do
       {"succeeded", "Ready", stats.succeeded},
       {"not_requested", "Not requested", stats.not_requested},
       {"processing", "Processing", stats.processing},
-      {"failed", "Failed", stats.failed}
+      {"failed", "Failed", stats.failed},
+      {"skipped", "Skipped", stats.skipped}
     ]
   end
 
@@ -479,7 +486,11 @@ defmodule NewspaperWeb.AdminLive.Articles do
     do: "Re-extract"
 
   defp extract_action_label(%{extraction_status: "failed"}), do: "Retry extraction"
+  defp extract_action_label(%{extraction_status: "skipped"}), do: "Try extraction again"
   defp extract_action_label(_article), do: "Extract"
+
+  defp no_content_reason("boilerplate_only"), do: "No article content"
+  defp no_content_reason(reason), do: Format.status_label(reason)
 
   defp digest_action_label(%{digests: [_digest | _rest]}), do: "Regenerate digest"
   defp digest_action_label(_article), do: "Digest"
