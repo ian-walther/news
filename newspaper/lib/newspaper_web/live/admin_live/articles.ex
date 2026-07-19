@@ -7,7 +7,7 @@ defmodule NewspaperWeb.AdminLive.Articles do
 
   @stages ~w(extraction digestion)
   @extraction_statuses ~w(all succeeded not_requested processing failed)
-  @digestion_statuses ~w(all succeeded waiting not_requested processing failed not_enabled)
+  @digestion_statuses ~w(all succeeded waiting not_requested processing failed skipped not_enabled)
 
   def mount(_params, _session, socket) do
     if connected?(socket), do: Newspaper.Events.subscribe()
@@ -431,6 +431,7 @@ defmodule NewspaperWeb.AdminLive.Articles do
       {"not_requested", "Not requested", stats.not_requested},
       {"processing", "Processing", stats.processing},
       {"failed", "Failed", stats.failed},
+      {"skipped", "Skipped", stats.skipped},
       {"not_enabled", "Not enabled", stats.not_enabled}
     ]
   end

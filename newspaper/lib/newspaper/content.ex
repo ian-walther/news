@@ -147,6 +147,7 @@ defmodule Newspaper.Content do
       not_requested: Map.get(counts, "not_requested", 0),
       processing: Map.get(counts, "queued", 0) + Map.get(counts, "running", 0),
       failed: Map.get(counts, "failed", 0),
+      skipped: 0,
       not_enabled: 0
     }
   end
@@ -165,6 +166,7 @@ defmodule Newspaper.Content do
       not_requested: count.("not_requested"),
       processing: count.("processing"),
       failed: count.("failed"),
+      skipped: count.("skipped"),
       not_enabled: count.("not_enabled")
     }
   end
@@ -247,8 +249,12 @@ defmodule Newspaper.Content do
     where(
       query,
       [digestion_item_step: item_step],
-      is_nil(item_step.id) or item_step.status in ["not_requested", "skipped"]
+      is_nil(item_step.id) or item_step.status == "not_requested"
     )
+  end
+
+  defp filter_digestion_item_status(query, "skipped") do
+    where(query, [digestion_item_step: item_step], item_step.status == "skipped")
   end
 
   defp filter_digestion_item_status(query, "processing") do

@@ -104,6 +104,28 @@ defmodule NewspaperWeb.AdminLive.ArticlesDiscoveryTest do
 
     refute has_element?(processing_view, "#article-#{spaceflight.id}")
 
+    digestion_step =
+      Repo.get_by!(Newspaper.Processing.GeneratedFeedItemStep,
+        generated_feed_item_id:
+          Repo.get_by!(Newspaper.Publishing.GeneratedFeedItem, article_id: headlights.id).id,
+        step_type: "digestion"
+      )
+
+    digestion_step
+    |> Ecto.Changeset.change(%{status: "skipped"})
+    |> Repo.update!()
+
+    {:ok, skipped_view, _html} =
+      live(
+        conn,
+        ~p"/articles?#{%{stage: "digestion", status: "skipped", generated_feed_id: cars.id}}"
+      )
+
+    assert has_element?(skipped_view, "#article-status-skipped[data-active='true']")
+    assert has_element?(skipped_view, "#article-status-skipped", "Skipped 1")
+    assert has_element?(skipped_view, "#article-#{headlights.id}", "Digest: skipped")
+    refute has_element?(skipped_view, "#article-#{spaceflight.id}")
+
     {:ok, not_enabled_view, _html} =
       live(
         conn,

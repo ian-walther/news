@@ -837,6 +837,8 @@ defmodule Newspaper.Processing do
   end
 
   def attach_artifact(%PipelineStepAttempt{} = attempt, %ArticleExtraction{} = extraction) do
+    reactivate_skipped_article_steps(attempt.article_id, "digestion")
+
     update_attempt_item_steps(attempt.id, %{
       status: "succeeded",
       article_extraction_id: extraction.id,
@@ -860,6 +862,37 @@ defmodule Newspaper.Processing do
     })
 
     advance_article_items(attempt.article_id)
+  end
+
+  def skip_article_steps(article_id, step_type, reason)
+      when is_integer(article_id) and is_binary(step_type) and is_binary(reason) do
+    now = DateTime.utc_now(:second)
+
+    GeneratedFeedItemStep
+    |> join(:inner, [item_step], item in GeneratedFeedItem,
+      on: item.id == item_step.generated_feed_item_id
+    )
+    |> where(
+      [item_step, item],
+      item.article_id == ^article_id and item_step.step_type == ^step_type and
+        item_step.status in ["not_requested", "pending", "blocked", "failed"]
+    )
+    |> Repo.update_all(
+      set: [
+        status: "skipped",
+        latest_attempt_id: nil,
+        article_extraction_id: nil,
+        article_digest_id: nil,
+        reused_artifact: false,
+        error_message: reason,
+        started_at: nil,
+        finished_at: now,
+        updated_at: now
+      ]
+    )
+
+    Newspaper.Events.broadcast_data_changed(:processing_changed)
+    :ok
   end
 
   def refresh_batch_run(batch_run_id, items_considered \\ nil)
@@ -1163,6 +1196,35 @@ defmodule Newspaper.Processing do
     |> where([item_step], item_step.latest_attempt_id == ^attempt_id)
     |> Repo.all()
     |> Enum.each(&update_item_step!(&1, attrs))
+  end
+
+  defp reactivate_skipped_article_steps(article_id, step_type) do
+    now = DateTime.utc_now(:second)
+
+    GeneratedFeedItemStep
+    |> join(:inner, [item_step], item in GeneratedFeedItem,
+      on: item.id == item_step.generated_feed_item_id
+    )
+    |> where(
+      [item_step, item],
+      item.article_id == ^article_id and item_step.step_type == ^step_type and
+        item_step.status == "skipped"
+    )
+    |> Repo.update_all(
+      set: [
+        status: "pending",
+        latest_attempt_id: nil,
+        article_extraction_id: nil,
+        article_digest_id: nil,
+        reused_artifact: false,
+        error_message: nil,
+        started_at: nil,
+        finished_at: nil,
+        updated_at: now
+      ]
+    )
+
+    :ok
   end
 
   defp advance_article_items(article_id) do

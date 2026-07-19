@@ -216,7 +216,8 @@ defmodule Newspaper.Extraction do
              input_snapshot: input,
              output_snapshot: result,
              debug_metadata: result["debug_metadata"] || %{}
-           }) do
+           }),
+         :ok <- maybe_skip_downstream_steps(article, result) do
       create_failure(run, attempt, result["failure_kind"], result["message"], result["retryable"])
 
       Operations.finish_run(run, "failed", %{
@@ -250,6 +251,19 @@ defmodule Newspaper.Extraction do
 
     result
   end
+
+  defp maybe_skip_downstream_steps(article, %{
+         "failure_kind" => "insufficient_content",
+         "retryable" => false
+       }) do
+    Processing.skip_article_steps(
+      article.id,
+      "digestion",
+      "Skipped because no usable article content was extracted"
+    )
+  end
+
+  defp maybe_skip_downstream_steps(_article, _result), do: :ok
 
   defp create_failure(run, attempt, failure_kind, message, retryable) do
     Operations.create_failure(%{

@@ -12,10 +12,11 @@ defmodule Newspaper.ExtractionTest do
 
   alias Newspaper.Extraction
   alias Newspaper.Intake
+  alias Newspaper.Operations
   alias Newspaper.Operations.Failure
   alias Newspaper.Pipeline
   alias Newspaper.Processing
-  alias Newspaper.Processing.PipelineStepAttempt
+  alias Newspaper.Processing.{GeneratedFeedItemStep, PipelineStepAttempt}
   alias Newspaper.Publishing
   alias Newspaper.Publishing.GeneratedFeedItem
   alias Newspaper.Repo
@@ -418,6 +419,104 @@ defmodule Newspaper.ExtractionTest do
     policy = Repo.one!(SiteExtractionPolicy)
     assert policy.minimum_implementation == "extraction.headless_browser"
     assert policy.last_successful_implementation == "extraction.headless_browser"
+  end
+
+  test "terminal insufficient content skips downstream digestion" do
+    article = create_article!("https://example.com/video-without-article-copy")
+
+    worker =
+      worker_script!("boilerplate-only", %{
+        schema_version: 1,
+        implementation: "extraction.simple_html",
+        status: "failed",
+        final_url: article.canonical_url,
+        failure_kind: "insufficient_content",
+        retryable: false,
+        message: "boilerplate_only",
+        quality: %{
+          "score" => 0,
+          "reason" => "boilerplate_only",
+          "content_length" => 0
+        },
+        debug_metadata: %{"content_length" => 0}
+      })
+
+    Application.put_env(:newspaper, :extractors, simple_html_command: worker)
+
+    settings = Operations.get_settings()
+
+    assert {:ok, _settings} =
+             Operations.update_settings(settings, %{ollama_model: "qwen3.6:27b"})
+
+    {:ok, feed} =
+      Publishing.create_generated_feed(%{
+        "title" => "Video reports",
+        "guid" => "feed_boilerplate_only_test",
+        "input_feed_ids" => [article.representative_raw_item.input_feed_id]
+      })
+
+    assert {:ok, _step} = Processing.create_extraction_step(feed)
+    assert {:ok, _step} = Processing.create_digest_step(feed)
+    assert {:ok, _run} = Pipeline.backfill_output_feed(feed.id, "test")
+
+    {:ok, policy} = Content.get_site_extraction_policy_for_url(article.canonical_url)
+
+    assert {:ok, _policy} =
+             Content.update_site_extraction_policy(policy, %{escalation_enabled: false})
+
+    extraction_attempt = Repo.one!(PipelineStepAttempt)
+    assert extraction_attempt.step_type == "extraction"
+    assert {:ok, extraction_attempt} = Extraction.execute_attempt(extraction_attempt.id)
+    assert extraction_attempt.status == "failed"
+
+    item_steps =
+      GeneratedFeedItemStep
+      |> order_by([step], asc: step.position)
+      |> Repo.all()
+
+    assert Enum.map(item_steps, &{&1.step_type, &1.status}) == [
+             {"extraction", "failed"},
+             {"digestion", "skipped"}
+           ]
+
+    digestion_step = Enum.find(item_steps, &(&1.step_type == "digestion"))
+
+    assert digestion_step.error_message ==
+             "Skipped because no usable article content was extracted"
+
+    refute Repo.exists?(
+             from attempt in PipelineStepAttempt, where: attempt.step_type == "digestion"
+           )
+
+    success_worker = worker_script!("recovered-article", success_payload())
+    Application.put_env(:newspaper, :extractors, simple_html_command: success_worker)
+
+    assert {:ok, 1} = Processing.enqueue_article(article.id, force: true)
+
+    retry_attempt =
+      PipelineStepAttempt
+      |> where([attempt], attempt.article_id == ^article.id and attempt.step_type == "extraction")
+      |> order_by([attempt], desc: attempt.id)
+      |> limit(1)
+      |> Repo.one!()
+
+    assert {:ok, retry_attempt} = Extraction.execute_attempt(retry_attempt.id)
+    assert retry_attempt.status == "succeeded"
+
+    item_steps =
+      GeneratedFeedItemStep
+      |> order_by([step], asc: step.position)
+      |> Repo.all()
+
+    assert Enum.map(item_steps, &{&1.step_type, &1.status}) == [
+             {"extraction", "succeeded"},
+             {"digestion", "queued"}
+           ]
+
+    assert Repo.exists?(
+             from attempt in PipelineStepAttempt,
+               where: attempt.article_id == ^article.id and attempt.step_type == "digestion"
+           )
   end
 
   test "recovers a stale article permalink through a same-site URL feed GUID" do
