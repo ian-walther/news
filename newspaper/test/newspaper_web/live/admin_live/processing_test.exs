@@ -70,6 +70,23 @@ defmodule NewspaperWeb.AdminLive.ProcessingTest do
     assert has_element?(view, "#processing-summary", "Queued next")
   end
 
+  test "renders completed recovered attempts without a start timestamp", %{conn: conn} do
+    %{digestion: digestion} = processing_fixture!()
+
+    digestion
+    |> PipelineStepAttempt.changeset(%{
+      status: "succeeded",
+      started_at: nil,
+      finished_at: ~U[2026-07-19 20:18:36Z],
+      error_message: "Application restarted while attempt was running"
+    })
+    |> Repo.update!()
+
+    {:ok, view, _html} = live(conn, ~p"/processing")
+
+    assert has_element?(view, "#recent-attempt-#{digestion.id}", "Duration unavailable")
+  end
+
   defp processing_fixture! do
     {:ok, input_feed} =
       Intake.create_input_feed(%{

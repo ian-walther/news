@@ -71,6 +71,8 @@ defmodule NewspaperWeb.AdminLive.Format do
 
   def status_label(value), do: humanize(value)
 
+  def duration(%{started_at: nil}), do: "Duration unavailable"
+
   def duration(%{started_at: started_at, finished_at: finished_at}) do
     finished_at = finished_at || DateTime.utc_now()
     seconds = max(DateTime.diff(finished_at, started_at, :second), 0)
