@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <title>A Useful Article With An Injected Player</title>
+    <meta name="author" content="By Casey Example">
+  </head>
+  <body>
+    <article>
+      <h1>A Useful Article With An Injected Player</h1>
+      <p>
+        This opening paragraph contains the actual reporting that belongs in the extracted article.
+        It explains the subject clearly, includes enough detail for Readability, and should remain
+        untouched when an unrelated promotional player is removed from the middle of the story.
+      </p>
+      <p>
+        The second paragraph continues the editorial narrative with useful context. The cleanup pass
+        must preserve ordinary prose before and after the injected module rather than treating the
+        whole surrounding article section as disposable media chrome.
+      </p>
+      <div class="code-block code-block-2" style="margin: 8px 0; clear: both;">
+        <img
+          class="alignnone wp-image-41981 size-large"
+          src="https://images.example.com/vidframe_min_top1.png"
+          alt="Vidframe Min Top"
+          width="800"
+          height="26"
+        >
+        <script>
+          (function (d, s, n) {
+            const js = d.createElement(s);
+            js.className = n;
+            js.src = "//player.ex.co/player/example-player";
+            d.head.appendChild(js);
+          }(document, "script", "exco-player"));
+        </script>
+        <div id="example-player"></div>
+        <img
+          class="alignnone wp-image-41980 size-large"
+          src="https://images.example.com/vidframe_min_bottom1.png"
+          alt="Vidframe Min Bottom"
+          width="800"
+          height="26"
+        >
+      </div>
+      <blockquote>
+        <p>This quoted material is part of the article and must survive extraction.</p>
+      </blockquote>
+      <p>
+        This paragraph resumes the story after the promotional insertion. It is normal article prose,
+        not a caption or player instruction, and retaining it proves that cleanup is scoped narrowly.
+      </p>
+      <p>
+        <iframe
+          title="An embedded report"
+          width="800"
+          height="450"
+          src="https://www.youtube.com/embed/example-video"
+        ></iframe>
+      </p>
+      <p>
+        (<a href="https://youtu.be/example-video">Here's a link</a> if the video embed above gives you
+        trouble)
+      </p>
+      <figure>
+        <img
+          src="https://images.example.com/editorial-photo.jpg"
+          alt="A legitimate editorial photograph"
+          width="1200"
+          height="800"
+        >
+        <figcaption>A legitimate editorial photograph</figcaption>
+      </figure>
+      <p>
+        The closing paragraph contains more substantive reporting and completes the article. It should
+        remain adjacent to the legitimate figure after all executable media and decorative player
+        framing have been discarded.
+      </p>
+    </article>
+  </body>
+</html>

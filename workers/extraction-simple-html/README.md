@@ -2,7 +2,7 @@
 
 Direct HTML article extraction executable for Newspaper.
 
-Readable HTML is sanitized before it leaves the worker. Relative article links and image URLs are resolved against the final fetched URL so the stored fragment can be rendered by Newspaper without publisher CSS or active page content.
+Readable HTML is sanitized before it leaves the worker. Executable media embeds, low-prose player wrappers, decorative player chrome, and explicit embed-fallback links are removed before Readability while ordinary article figures remain intact. Relative article links and image URLs are resolved against the final fetched URL so the stored fragment can be rendered by Newspaper without publisher CSS or active page content. Extraction quality and debug metadata report removed embedded-media node and character counts for auditing.
 
 This worker is the first and cheapest extraction strategy in the app-owned escalation chain:
 

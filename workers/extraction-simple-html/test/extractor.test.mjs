@@ -61,6 +61,20 @@ test("extractFromRequest reports no content as a non-error outcome", async () =>
   assert.equal(result.retryable, undefined);
 });
 
+test("extractFromRequest removes embedded-player chrome without removing article media", async () => {
+  const html = await readFixture("article-with-promotional-video-embed.html");
+  const result = await extractFixture(html, "https://www.theautopian.com/useful-story/");
+
+  assert.equal(result.status, "ok");
+  assert.match(result.content_text, /opening paragraph contains the actual reporting/);
+  assert.match(result.content_text, /closing paragraph contains more substantive reporting/);
+  assert.match(result.content_html, /editorial-photo\.jpg/);
+  assert.match(result.content_html, /legitimate editorial photograph/i);
+  assert.doesNotMatch(result.content_html, /vidframe|example-player|youtube\.com|youtu\.be/i);
+  assert.doesNotMatch(result.content_text, /video embed above gives you trouble/i);
+  assert.ok(result.debug_metadata.removed_embedded_media_nodes >= 2);
+});
+
 for (const fixture of [
   "footer-only-racer.html",
   "footer-only-publisher.html",

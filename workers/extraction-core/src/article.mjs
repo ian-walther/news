@@ -45,6 +45,38 @@ const STRONG_BOILERPLATE_PATTERNS = [
   /\bnot to be redistributed, copied, or modified\b/i
 ];
 
+const EMBED_WRAPPER_SELECTOR = [
+  "figure",
+  "p",
+  "[class~='code-block']",
+  "[class*='embed' i]",
+  "[class*='video' i]",
+  "[class*='player' i]",
+  "[data-testid*='embed' i]",
+  "[data-testid*='video' i]",
+  "[data-testid*='player' i]"
+].join(",");
+
+const EMBED_SCRIPT_PATTERNS = [
+  /player\.ex\.co/i,
+  /youtube(?:-nocookie)?\.com/i,
+  /player\.vimeo\.com/i,
+  /jwplayer/i,
+  /brightcove/i,
+  /dailymotion/i,
+  /wistia/i
+];
+
+const EMBED_FALLBACK_PATTERNS = [
+  /\bif (?:the )?(?:video|player|embed).{0,100}(?:trouble|doesn['\u2019]?t work|won['\u2019]?t play)\b/i,
+  /\b(?:watch|view) (?:this|the)?\s*(?:video|clip) (?:here|on youtube)\b/i
+];
+
+const VIDEO_PROVIDER_PATTERN =
+  /(?:youtu\.be|youtube(?:-nocookie)?\.com|vimeo\.com|ex\.co|dailymotion\.com|wistia\.)/i;
+
+const PLAYER_CHROME_PATTERN = /(?:vidframe|video[-_ ]?frame|player[-_ ]?(?:frame|chrome))/i;
+
 export function validateRequest(request, implementation, startedAt) {
   const schemaVersion = request?.schema_version ?? 1;
 
@@ -101,6 +133,8 @@ export function extractArticleFromHtml({
         candidate_content_length: quality.candidate_content_length,
         removed_boilerplate_characters: quality.removed_boilerplate_characters,
         removed_boilerplate_nodes: quality.removed_boilerplate_nodes,
+        removed_embedded_media_characters: quality.removed_embedded_media_characters,
+        removed_embedded_media_nodes: quality.removed_embedded_media_nodes,
         title_present: Boolean(parsed.title)
       }
     });
@@ -121,6 +155,8 @@ export function extractArticleFromHtml({
     quality,
     debug_metadata: {
       ...debugMetadata,
+      removed_embedded_media_characters: quality.removed_embedded_media_characters,
+      removed_embedded_media_nodes: quality.removed_embedded_media_nodes,
       elapsed_ms: elapsedMs(startedAt)
     }
   };
@@ -178,14 +214,16 @@ export function parseReadableArticle(html, url) {
   const virtualConsole = new VirtualConsole();
   const dom = new JSDOM(html, { url, virtualConsole });
   const structuralCleanup = removeStructuralBoilerplate(dom.window.document);
+  const embeddedMediaCleanup = removeEmbeddedMedia(dom.window.document);
+  const initialCleanup = mergeCleanup(structuralCleanup, embeddedMediaCleanup);
   const reader = new Readability(dom.window.document, { keepClasses: false });
   const article = reader.parse();
 
   if (!article) {
-    return emptyArticle(structuralCleanup);
+    return emptyArticle(initialCleanup);
   }
 
-  return cleanReadableArticle(article, url, structuralCleanup);
+  return cleanReadableArticle(article, url, initialCleanup);
 }
 
 export function failure(attrs) {
@@ -338,7 +376,9 @@ function scoreQuality(contentText, parsed, minimumTextLength) {
     content_length: contentLength,
     candidate_content_length: cleanup.candidateContentLength ?? contentLength,
     removed_boilerplate_characters: cleanup.removedCharacters ?? 0,
-    removed_boilerplate_nodes: cleanup.removedNodes ?? 0
+    removed_boilerplate_nodes: cleanup.removedNodes ?? 0,
+    removed_embedded_media_characters: cleanup.removedEmbeddedMediaCharacters ?? 0,
+    removed_embedded_media_nodes: cleanup.removedEmbeddedMediaNodes ?? 0
   };
 
   if (!parsed.content || contentLength === 0) {
@@ -371,6 +411,7 @@ function cleanReadableArticle(article, url, structuralCleanup) {
     url,
     virtualConsole
   });
+  const embeddedMediaCleanup = removeEmbeddedMedia(dom.window.document);
   const semanticCleanup = removeSemanticBoilerplate(dom.window.document);
   const content = dom.window.document.body.innerHTML.trim();
   const cleanedText = normalizeText(dom.window.document.body.textContent);
@@ -387,8 +428,19 @@ function cleanReadableArticle(article, url, structuralCleanup) {
     length: textContent.length,
     newspaperCleanup: {
       candidateContentLength,
-      removedCharacters: structuralCleanup.removedCharacters + semanticCleanup.removedCharacters,
-      removedNodes: structuralCleanup.removedNodes + semanticCleanup.removedNodes,
+      removedCharacters:
+        structuralCleanup.removedCharacters +
+        embeddedMediaCleanup.removedCharacters +
+        semanticCleanup.removedCharacters,
+      removedNodes:
+        structuralCleanup.removedNodes +
+        embeddedMediaCleanup.removedNodes +
+        semanticCleanup.removedNodes,
+      removedEmbeddedMediaCharacters:
+        structuralCleanup.removedEmbeddedMediaCharacters +
+        embeddedMediaCleanup.removedCharacters,
+      removedEmbeddedMediaNodes:
+        structuralCleanup.removedEmbeddedMediaNodes + embeddedMediaCleanup.removedNodes,
       boilerplateOnly
     }
   };
@@ -407,6 +459,8 @@ function emptyArticle(cleanup) {
       candidateContentLength: cleanup.removedCharacters,
       removedCharacters: cleanup.removedCharacters,
       removedNodes: cleanup.removedNodes,
+      removedEmbeddedMediaCharacters: cleanup.removedEmbeddedMediaCharacters,
+      removedEmbeddedMediaNodes: cleanup.removedEmbeddedMediaNodes,
       boilerplateOnly: cleanup.removedNodes > 0
     }
   };
@@ -414,6 +468,20 @@ function emptyArticle(cleanup) {
 
 function removeStructuralBoilerplate(document) {
   return removeNodes(document.querySelectorAll(STRUCTURAL_BOILERPLATE_SELECTORS.join(",")));
+}
+
+function removeEmbeddedMedia(document) {
+  const interactiveEmbeds = [
+    ...document.querySelectorAll("iframe, video, audio, object, embed"),
+    ...[...document.querySelectorAll("script")].filter(embeddedMediaScript)
+  ];
+  const embedRoots = interactiveEmbeds.map(removableEmbedRoot);
+  const playerChromeRoots = [...document.querySelectorAll("img")]
+    .filter(playerChromeImage)
+    .map(removableEmbedRoot);
+  const fallbackNodes = [...document.querySelectorAll("p, li")].filter(embedFallbackNode);
+
+  return removeNodes([...embedRoots, ...playerChromeRoots, ...fallbackNodes]);
 }
 
 function removeSemanticBoilerplate(document) {
@@ -475,6 +543,48 @@ function removeNodes(nodes) {
   }
 
   return { removedCharacters, removedNodes };
+}
+
+function removableEmbedRoot(node) {
+  const wrapper = node.parentElement?.closest(EMBED_WRAPPER_SELECTOR);
+
+  if (!wrapper || normalizeText(wrapper.textContent).length > 500) {
+    return node;
+  }
+
+  return wrapper;
+}
+
+function embeddedMediaScript(script) {
+  const signature = [script.src, script.className, script.id, script.textContent]
+    .filter(Boolean)
+    .join(" ");
+
+  return EMBED_SCRIPT_PATTERNS.some(pattern => pattern.test(signature));
+}
+
+function playerChromeImage(image) {
+  const signature = [image.src, image.alt, image.className].filter(Boolean).join(" ");
+  return PLAYER_CHROME_PATTERN.test(signature);
+}
+
+function embedFallbackNode(node) {
+  const text = normalizeText(node.textContent);
+
+  if (!text || text.length > 300 || !EMBED_FALLBACK_PATTERNS.some(pattern => pattern.test(text))) {
+    return false;
+  }
+
+  return [...node.querySelectorAll("a")].some(link => VIDEO_PROVIDER_PATTERN.test(link.href));
+}
+
+function mergeCleanup(structuralCleanup, embeddedMediaCleanup) {
+  return {
+    removedCharacters: structuralCleanup.removedCharacters + embeddedMediaCleanup.removedCharacters,
+    removedNodes: structuralCleanup.removedNodes + embeddedMediaCleanup.removedNodes,
+    removedEmbeddedMediaCharacters: embeddedMediaCleanup.removedCharacters,
+    removedEmbeddedMediaNodes: embeddedMediaCleanup.removedNodes
+  };
 }
 
 function matchingPatternCount(text, patterns) {
