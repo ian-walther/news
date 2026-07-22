@@ -16,7 +16,14 @@ defmodule Newspaper.ExtractionTest do
   alias Newspaper.Operations.Failure
   alias Newspaper.Pipeline
   alias Newspaper.Processing
-  alias Newspaper.Processing.{GeneratedFeedItemStep, PipelineStepAttempt}
+
+  alias Newspaper.Processing.{
+    Dispatcher,
+    GeneratedFeedItemStep,
+    PipelineStepAttempt,
+    PriorityQueue
+  }
+
   alias Newspaper.Publishing
   alias Newspaper.Publishing.GeneratedFeedItem
   alias Newspaper.Repo
@@ -139,6 +146,93 @@ defmodule Newspaper.ExtractionTest do
     assert {:ok, retry_attempt} = Pipeline.retry_failure(failure.id, "test_retry")
     assert retry_attempt.status == "queued"
     assert Repo.get!(Failure, failure.id).retry_count == 1
+  end
+
+  test "dispatcher durably queues an automatic retry after a rate limit" do
+    article = create_article!("https://www.theautopian.com/automatic-retry-example")
+    worker = worker_script!("automatic-retry-rate-limit", rate_limited_payload())
+    Application.put_env(:newspaper, :extractors, simple_html_command: worker)
+    configure_extraction!(article, "feed_automatic_rate_limit_retry_test")
+
+    first_attempt = Repo.one!(PipelineStepAttempt)
+    assert {:ok, failed_attempt} = Extraction.execute_attempt(first_attempt.id)
+    assert failed_attempt.status == "failed"
+
+    site_host = Content.site_host(article.canonical_url)
+
+    dispatcher_state = %{
+      hosts: %{
+        site_host => %{
+          queue: PriorityQueue.new(),
+          running?: true,
+          timer: nil,
+          timer_token: nil
+        }
+      }
+    }
+
+    assert {:noreply, _state} =
+             Dispatcher.handle_cast(
+               {:finished, site_host, {:ok, failed_attempt}},
+               dispatcher_state
+             )
+
+    attempts =
+      PipelineStepAttempt
+      |> where([attempt], attempt.article_id == ^article.id)
+      |> order_by([attempt], asc: attempt.id)
+      |> Repo.all()
+
+    assert Enum.map(attempts, & &1.status) == ["failed", "queued"]
+    assert Repo.get!(Article, article.id).extraction_status == "queued"
+  end
+
+  test "dispatcher recovery requeues an already stranded rate limit once" do
+    article = create_article!("https://www.theautopian.com/stranded-rate-limit-example")
+    worker = worker_script!("stranded-rate-limit", rate_limited_payload())
+    Application.put_env(:newspaper, :extractors, simple_html_command: worker)
+    configure_extraction!(article, "feed_stranded_rate_limit_test")
+
+    first_attempt = Repo.one!(PipelineStepAttempt)
+    assert {:ok, failed_attempt} = Extraction.execute_attempt(first_attempt.id)
+    assert failed_attempt.status == "failed"
+
+    assert Processing.requeue_stranded_rate_limits() == 1
+    assert Processing.requeue_stranded_rate_limits() == 0
+
+    attempts =
+      PipelineStepAttempt
+      |> where([attempt], attempt.article_id == ^article.id)
+      |> order_by([attempt], asc: attempt.id)
+      |> Repo.all()
+
+    assert Enum.map(attempts, & &1.status) == ["failed", "queued"]
+  end
+
+  test "automatic rate limit retries stop after a finite budget" do
+    article = create_article!("https://www.theautopian.com/retry-budget-example")
+    worker = worker_script!("rate-limit-retry-budget", rate_limited_payload())
+    Application.put_env(:newspaper, :extractors, simple_html_command: worker)
+    configure_extraction!(article, "feed_rate_limit_retry_budget_test")
+
+    {:ok, policy} = Content.get_site_extraction_policy_for_url(article.canonical_url)
+    {:ok, _policy} = Content.update_site_extraction_policy(policy, %{escalation_enabled: false})
+
+    first_attempt = Repo.one!(PipelineStepAttempt)
+
+    final_attempt =
+      Enum.reduce(1..3, first_attempt, fn _retry_number, attempt ->
+        assert {:ok, failed_attempt} = Extraction.execute_attempt(attempt.id)
+        assert {:ok, retry_attempt} = Processing.schedule_automatic_retry(failed_attempt)
+        assert retry_attempt.status == "queued"
+        retry_attempt
+      end)
+
+    assert {:ok, failed_attempt} = Extraction.execute_attempt(final_attempt.id)
+    assert {:ok, nil} = Processing.schedule_automatic_retry(failed_attempt)
+
+    assert Repo.aggregate(PipelineStepAttempt, :count) == 4
+    assert Repo.get!(Article, article.id).extraction_status == "failed"
   end
 
   test "repeated headerless simple rate limits escalate to headless and learn it" do
@@ -610,7 +704,9 @@ defmodule Newspaper.ExtractionTest do
     worker =
       worker_script!(
         "forced-rate-limit",
-        rate_limited_payload(article.canonical_url),
+        article.canonical_url
+        |> rate_limited_payload()
+        |> Map.put(:retryable, false),
         "sleep 0.1"
       )
 
@@ -635,6 +731,7 @@ defmodule Newspaper.ExtractionTest do
 
     ref = Process.monitor(pid)
     assert_receive {:DOWN, ^ref, :process, ^pid, :normal}, 2_000
+    _ = :sys.get_state(Newspaper.Processing.Dispatcher)
 
     attempt = Repo.get!(PipelineStepAttempt, attempt.id)
     assert attempt.status == "failed"

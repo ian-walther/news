@@ -1,6 +1,8 @@
 defmodule Newspaper.Processing do
   import Ecto.Query
 
+  @automatic_rate_limit_retries 3
+
   alias Newspaper.Content
   alias Newspaper.Content.{Article, ArticleDigest, ArticleExtraction}
   alias Newspaper.Digestion
@@ -768,16 +770,46 @@ defmodule Newspaper.Processing do
   def retry_attempt(attempt_id) do
     attempt = get_attempt!(attempt_id)
 
-    if attempt.generated_feed_item do
-      request_item_step(attempt.generated_feed_item, attempt.step_type, force: true)
-      |> case do
-        {:ok, [retry_attempt | _rest]} -> {:ok, retry_attempt}
-        {:ok, []} -> {:error, :step_not_available}
-        {:error, reason} -> {:error, reason}
+    attempt
+    |> retry_items()
+    |> Enum.reduce_while({:ok, []}, fn item, {:ok, attempts} ->
+      case request_item_step(item, attempt.step_type, force: true) do
+        {:ok, item_attempts} -> {:cont, {:ok, item_attempts ++ attempts}}
+        {:error, reason} -> {:halt, {:error, reason}}
       end
-    else
-      {:error, :step_not_available}
+    end)
+    |> case do
+      {:ok, attempts} ->
+        case attempts |> Enum.uniq_by(& &1.id) |> List.first() do
+          %PipelineStepAttempt{} = retry_attempt -> {:ok, retry_attempt}
+          nil -> {:error, :step_not_available}
+        end
+
+      {:error, reason} ->
+        {:error, reason}
     end
+  end
+
+  def schedule_automatic_retry(%PipelineStepAttempt{} = attempt) do
+    attempt = Repo.get!(PipelineStepAttempt, attempt.id)
+
+    if automatic_rate_limit_retry?(attempt) do
+      retry_attempt(attempt.id)
+    else
+      {:ok, nil}
+    end
+  end
+
+  def requeue_stranded_rate_limits(step_type \\ "extraction") do
+    step_type
+    |> automatic_retry_candidates()
+    |> Enum.reduce(0, fn attempt, count ->
+      case schedule_automatic_retry(attempt) do
+        {:ok, %PipelineStepAttempt{}} -> count + 1
+        {:ok, nil} -> count
+        {:error, _reason} -> count
+      end
+    end)
   end
 
   def enqueue(
@@ -1323,6 +1355,73 @@ defmodule Newspaper.Processing do
   end
 
   defp refresh_attempt_batch(result), do: result
+
+  defp retry_items(%PipelineStepAttempt{} = attempt) do
+    affected_item_ids =
+      GeneratedFeedItemStep
+      |> where([item_step], item_step.latest_attempt_id == ^attempt.id)
+      |> select([item_step], item_step.generated_feed_item_id)
+      |> Repo.all()
+
+    item_ids =
+      [attempt.generated_feed_item_id | affected_item_ids]
+      |> Enum.reject(&is_nil/1)
+      |> Enum.uniq()
+
+    GeneratedFeedItem
+    |> where([item], item.id in ^item_ids)
+    |> preload([:generated_feed, article: [:extraction, :digests]])
+    |> Repo.all()
+  end
+
+  defp automatic_retry_candidates(step_type) do
+    latest_attempt_ids =
+      PipelineStepAttempt
+      |> where([attempt], attempt.step_type == ^step_type)
+      |> group_by([attempt], attempt.article_id)
+      |> select([attempt], max(attempt.id))
+
+    PipelineStepAttempt
+    |> join(:inner, [attempt], article in Article, on: article.id == attempt.article_id)
+    |> where(
+      [attempt, article],
+      attempt.id in subquery(latest_attempt_ids) and attempt.status == "failed" and
+        attempt.retryable == true and attempt.failure_kind == "rate_limited" and
+        article.extraction_status == "failed"
+    )
+    |> order_by([attempt, _article], asc: attempt.inserted_at, asc: attempt.id)
+    |> Repo.all()
+  end
+
+  defp automatic_rate_limit_retry?(%PipelineStepAttempt{} = attempt) do
+    attempt.step_type == "extraction" and attempt.status == "failed" and attempt.retryable and
+      attempt.failure_kind == "rate_limited" and
+      rate_limit_failure_streak(attempt) <= @automatic_rate_limit_retries
+  end
+
+  defp rate_limit_failure_streak(%PipelineStepAttempt{} = attempt) do
+    last_successful_attempt_id =
+      PipelineStepAttempt
+      |> where(
+        [candidate],
+        candidate.article_id == ^attempt.article_id and
+          candidate.step_type == ^attempt.step_type and candidate.id < ^attempt.id and
+          candidate.status in ["succeeded", "skipped"]
+      )
+      |> select([candidate], max(candidate.id))
+      |> Repo.one()
+      |> then(&(&1 || 0))
+
+    PipelineStepAttempt
+    |> where(
+      [candidate],
+      candidate.article_id == ^attempt.article_id and
+        candidate.step_type == ^attempt.step_type and candidate.id > ^last_successful_attempt_id and
+        candidate.id <= ^attempt.id and candidate.status == "failed" and
+        candidate.retryable == true and candidate.failure_kind == "rate_limited"
+    )
+    |> Repo.aggregate(:count, :id)
+  end
 
   defp refresh_active_batch_runs do
     PipelineStepAttempt

@@ -1,6 +1,8 @@
 defmodule Newspaper.Processing.Dispatcher do
   use GenServer
 
+  require Logger
+
   alias Newspaper.Content
   alias Newspaper.Extraction
   alias Newspaper.Processing
@@ -41,6 +43,7 @@ defmodule Newspaper.Processing.Dispatcher do
   @impl true
   def handle_info(:recover, state) do
     Processing.requeue_interrupted_attempts("extraction")
+    Processing.requeue_stranded_rate_limits("extraction")
 
     state =
       Processing.list_queued_attempts("extraction")
@@ -96,7 +99,9 @@ defmodule Newspaper.Processing.Dispatcher do
     {:noreply, enqueue_attempt(state, attempt_id, site_host, priority)}
   end
 
-  def handle_cast({:finished, site_host, _result}, state) do
+  def handle_cast({:finished, site_host, result}, state) do
+    schedule_automatic_retry(result)
+
     host_state = Map.fetch!(state.hosts, site_host)
     state = put_host(state, site_host, %{host_state | running?: false})
     {:noreply, schedule_host(state, site_host)}
@@ -177,4 +182,16 @@ defmodule Newspaper.Processing.Dispatcher do
   defp put_host(state, site_host, host_state) do
     put_in(state, [:hosts, site_host], host_state)
   end
+
+  defp schedule_automatic_retry({:ok, attempt}) do
+    case Processing.schedule_automatic_retry(attempt) do
+      {:ok, _retry_attempt} ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning("Could not schedule automatic extraction retry: #{inspect(reason)}")
+    end
+  end
+
+  defp schedule_automatic_retry(_result), do: :ok
 end
