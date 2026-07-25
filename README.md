@@ -29,9 +29,19 @@ scripts/precommit.sh
 
 ## Production
 
-The first production target is the `news` host on the local network. The public
-app URL is `http://news.home`, served through a host-networked nginx container
-on the same machine. Phoenix still listens on port `4000` behind nginx.
+The first production target is the `news` host on the local network. The
+operator-facing app URL is `http://news.home`, served through a host-networked
+nginx container on the same machine. Phoenix still listens on port `4000`
+behind nginx.
+
+Newspaper is a trusted-LAN application. The network perimeter is its access
+control boundary: the app does not provide application authentication and is
+not intended to be exposed directly to the public Internet. Remote clients
+must first join the private network through a VPN. Plain HTTP and direct access
+to Phoenix on port `4000` are acceptable within that trusted network; nginx
+provides a stable hostname and reverse-proxy entry point, not an additional
+authentication boundary. Any future public deployment would require a
+separate security design.
 
 Bootstrap the remote git checkout and environment once after pushing this repo
 to GitHub:

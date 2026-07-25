@@ -168,6 +168,28 @@ Host Chrome should remain outside Docker for persistent auth and interactive deb
 
 See `planning/prod-topology.md` for the current production topology decision.
 
+## Security Boundary
+
+Newspaper is designed for an internal trusted network, not direct public
+Internet exposure. Network reachability is the authorization boundary.
+
+- The application does not need its own authentication layer for the intended
+  deployment.
+- Remote access should enter the private network through a VPN before reaching
+  Newspaper.
+- Plain HTTP is acceptable inside the trusted network.
+- The Phoenix port may remain reachable directly on the trusted LAN. nginx
+  provides internal DNS routing and a stable entry point; it is not the
+  application's security boundary.
+- Public port forwarding, public reverse-proxy exposure, and operation on an
+  untrusted network are unsupported.
+
+If public access becomes a product requirement, treat it as a separate
+security architecture project covering authentication, authorization, TLS,
+session security, proxy trust, rate limiting, and exposure of administrative
+and hosted-article surfaces. Do not imply that the internal deployment model
+is suitable for public hosting without that work.
+
 ## Home Assistant And MQTT
 
 Home Assistant and MQTT belong in the project, but not in the immediate pipeline/extraction work.

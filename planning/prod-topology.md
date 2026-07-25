@@ -23,6 +23,25 @@ N150 Ubuntu Server
     Postgres, initially
 ```
 
+## Network And Access Boundary
+
+The production deployment is intentionally internal-only. The trusted LAN is
+the application's access-control boundary, and remote users must connect to
+that LAN through a VPN before accessing Newspaper.
+
+- Do not expose Newspaper through public DNS, public port forwarding, or a
+  public reverse proxy.
+- Application-level authentication and public-facing TLS termination are out
+  of scope for this topology.
+- Internal plain HTTP is acceptable.
+- `http://news.home` through nginx is the normal operator entry point.
+- Phoenix port `4000` may also remain reachable directly from the trusted LAN
+  for operation and debugging.
+- nginx provides stable internal naming and routing, not a security boundary.
+
+Any future requirement for direct public access invalidates these assumptions
+and requires a separate security design before deployment.
+
 ## Persistent Desktop Session
 
 The host should run a persistent real desktop session. Remote access should view and control that existing session rather than creating a new session per connection.
@@ -89,7 +108,7 @@ Security requirements:
 - Bind CDP narrowly, ideally to localhost.
 - Expose CDP to containers only through an intentionally restricted path.
 - Do not expose CDP broadly on the LAN.
-- Restrict VNC to trusted LAN/VPN access.
+- Restrict VNC to trusted LAN or VPN access.
 
 ## Application Stack
 
