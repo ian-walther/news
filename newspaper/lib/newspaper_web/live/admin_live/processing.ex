@@ -39,9 +39,17 @@ defmodule NewspaperWeb.AdminLive.Processing do
     {:noreply, push_patch(socket, to: processing_path(filters))}
   end
 
-  def handle_info({:newspaper_data_changed, _event}, socket) do
+  def handle_info({:newspaper_data_changed, event}, socket)
+      when event in [
+             :processing_changed,
+             :operations_changed,
+             :publishing_changed,
+             :site_extraction_policies_changed
+           ] do
     {:noreply, assign_data(socket, socket.assigns.filters)}
   end
+
+  def handle_info({:newspaper_data_changed, _event}, socket), do: {:noreply, socket}
 
   def render(assigns) do
     ~H"""
@@ -253,11 +261,14 @@ defmodule NewspaperWeb.AdminLive.Processing do
       </div>
       <div class="min-w-0">
         <div class="flex flex-wrap items-center gap-2">
-          <span class={status_badge_class(@entry.attempt.status)}>
+          <span class={Format.status_badge_class(@entry.attempt.status)}>
             {Format.status_label(@entry.attempt.status)}
           </span>
           <span class="text-xs text-base-content/50">{Format.duration(@entry.attempt)}</span>
           <span :if={@entry.host} class="text-xs text-base-content/50">{@entry.host}</span>
+          <span :if={retry_label(@entry.attempt)} class="badge badge-warning badge-soft badge-sm">
+            {retry_label(@entry.attempt)}
+          </span>
         </div>
         <p class="mt-2 truncate font-medium">{@entry.attempt.article.title || "Untitled"}</p>
         <p class="mt-1 truncate text-sm text-base-content/55">{feed_titles(@entry)}</p>
@@ -312,7 +323,7 @@ defmodule NewspaperWeb.AdminLive.Processing do
       </div>
       <div class="min-w-0">
         <div class="flex flex-wrap items-center gap-2">
-          <span class={status_badge_class(@entry.run.status)}>
+          <span class={Format.status_badge_class(@entry.run.status)}>
             {Format.status_label(@entry.run.status)}
           </span>
           <span class="text-xs text-base-content/50">{Format.duration(@entry.run)}</span>
@@ -370,6 +381,9 @@ defmodule NewspaperWeb.AdminLive.Processing do
         <div class="mt-2 flex flex-wrap gap-2 text-xs text-base-content/45">
           <span>
             Queued {Format.duration(%{started_at: @entry.attempt.inserted_at, finished_at: nil})}
+          </span>
+          <span :if={retry_label(@entry.attempt)} class="text-warning">
+            {retry_label(@entry.attempt)}
           </span>
           <span :if={@entry.wait_label} class="text-warning">{@entry.wait_label}</span>
         </div>
@@ -679,16 +693,7 @@ defmodule NewspaperWeb.AdminLive.Processing do
     ~p"/processing?#{params}"
   end
 
-  defp parse_id(nil), do: nil
-  defp parse_id(""), do: nil
-  defp parse_id(id) when is_integer(id), do: id
-
-  defp parse_id(id) do
-    case Integer.parse(id) do
-      {value, ""} when value > 0 -> value
-      _ -> nil
-    end
-  end
+  defp parse_id(id), do: Format.parse_id(id)
 
   defp allowed(value, allowed, fallback), do: if(value in allowed, do: value, else: fallback)
   defp stage_step_type(stage) when stage in ["extraction", "digestion"], do: stage
@@ -725,6 +730,25 @@ defmodule NewspaperWeb.AdminLive.Processing do
     get_in(attempt.input_snapshot, ["config", "model"]) || attempt.implementation_key
   end
 
+  defp retry_label(%{input_snapshot: %{"request" => request}}) do
+    case request do
+      %{
+        "retry_origin" => "automatic_rate_limit",
+        "retry_number" => number,
+        "retry_limit" => limit
+      } ->
+        "Automatic retry #{number} of #{limit}"
+
+      %{"retry_origin" => "manual"} ->
+        "Manual retry"
+
+      _request ->
+        nil
+    end
+  end
+
+  defp retry_label(_attempt), do: nil
+
   defp operation_label(%{run_type: "pipeline_batch", related: %{"step_type" => step_type}}),
     do: "#{stage_label(step_type)} batch"
 
@@ -737,10 +761,4 @@ defmodule NewspaperWeb.AdminLive.Processing do
   defp stage_badge_class("extraction"), do: "badge badge-info badge-soft"
   defp stage_badge_class("digestion"), do: "badge badge-secondary badge-soft"
   defp stage_badge_class(_stage), do: "badge badge-ghost"
-
-  defp status_badge_class("succeeded"), do: "badge badge-success badge-soft"
-  defp status_badge_class("failed"), do: "badge badge-error badge-soft"
-  defp status_badge_class("running"), do: "badge badge-info badge-soft"
-  defp status_badge_class("queued"), do: "badge badge-warning badge-soft"
-  defp status_badge_class(_status), do: "badge badge-ghost"
 end

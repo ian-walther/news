@@ -1,6 +1,8 @@
 defmodule Newspaper.Pipeline.Scheduler do
   use GenServer
 
+  require Logger
+
   alias Newspaper.Operations
   alias Newspaper.Pipeline
 
@@ -111,6 +113,12 @@ defmodule Newspaper.Pipeline.Scheduler do
   defp configured_interval_ms do
     Operations.get_settings().fetch_interval_minutes * 60_000
   rescue
-    _ -> @default_interval_ms
+    error ->
+      Logger.warning(
+        "Could not load feed scheduler settings; using the default interval: " <>
+          Exception.message(error)
+      )
+
+      @default_interval_ms
   end
 end

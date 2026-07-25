@@ -19,12 +19,12 @@ Configured upstream input feeds.
 - feed URL
 - display name
 - outlet/source name
-- intake group ID
+- optional intake group ID
 - optional default category/source metadata
 - enabled flag
-- auth requirement flag
 - fetch cadence
 - last fetch status
+- HTTP cache validators such as ETag and Last-Modified
 
 ### intake_groups
 
@@ -41,7 +41,7 @@ Aggregation and deduplication units for related input feeds.
 Items discovered from source feeds.
 
 - source ID
-- intake group ID
+- optional intake group ID copied from the source at discovery time
 - raw feed GUID
 - discovered URL
 - title
@@ -62,7 +62,7 @@ Items discovered from source feeds.
 
 Canonical article identity.
 
-- intake group ID for dedupe ownership
+- dedupe scope identifying either an intake group or an individual input feed
 - stable app-generated article identifier
 - canonical URL
 - resolved URL
@@ -70,9 +70,20 @@ Canonical article identity.
 - author
 - outlet
 - publication timestamp
-- dedupe key
+- primary dedupe key
 - extraction status
-- extracted content fields for later use
+- current extraction outcome metadata; extracted content itself belongs only to the extraction artifact
+
+### article_dedupe_keys
+
+All stable aliases that resolve to one canonical article within its intake boundary.
+
+- article ID
+- dedupe scope
+- normalized URL or feed-provided stable-ID key
+- unique constraint over scope and key
+
+Keeping every observed key allows an article first matched by URL to be found later by a stable ID, and vice versa, without changing its canonical identity.
 
 ### article_sources
 
@@ -155,7 +166,7 @@ Durable article entries selected from the article pool for each generated output
 Durable execution records for fetch, publish, extraction, classification, and bulk pipeline work. A bulk pipeline run is the parent operator-visible batch for its individual step attempts. A per-attempt execution run references its pipeline step attempt directly. One attempt may have multiple execution runs when interrupted work is recovered and executed again.
 
 - run type
-- trigger, such as manual/scheduled/system
+- trigger: `manual`, `scheduled`, `system`, `pipeline`, or `settings_change`
 - status
 - started timestamp
 - finished timestamp
@@ -170,7 +181,6 @@ Durable execution records for fetch, publish, extraction, classification, and bu
 Application-level settings.
 
 - global fetch interval minutes, default `5`
-- run history/debug logging enabled, default true
 - Ollama base URL, initially `http://desktop.home:11434`
 - globally selected Ollama article-digestion model
 

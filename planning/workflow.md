@@ -11,11 +11,11 @@ Use eager durable evaluation. Fetching and processing input feeds should create 
 ## Feed Flow
 
 ```text
-source enabled
+input feed enabled
   -> feed fetched
   -> raw item discovered
-  -> intake group resolved
-  -> URL canonicalized within intake group
+  -> intake boundary resolved (optional group, otherwise the input feed)
+  -> URL and feed stable ID canonicalized within that boundary
   -> article identity resolved into article pool
   -> source appearance recorded
   -> output feed eligibility determined
@@ -112,6 +112,8 @@ Examples:
 
 The model should support feed, extraction, digestion, filtering, rendering, and worker contract failures.
 
+Current extraction workers should report concrete observable outcomes such as rate limiting, missing pages, blocked responses, unsupported content types, timeouts, network failures, and no usable content. Semantic distinctions such as paywall, expired authentication, and JavaScript-required should be introduced only with deterministic detection from representative real pages. Digestion failures should distinguish configuration, model/HTTP, connection, and structured-output errors so retryability reflects the actual failure class.
+
 Re-rendering should remain an explicit application operation rather than live computation on each RSS request. Successful extraction or digestion should refresh affected snapshots, and saving output title, body, or link rendering policy should deliberately start a scoped re-render from app-owned artifacts.
 
 ## Configuration Changes
@@ -158,11 +160,19 @@ Run types to preserve or extend:
 - `backfill_output_feed`
 - `rerender_output_feed`
 
-Run records should include a trigger such as `manual`, `scheduled`, or `system`. This taxonomy is expected to change after real usage.
+Run triggers describe why work began:
+
+- `manual`: an operator explicitly requested the operation.
+- `scheduled`: the global feed timer requested collection.
+- `system`: a parent operation created an internal child run.
+- `pipeline`: a durable pipeline attempt started its execution run.
+- `settings_change`: saving rendering policy requested a scoped re-render.
+
+New trigger values should be added deliberately with matching Processing visibility and overview behavior.
 
 ### Dedupe / Canonicalize
 
-Dedupe/canonicalize resolves raw items into canonical article records and source appearances within intake groups.
+Dedupe/canonicalize resolves raw items into canonical article records and source appearances within an intake boundary: a related-feed group when configured, otherwise one input feed.
 
 ### Backfill
 

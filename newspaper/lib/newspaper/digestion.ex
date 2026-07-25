@@ -32,8 +32,10 @@ defmodule Newspaper.Digestion do
   end
 
   def input_fingerprint(%ArticleExtraction{} = extraction, model) when is_binary(model) do
+    {content, _truncated?} = model_content(extraction.content_text)
+
     [
-      extraction.content_text,
+      content,
       model,
       @implementation_key,
       @prompt_version,
@@ -45,7 +47,7 @@ defmodule Newspaper.Digestion do
   end
 
   def generate(%ArticleExtraction{} = extraction, settings) do
-    content = String.slice(extraction.content_text, 0, @max_input_characters)
+    {content, truncated?} = model_content(extraction.content_text)
 
     messages = [
       %{
@@ -72,15 +74,23 @@ defmodule Newspaper.Digestion do
          input_fingerprint: input_fingerprint(extraction, model),
          input_metadata: %{
            "article_extraction_id" => extraction.id,
-           "content_characters" => String.length(content),
-           "content_truncated" => String.length(extraction.content_text) > @max_input_characters
+           "content_characters" =>
+             if(truncated?, do: @max_input_characters, else: String.length(content)),
+           "content_truncated" => truncated?
          },
          output_metadata: metadata
        }}
     else
-      nil -> {:error, "No Ollama model is configured"}
-      "" -> {:error, "No Ollama model is configured"}
-      {:error, reason} -> {:error, reason}
+      nil -> {:error, digestion_error("No Ollama model is configured")}
+      "" -> {:error, digestion_error("No Ollama model is configured")}
+      {:error, reason} -> {:error, digestion_error(reason)}
+    end
+  end
+
+  defp model_content(content_text) do
+    case String.split_at(content_text, @max_input_characters) do
+      {content, ""} -> {content, false}
+      {content, _remainder} -> {content, true}
     end
   end
 
@@ -91,11 +101,17 @@ defmodule Newspaper.Digestion do
              {:ok, run} <- start_run(attempt, extraction) do
           execute_generation(attempt, extraction, run)
         else
-          {:error, reason} -> fail_execution(attempt, format_reason(reason), "digestion_failed")
+          {:error, reason} ->
+            fail_execution(attempt, format_reason(reason), "digestion_failed")
         end
 
       nil ->
-        fail_execution(attempt, "Article extraction is not available", "missing_extraction")
+        fail_execution(
+          attempt,
+          "Article extraction is not available",
+          "missing_extraction",
+          retryable: false
+        )
     end
   end
 
@@ -131,8 +147,11 @@ defmodule Newspaper.Digestion do
            }) do
       {:ok, attempt}
     else
+      {:error, %{kind: kind, message: message, retryable: retryable}} ->
+        fail_execution(attempt, message, kind, run: run, retryable: retryable)
+
       {:error, reason} ->
-        fail_execution(attempt, format_reason(reason), "digestion_failed", run)
+        fail_execution(attempt, format_reason(reason), "digestion_failed", run: run)
     end
   end
 
@@ -146,26 +165,29 @@ defmodule Newspaper.Digestion do
     })
   end
 
-  defp fail_execution(attempt, message, failure_kind, run \\ nil) do
+  defp fail_execution(attempt, message, failure_kind, opts \\ []) do
     attempt = Processing.get_attempt!(attempt.id)
+    run = Keyword.get(opts, :run)
+    retryable = Keyword.get(opts, :retryable, true)
 
     result =
       Processing.finish_attempt(attempt, "failed", %{
         failure_kind: failure_kind,
-        retryable: true,
+        retryable: retryable,
         error_message: message
       })
 
     Operations.create_failure(%{
       failure_type: "pipeline_step_#{failure_kind}",
       message: message,
-      retryable: true,
+      retryable: retryable,
       related: %{
         "pipeline_step_attempt_id" => attempt.id,
         "pipeline_step_id" => attempt.pipeline_step_id,
         "article_id" => attempt.article_id,
         "step_type" => "digestion"
-      }
+      },
+      run_id: run && run.id
     })
 
     if run do
@@ -173,9 +195,37 @@ defmodule Newspaper.Digestion do
         summary_counts: %{"attempts" => 1, "succeeded" => 0, "failed" => 1},
         error_summary: message
       })
+    else
+      Operations.fail_running_pipeline_step_runs(attempt.id, message)
     end
 
     result
+  end
+
+  defp digestion_error(reason) do
+    message = format_reason(reason)
+    normalized = String.downcase(message)
+
+    cond do
+      String.starts_with?(message, "No Ollama model") ->
+        %{kind: "configuration_error", message: message, retryable: false}
+
+      String.contains?(message, "structured output") or
+          String.starts_with?(message, "Generated ") ->
+        %{kind: "structured_output", message: message, retryable: false}
+
+      Regex.match?(~r/Ollama returned HTTP 4\d\d/, message) ->
+        %{kind: "model_error", message: message, retryable: false}
+
+      String.contains?(normalized, "timeout") or
+        String.contains?(normalized, "closed") or
+        String.contains?(normalized, "econnrefused") or
+          String.contains?(normalized, "connection") ->
+        %{kind: "connection_error", message: message, retryable: true}
+
+      true ->
+        %{kind: "digestion_failed", message: message, retryable: true}
+    end
   end
 
   defp rerender_article_items(%Article{} = article) do

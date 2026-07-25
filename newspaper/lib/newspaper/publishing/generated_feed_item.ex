@@ -49,7 +49,6 @@ defmodule Newspaper.Publishing.GeneratedFeedItem do
       :published_at,
       :item_url,
       :body_mode,
-      :selection_metadata,
       :rendered_guid,
       :rendered_title,
       :rendered_link_url,
@@ -70,6 +69,7 @@ defmodule Newspaper.Publishing.GeneratedFeedItem do
       :first_eligible_at,
       :last_rendered_at
     ])
+    |> put_internal_metadata(attrs)
     |> Newspaper.Guid.put_new(:guid, "item")
     |> put_rss_guid()
     |> put_rendered_guid()
@@ -89,6 +89,13 @@ defmodule Newspaper.Publishing.GeneratedFeedItem do
     |> unique_constraint(:guid)
     |> unique_constraint(:rss_guid)
     |> unique_constraint([:generated_feed_id, :article_id])
+  end
+
+  defp put_internal_metadata(changeset, attrs) do
+    case Map.get(attrs, :selection_metadata) || Map.get(attrs, "selection_metadata") do
+      nil -> changeset
+      selection_metadata -> put_change(changeset, :selection_metadata, selection_metadata)
+    end
   end
 
   defp put_rss_guid(changeset) do

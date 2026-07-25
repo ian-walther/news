@@ -42,6 +42,19 @@ defmodule NewspaperWeb.AdminLive.DashboardTest do
            )
   end
 
+  test "shows articles intentionally skipped because they have no readable content", %{conn: conn} do
+    article = extracted_article!()
+
+    article
+    |> Article.changeset(%{extraction_status: "skipped"})
+    |> Repo.update!()
+
+    {:ok, view, _html} = live(conn, ~p"/")
+
+    assert has_element?(view, "#article-stat-total", "1")
+    assert has_element?(view, "#article-stat-skipped", "1")
+  end
+
   test "groups actionable failures while preserving retry and debug details", %{conn: conn} do
     for message <- ["HTTP 429", "HTTP 429 from retry"] do
       assert {:ok, _failure} =

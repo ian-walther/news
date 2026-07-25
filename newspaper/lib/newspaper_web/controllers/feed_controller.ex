@@ -22,56 +22,101 @@ defmodule NewspaperWeb.FeedController do
   def show(conn, _params), do: send_resp(conn, 404, "Not found")
 
   defp render_feed(_conn, feed, items) do
-    self_url = "#{NewspaperWeb.Endpoint.url()}/feeds/#{feed.guid}.xml"
+    base_url = NewspaperWeb.Endpoint.url()
+    self_url = "#{base_url}/feeds/#{feed.guid}.xml"
 
-    """
-    <?xml version="1.0" encoding="UTF-8"?>
-    <rss version="2.0">
-      <channel>
-        <title>#{xml(feed.title)}</title>
-        <description>#{xml(feed.description || feed.title)}</description>
-        <link>#{xml(self_url)}</link>
-        <lastBuildDate>#{rfc2822(DateTime.utc_now())}</lastBuildDate>
-        #{Enum.map_join(items, "\n", &render_item/1)}
-      </channel>
-    </rss>
-    """
+    rss =
+      Saxy.XML.element(
+        "rss",
+        [
+          {"version", "2.0"},
+          {"xmlns:dc", "http://purl.org/dc/elements/1.1/"},
+          {"xmlns:atom", "http://www.w3.org/2005/Atom"}
+        ],
+        [
+          Saxy.XML.element("channel", [], [
+            text_element("title", feed.title),
+            text_element("description", feed.description || feed.title),
+            text_element("link", base_url),
+            Saxy.XML.empty_element(
+              "atom:link",
+              [{"href", self_url}, {"rel", "self"}, {"type", "application/rss+xml"}]
+            ),
+            text_element("lastBuildDate", rfc2822(DateTime.utc_now())),
+            Enum.map(items, &render_item(&1, base_url))
+          ])
+        ]
+      )
+
+    Saxy.encode!(rss, version: "1.0", encoding: "UTF-8")
   end
 
-  defp render_item(item) do
-    """
-        <item>
-          <guid isPermaLink="false">#{xml(item.rendered_guid)}</guid>
-          <title>#{xml(item.rendered_title || "Untitled")}</title>
-          <link>#{xml(item.rendered_link_url || "")}</link>
-          <pubDate>#{rfc2822(item.rendered_published_at || item.published_at || item.inserted_at)}</pubDate>
-          #{optional("author", item.rendered_author)}
-          #{categories(item.rendered_categories)}
-          <description><![CDATA[#{item.rendered_body || item.rendered_summary || ""}]]></description>
-        </item>
-    """
+  defp render_item(item, base_url) do
+    Saxy.XML.element("item", [], [
+      Saxy.XML.element(
+        "guid",
+        [{"isPermaLink", "false"}],
+        Saxy.XML.characters(item.rendered_guid)
+      ),
+      text_element("title", item.rendered_title || "Untitled"),
+      text_element("link", absolute_url(item.rendered_link_url, base_url)),
+      optional(
+        "pubDate",
+        optional_rfc2822(item.rendered_published_at || item.published_at)
+      ),
+      optional("dc:creator", item.rendered_author),
+      categories(item.rendered_categories),
+      enclosures(item.rendered_media),
+      text_element("description", item.rendered_body || item.rendered_summary || "")
+    ])
   end
 
-  defp optional(_tag, nil), do: ""
-  defp optional(_tag, ""), do: ""
-  defp optional(tag, value), do: "<#{tag}>#{xml(value)}</#{tag}>"
+  defp optional(_tag, nil), do: []
+  defp optional(_tag, ""), do: []
+  defp optional(tag, value), do: text_element(tag, value)
 
   defp categories(categories) do
     categories
     |> List.wrap()
-    |> Enum.map_join("\n", fn category -> "<category>#{xml(category)}</category>" end)
+    |> Enum.map(&text_element("category", &1))
   end
 
-  defp rfc2822(nil), do: rfc2822(DateTime.utc_now())
+  defp enclosures(media) do
+    media
+    |> Kernel.||(%{})
+    |> Map.get("enclosures", [])
+    |> List.wrap()
+    |> Enum.map(fn enclosure ->
+      attributes =
+        [
+          {"url", enclosure["url"]},
+          {"type", enclosure["type"]},
+          {"length", enclosure["length"]}
+        ]
+        |> Enum.reject(fn {_name, value} -> is_nil(value) or value == "" end)
+
+      Saxy.XML.empty_element("enclosure", attributes)
+    end)
+  end
+
+  defp text_element(tag, value) do
+    Saxy.XML.element(tag, [], Saxy.XML.characters(value || ""))
+  end
+
+  defp absolute_url(nil, _base_url), do: ""
+  defp absolute_url("", _base_url), do: ""
+
+  defp absolute_url(url, base_url) do
+    case URI.parse(url) do
+      %URI{scheme: nil} -> base_url |> URI.merge(url) |> URI.to_string()
+      _uri -> url
+    end
+  end
+
+  defp optional_rfc2822(nil), do: nil
+  defp optional_rfc2822(datetime), do: rfc2822(datetime)
 
   defp rfc2822(%DateTime{} = datetime) do
     Calendar.strftime(datetime, "%a, %d %b %Y %H:%M:%S GMT")
-  end
-
-  defp xml(value) do
-    value
-    |> to_string()
-    |> Phoenix.HTML.html_escape()
-    |> Phoenix.HTML.safe_to_string()
   end
 end

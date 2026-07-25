@@ -7,9 +7,7 @@ Prove extraction and digest quality through sustained use with real output feeds
 ## In Scope
 
 - Real-source extraction quality review and failure classification.
-- Headless browser extraction behind the shared extractor contract.
 - Headed browser extraction through the persistent host Chrome session.
-- App-owned escalation across extractor implementations.
 - A small output-feed pilot using `qwen3.6:27b` digest titles and summaries in Reeder.
 - Prompt, length, and validation tuning driven by actual reading quality.
 - Revisit model selection only when the pilot exposes a concrete quality or throughput problem.
@@ -23,7 +21,7 @@ Prove extraction and digest quality through sustained use with real output feeds
 - Provider-neutral LLM abstractions and model lifecycle management.
 - Cross-source synthesis, clustering, and World Radar digestion.
 - Global/intake/input-feed pipeline inheritance.
-- Automatic retries beyond explicit operator retry and per-host pacing.
+- Automatic digestion retries beyond explicit operator retry.
 - Full rebuild/danger-zone operations.
 
 ## Non-Goals

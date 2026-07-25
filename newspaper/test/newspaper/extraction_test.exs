@@ -11,6 +11,7 @@ defmodule Newspaper.ExtractionTest do
   }
 
   alias Newspaper.Extraction
+  alias Newspaper.Extraction.CommandWorker
   alias Newspaper.Intake
   alias Newspaper.Operations
   alias Newspaper.Operations.Failure
@@ -65,7 +66,6 @@ defmodule Newspaper.ExtractionTest do
 
     article = Repo.get!(Article, article.id)
     assert article.extraction_status == "succeeded"
-    assert article.extracted_content =~ "Extracted article body"
 
     extraction = Repo.get_by!(ArticleExtraction, article_id: article.id)
     assert extraction.content_html =~ "Extracted article body"
@@ -90,10 +90,7 @@ defmodule Newspaper.ExtractionTest do
     assert item.body_mode == "extracted_content"
     assert item.rendered_body =~ "Extracted article body"
 
-    assert item.rendered_link_url ==
-             NewspaperWeb.Endpoint.url()
-             |> URI.merge("/articles/#{article.guid}")
-             |> URI.to_string()
+    assert item.rendered_link_url == "/articles/#{article.guid}"
 
     assert output_feed.body_source == "extracted_content"
     assert output_feed.link_to_hosted_article
@@ -166,14 +163,17 @@ defmodule Newspaper.ExtractionTest do
           queue: PriorityQueue.new(),
           running?: true,
           timer: nil,
-          timer_token: nil
+          timer_token: nil,
+          task_pid: self(),
+          task_ref: make_ref(),
+          attempt_id: failed_attempt.id
         }
       }
     }
 
     assert {:noreply, _state} =
              Dispatcher.handle_cast(
-               {:finished, site_host, {:ok, failed_attempt}},
+               {:finished, site_host, self(), {:ok, failed_attempt}},
                dispatcher_state
              )
 
@@ -184,6 +184,13 @@ defmodule Newspaper.ExtractionTest do
       |> Repo.all()
 
     assert Enum.map(attempts, & &1.status) == ["failed", "queued"]
+
+    assert List.last(attempts).input_snapshot["request"] == %{
+             "retry_origin" => "automatic_rate_limit",
+             "retry_number" => 1,
+             "retry_limit" => 3
+           }
+
     assert Repo.get!(Article, article.id).extraction_status == "queued"
   end
 
@@ -665,17 +672,70 @@ defmodule Newspaper.ExtractionTest do
   end
 
   test "terminates a worker that exceeds its execution timeout" do
-    worker = worker_script!("slow", success_payload(), "sleep 5")
+    pid_path =
+      Path.join(
+        System.tmp_dir!(),
+        "newspaper-slow-worker-#{System.unique_integer([:positive])}.pid"
+      )
+
+    worker =
+      worker_script!(
+        "slow",
+        success_payload(),
+        "sleep 5 &\nchild_pid=$!\nprintf '%s' \"$child_pid\" > '#{pid_path}'\nwait \"$child_pid\""
+      )
 
     assert {:error, result, _request} =
              Newspaper.Extraction.SimpleHtmlWorker.extract("https://example.com/slow",
                command: worker,
                timeout_ms: 20_000,
-               command_timeout_ms: 25
+               command_timeout_ms: 250
              )
 
     assert result["failure_kind"] == "timeout"
     assert result["retryable"]
+
+    pid = pid_path |> File.read!() |> String.trim()
+    {_output, exit_status} = System.cmd("kill", ["-0", pid], stderr_to_stdout: true)
+    assert exit_status != 0
+
+    File.rm(pid_path)
+  end
+
+  test "command workers accept executable arguments without shell interpolation" do
+    worker =
+      worker_script!(
+        "argument-worker",
+        success_payload(),
+        """
+        test "$1" = "--mode"
+        test "$2" = "success"
+        """
+      )
+
+    assert {:ok, result, _input} =
+             CommandWorker.extract(
+               "extraction.simple_html",
+               [worker, "--mode", "success"],
+               "https://example.com/article"
+             )
+
+    assert result["status"] == "ok"
+  end
+
+  test "an extraction crash closes the attempt run instead of leaving it running" do
+    article = create_article!("https://example.com/crashing-extractor")
+    Application.put_env(:newspaper, :extractors, [])
+    configure_extraction!(article, "feed_crashing_extractor_test")
+
+    attempt = Repo.one!(PipelineStepAttempt)
+    assert {:ok, attempt} = Extraction.execute_attempt(attempt.id)
+    assert attempt.status == "failed"
+
+    run = Operations.latest_run("pipeline_step")
+    assert run.status == "failed"
+    assert run.finished_at
+    assert run.error_summary =~ "simple_html_command"
   end
 
   test "paces ordinary extraction attempts per site before any rate limit response" do
@@ -744,6 +804,20 @@ defmodule Newspaper.ExtractionTest do
     assert backoff_seconds in 299..300
   end
 
+  test "expired site backoffs no longer appear active" do
+    article = create_article!("https://example.com/expired-backoff")
+    {:ok, policy} = Content.get_site_extraction_policy_for_url(article.canonical_url)
+
+    policy
+    |> SiteExtractionPolicy.changeset(%{
+      consecutive_rate_limits: 2,
+      backoff_until: DateTime.add(DateTime.utc_now(:second), -60, :second)
+    })
+    |> Repo.update!()
+
+    refute Enum.any?(Content.list_active_site_backoffs(), &(&1.id == policy.id))
+  end
+
   test "shares one active extraction across output feeds for the same article" do
     article = create_article!("https://arstechnica.com/space/shared-example")
     worker = worker_script!("shared-success", success_payload())
@@ -795,6 +869,27 @@ defmodule Newspaper.ExtractionTest do
 
     assert {:ok, _run} = Pipeline.backfill_output_feed(output_feed.id, "test")
     assert Repo.aggregate(PipelineStepAttempt, :count) == 0
+  end
+
+  test "an unavailable configured extractor fails terminally instead of retrying forever" do
+    article = create_article!("https://example.com/requires-headed-browser")
+    _output_feed = configure_extraction!(article, "feed_requires_headed_browser")
+    attempt = Repo.one!(PipelineStepAttempt)
+
+    {:ok, policy} = Content.get_site_extraction_policy_for_url(article.canonical_url)
+
+    policy
+    |> Ecto.Changeset.change(minimum_implementation: "extraction.headed_browser")
+    |> Repo.update!()
+
+    assert {:ok, attempt} = Extraction.execute_attempt(attempt.id)
+    assert attempt.status == "failed"
+    assert attempt.failure_kind == "extractor_unavailable"
+    refute attempt.retryable
+
+    failure = Repo.one!(Failure)
+    assert failure.failure_type == "pipeline_step_extractor_unavailable"
+    refute failure.retryable
   end
 
   defp create_article!(url, opts \\ []) do

@@ -12,7 +12,7 @@
 - Pilot `qwen3.6:27b` digest titles and summaries in one real Reeder feed.
 - Compare alternate models only when representative pilot output exposes a specific weakness.
 - Tune prompt wording, summary length, and validation bounds from observed output.
-- Classify real connection, model, timeout, and structured-output failures before adding automatic retries.
+- Add automatic digestion retries only when observed failure classes justify a bounded policy.
 - Add review or correction controls only when repeated use demonstrates a concrete workflow.
 
 ## Semantic Filtering

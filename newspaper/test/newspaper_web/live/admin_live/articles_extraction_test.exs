@@ -3,7 +3,7 @@ defmodule NewspaperWeb.AdminLive.ArticlesExtractionTest do
 
   import Phoenix.LiveViewTest
 
-  alias Newspaper.Content.Article
+  alias Newspaper.Content.{Article, ArticleExtraction}
   alias Newspaper.Digestion
   alias Newspaper.Extraction
   alias Newspaper.Intake
@@ -46,7 +46,10 @@ defmodule NewspaperWeb.AdminLive.ArticlesExtractionTest do
 
     article = Repo.get!(Article, article.id)
     assert article.extraction_status == "succeeded"
-    assert article.extracted_content =~ "Extracted article body"
+
+    assert Repo.get_by!(ArticleExtraction, article_id: article.id).content_html =~
+             "Extracted article body"
+
     assert has_element?(view, "a[href='/articles/#{article.guid}']")
 
     assert {:ok, article_view, _html} = live(conn, ~p"/articles/#{article.guid}")

@@ -134,13 +134,13 @@ defmodule NewspaperWeb.AdminLive.ProcessingTest do
 
     [running_item, queued_item, digestion_item] = Publishing.list_items_for_feed(feed)
 
-    assert {:ok, [running]} = Processing.enqueue_item(running_item)
+    assert {:ok, [running]} = Processing.request_item_step(running_item, "extraction")
     assert {:ok, running} = Processing.mark_attempt_running(running)
-    assert {:ok, [queued]} = Processing.enqueue_item(queued_item)
+    assert {:ok, [queued]} = Processing.request_item_step(queued_item, "extraction")
 
     insert_extraction!(digestion_item.article)
     digestion_item = Publishing.list_items_for_feed(feed) |> List.last()
-    assert {:ok, [digestion]} = Processing.enqueue_item(digestion_item)
+    assert {:ok, [digestion]} = Processing.request_item_step(digestion_item, "digestion")
 
     assert Repo.get!(PipelineStepAttempt, digestion.id).step_type == "digestion"
 

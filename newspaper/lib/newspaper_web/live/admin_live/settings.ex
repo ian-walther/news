@@ -21,12 +21,11 @@ defmodule NewspaperWeb.AdminLive.Settings do
   def handle_event("save", %{"app_settings" => params}, socket) do
     case Operations.update_settings(socket.assigns.settings, params) do
       {:ok, settings} ->
-        send(self(), :discover_ollama_models)
-
         {:noreply,
          socket
          |> put_flash(:info, "Settings saved")
-         |> assign(settings: settings, form: to_form(Operations.change_settings(settings)))}
+         |> assign(settings: settings, form: to_form(Operations.change_settings(settings)))
+         |> start_model_discovery()}
 
       {:error, changeset} ->
         {:noreply, assign(socket, :form, to_form(changeset))}
@@ -34,14 +33,11 @@ defmodule NewspaperWeb.AdminLive.Settings do
   end
 
   def handle_event("refresh_ollama_models", _params, socket) do
-    {:noreply,
-     socket
-     |> assign(:ollama_status, :loading)
-     |> discover_ollama_models()}
+    {:noreply, start_model_discovery(socket)}
   end
 
   def handle_info(:discover_ollama_models, socket) do
-    {:noreply, socket |> assign(:ollama_status, :loading) |> discover_ollama_models()}
+    {:noreply, start_model_discovery(socket)}
   end
 
   def handle_info({:newspaper_data_changed, :settings_changed}, socket) do
@@ -50,6 +46,21 @@ defmodule NewspaperWeb.AdminLive.Settings do
 
   def handle_info({:newspaper_data_changed, _event}, socket) do
     {:noreply, socket}
+  end
+
+  def handle_async(:discover_ollama_models, {:ok, {:ok, models}}, socket) do
+    {:noreply,
+     socket
+     |> assign(:ollama_models, models)
+     |> assign(:ollama_status, {:connected, length(models)})}
+  end
+
+  def handle_async(:discover_ollama_models, {:ok, {:error, reason}}, socket) do
+    {:noreply, assign(socket, :ollama_status, {:error, reason})}
+  end
+
+  def handle_async(:discover_ollama_models, {:exit, reason}, socket) do
+    {:noreply, assign(socket, :ollama_status, {:error, inspect(reason)})}
   end
 
   def render(assigns) do
@@ -75,17 +86,12 @@ defmodule NewspaperWeb.AdminLive.Settings do
           <section class="space-y-4">
             <div>
               <h2 class="text-base font-semibold">Collection</h2>
-              <p class="mt-1 text-sm text-base-content/55">Feed scheduling and run history.</p>
+              <p class="mt-1 text-sm text-base-content/55">Feed scheduling.</p>
             </div>
             <.input
               field={@form[:fetch_interval_minutes]}
               label="Global fetch interval minutes"
               type="number"
-            />
-            <.input
-              field={@form[:run_history_enabled]}
-              label="Run history/debug logging"
-              type="checkbox"
             />
           </section>
 
@@ -136,16 +142,12 @@ defmodule NewspaperWeb.AdminLive.Settings do
     assign(socket, settings: settings, form: to_form(Operations.change_settings(settings)))
   end
 
-  defp discover_ollama_models(socket) do
-    case Digestion.list_models(socket.assigns.settings.ollama_base_url) do
-      {:ok, models} ->
-        socket
-        |> assign(:ollama_models, models)
-        |> assign(:ollama_status, {:connected, length(models)})
+  defp start_model_discovery(socket) do
+    base_url = socket.assigns.settings.ollama_base_url
 
-      {:error, reason} ->
-        assign(socket, :ollama_status, {:error, reason})
-    end
+    socket
+    |> assign(:ollama_status, :loading)
+    |> start_async(:discover_ollama_models, fn -> Digestion.list_models(base_url) end)
   end
 
   defp model_options(assigns) do

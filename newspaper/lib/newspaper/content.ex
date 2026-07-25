@@ -3,6 +3,7 @@ defmodule Newspaper.Content do
 
   alias Newspaper.Content.{
     Article,
+    ArticleDedupeKey,
     ArticleDigest,
     ArticleExtraction,
     ArticleExtractionAttempt,
@@ -90,7 +91,8 @@ defmodule Newspaper.Content do
       failed: Map.get(counts, "failed", 0),
       queued: Map.get(counts, "queued", 0),
       running: Map.get(counts, "running", 0),
-      not_requested: Map.get(counts, "not_requested", 0)
+      not_requested: Map.get(counts, "not_requested", 0),
+      skipped: Map.get(counts, "skipped", 0)
     }
   end
 
@@ -116,10 +118,7 @@ defmodule Newspaper.Content do
 
   def list_active_site_backoffs(now \\ DateTime.utc_now(:second)) do
     SiteExtractionPolicy
-    |> where(
-      [policy],
-      policy.backoff_until > ^now or policy.consecutive_rate_limits > 0
-    )
+    |> where([policy], policy.backoff_until > ^now)
     |> order_by([policy], desc: policy.backoff_until, asc: policy.site_host)
     |> Repo.all()
   end
@@ -277,7 +276,7 @@ defmodule Newspaper.Content do
         query
 
       term ->
-        pattern = "%#{term}%"
+        pattern = "%#{escape_like(term)}%"
 
         where(
           query,
@@ -290,6 +289,13 @@ defmodule Newspaper.Content do
   end
 
   defp filter_article_search(query, _search), do: query
+
+  defp escape_like(term) do
+    term
+    |> String.replace("\\", "\\\\")
+    |> String.replace("%", "\\%")
+    |> String.replace("_", "\\_")
+  end
 
   defp filter_article_source(query, nil), do: query
 
@@ -350,7 +356,11 @@ defmodule Newspaper.Content do
   def get_article_by_dedupe_key(dedupe_scope, dedupe_key) do
     Repo.one(
       from a in Article,
-        where: a.dedupe_scope == ^dedupe_scope and a.dedupe_key == ^dedupe_key,
+        left_join: key in ArticleDedupeKey,
+        on: key.article_id == a.id,
+        where:
+          (key.dedupe_scope == ^dedupe_scope and key.dedupe_key == ^dedupe_key) or
+            (a.dedupe_scope == ^dedupe_scope and a.dedupe_key == ^dedupe_key),
         limit: 1
     )
   end
@@ -360,7 +370,11 @@ defmodule Newspaper.Content do
 
     Repo.one(
       from a in Article,
-        where: a.dedupe_scope == ^dedupe_scope and a.dedupe_key in ^keys,
+        left_join: key in ArticleDedupeKey,
+        on: key.article_id == a.id,
+        where:
+          (key.dedupe_scope == ^dedupe_scope and key.dedupe_key in ^keys) or
+            (a.dedupe_scope == ^dedupe_scope and a.dedupe_key in ^keys),
         order_by: [asc: a.inserted_at],
         limit: 1
     )
@@ -369,21 +383,36 @@ defmodule Newspaper.Content do
   def create_or_update_from_raw_item(%RawItem{} = raw_item, dedupe_keys)
       when is_list(dedupe_keys) do
     dedupe_scope = dedupe_scope(raw_item)
-    dedupe_key = Enum.find(dedupe_keys, & &1) || "raw:#{raw_item.id}"
+
+    dedupe_keys =
+      dedupe_keys
+      |> Enum.reject(&is_nil/1)
+      |> Enum.uniq()
+
+    dedupe_key = List.first(dedupe_keys) || "raw:#{raw_item.id}"
+    dedupe_keys = if dedupe_keys == [], do: [dedupe_key], else: dedupe_keys
     attrs = article_attrs(raw_item, dedupe_scope, dedupe_key)
 
-    article =
-      case get_article_by_dedupe_keys(dedupe_scope, dedupe_keys) do
-        nil ->
-          %Article{}
-          |> Article.changeset(attrs)
-          |> Repo.insert!()
+    {:ok, article} =
+      Repo.transaction(fn ->
+        lock_dedupe_keys(dedupe_scope, dedupe_keys)
 
-        %Article{} = article ->
-          maybe_update_representative(article, raw_item)
-      end
+        article =
+          case get_article_by_dedupe_keys(dedupe_scope, dedupe_keys) do
+            nil ->
+              %Article{}
+              |> Article.changeset(attrs)
+              |> Repo.insert!()
 
-    create_article_source(article, raw_item)
+            %Article{} = article ->
+              maybe_update_representative(article, raw_item)
+          end
+
+        ensure_article_dedupe_keys(article, dedupe_scope, dedupe_keys)
+        create_article_source(article, raw_item)
+        article
+      end)
+
     article
   end
 
@@ -572,7 +601,6 @@ defmodule Newspaper.Content do
           title: result["title"] || article.title,
           author: result["byline"] || article.author,
           extraction_status: "succeeded",
-          extracted_content: result["content_html"] || result["content_text"],
           extraction_metadata: extraction_metadata(result)
         })
         |> Repo.update!()
@@ -733,13 +761,28 @@ defmodule Newspaper.Content do
     article = Repo.preload(article, :representative_raw_item)
 
     if earlier_representative?(raw_item, article.representative_raw_item) do
+      attrs =
+        raw_item
+        |> article_attrs(article.dedupe_scope, article.dedupe_key)
+        |> preserve_extracted_metadata(article)
+
       article
-      |> Article.changeset(article_attrs(raw_item, article.dedupe_scope, article.dedupe_key))
+      |> Article.changeset(attrs)
       |> Repo.update!()
     else
       article
     end
   end
+
+  defp preserve_extracted_metadata(attrs, %Article{extraction_status: "succeeded"} = article) do
+    Map.merge(attrs, %{
+      resolved_url: article.resolved_url,
+      title: article.title,
+      author: article.author
+    })
+  end
+
+  defp preserve_extracted_metadata(attrs, _article), do: attrs
 
   defp earlier_representative?(_raw_item, nil), do: true
 
@@ -767,6 +810,31 @@ defmodule Newspaper.Content do
       on_conflict: :nothing,
       conflict_target: [:article_id, :raw_item_id]
     )
+  end
+
+  defp lock_dedupe_keys(dedupe_scope, dedupe_keys) do
+    dedupe_keys
+    |> Enum.sort()
+    |> Enum.each(fn dedupe_key ->
+      Repo.query!(
+        "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+        ["#{dedupe_scope}:#{dedupe_key}"]
+      )
+    end)
+  end
+
+  defp ensure_article_dedupe_keys(article, dedupe_scope, dedupe_keys) do
+    Enum.each(dedupe_keys, fn dedupe_key ->
+      %ArticleDedupeKey{}
+      |> ArticleDedupeKey.changeset(article.id, %{
+        dedupe_scope: dedupe_scope,
+        dedupe_key: dedupe_key
+      })
+      |> Repo.insert!(
+        on_conflict: :nothing,
+        conflict_target: [:dedupe_scope, :dedupe_key]
+      )
+    end)
   end
 
   defp dedupe_scope(%RawItem{intake_group_id: intake_group_id})

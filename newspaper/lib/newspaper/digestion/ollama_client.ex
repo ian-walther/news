@@ -77,6 +77,7 @@ defmodule Newspaper.Digestion.OllamaClient do
           "eval_count",
           "eval_duration"
         ])
+        |> Map.put("raw_content", content)
 
       {:ok, digest, metadata}
     else

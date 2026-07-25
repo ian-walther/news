@@ -16,7 +16,7 @@ defmodule Newspaper.Intake.IntakeGroup do
 
   def changeset(group, attrs) do
     group
-    |> cast(attrs, [:name, :outlet_name, :enabled, :dedupe_config, :notes])
+    |> cast(attrs, [:name, :outlet_name, :enabled, :notes])
     |> validate_required([:name])
   end
 end

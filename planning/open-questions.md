@@ -48,6 +48,8 @@
 
 ## Production Architecture
 
+- Is trusted-LAN access without application authentication the durable security posture, or should the admin and hosted-article surfaces eventually require authentication?
+- Should the Phoenix port remain reachable directly on the LAN, or should production bind it only for the local nginx path?
 - Which future services should run in Docker and which should stay on the host alongside the Chrome/desktop stack?
 - How should deploy, backup, restore, logs, and upgrades work?
 - What exact systemd unit structure should manage Xorg, the desktop session, Chrome, and x11vnc?

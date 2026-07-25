@@ -48,12 +48,6 @@ defmodule Newspaper.Processing do
     |> Repo.all()
   end
 
-  def extraction_eligible_article_ids([]), do: MapSet.new()
-
-  def extraction_eligible_article_ids(article_ids) when is_list(article_ids) do
-    step_eligible_article_ids(article_ids, "extraction")
-  end
-
   def step_eligible_article_ids([], _step_type), do: MapSet.new()
 
   def step_eligible_article_ids(article_ids, step_type)
@@ -81,19 +75,6 @@ defmodule Newspaper.Processing do
          {:ok, attempts} <- advance_item(item.id, opts) do
       {:ok, attempts}
     end
-  end
-
-  def enqueue_feed(feed_id, opts \\ []) when is_integer(feed_id) do
-    GeneratedFeedItem
-    |> where([item], item.generated_feed_id == ^feed_id)
-    |> preload([:generated_feed, article: [:extraction, :digests]])
-    |> Repo.all()
-    |> Enum.reduce_while({:ok, 0}, fn item, {:ok, count} ->
-      case enqueue_item(item, opts) do
-        {:ok, attempts} -> {:cont, {:ok, count + length(attempts)}}
-        {:error, reason} -> {:halt, {:error, reason}}
-      end
-    end)
   end
 
   def start_feed_batch(feed_id, trigger \\ "manual", step_type \\ "extraction")
@@ -217,26 +198,15 @@ defmodule Newspaper.Processing do
 
       represented = Enum.sum(Map.values(status_counts))
       missing = max(item_count - represented, 0)
-      missing_artifacts = missing_extraction_artifacts(feed_id, step, missing)
-      missing_failures = missing_terminal_failures(feed_id, step, missing - missing_artifacts)
-
-      missing_blocked =
-        missing_prerequisite_blocks(
-          feed_id,
-          step,
-          missing - missing_artifacts - missing_failures
-        )
 
       counts = %{
         total: item_count,
-        ready: Map.get(status_counts, "succeeded", 0) + missing_artifacts,
-        not_requested:
-          Map.get(status_counts, "not_requested", 0) +
-            max(missing - missing_artifacts - missing_failures - missing_blocked, 0),
-        blocked: Map.get(status_counts, "blocked", 0) + missing_blocked,
+        ready: Map.get(status_counts, "succeeded", 0),
+        not_requested: Map.get(status_counts, "not_requested", 0) + missing,
+        blocked: Map.get(status_counts, "blocked", 0),
         queued: Map.get(status_counts, "queued", 0),
         running: Map.get(status_counts, "running", 0),
-        failed: Map.get(status_counts, "failed", 0) + missing_failures,
+        failed: Map.get(status_counts, "failed", 0),
         skipped: Map.get(status_counts, "skipped", 0)
       }
 
@@ -251,6 +221,7 @@ defmodule Newspaper.Processing do
       if mode == :force, do: Keyword.put(opts, :force_step_type, step_type), else: opts
 
     with [step] <- list_enabled_steps(item.generated_feed_id, step_type),
+         :ok <- reconcile_prior_steps(item, step),
          {:ok, _item_step} <- ensure_item_step(item, step, mode),
          {:ok, attempts} <- advance_item(item.id, advance_opts) do
       {:ok, attempts}
@@ -258,6 +229,18 @@ defmodule Newspaper.Processing do
       [] -> {:ok, []}
       {:error, reason} -> {:error, reason}
     end
+  end
+
+  defp reconcile_prior_steps(item, requested_step) do
+    item.generated_feed_id
+    |> list_enabled_steps()
+    |> Enum.take_while(&(&1.position < requested_step.position))
+    |> Enum.reduce_while(:ok, fn step, :ok ->
+      case ensure_item_step(item, step, :bookkeeping) do
+        {:ok, _item_step} -> {:cont, :ok}
+        {:error, reason} -> {:halt, {:error, reason}}
+      end
+    end)
   end
 
   def ensure_item_steps(%GeneratedFeedItem{} = item, mode) when mode in [:future, :requested] do
@@ -272,7 +255,7 @@ defmodule Newspaper.Processing do
   end
 
   def ensure_item_step(%GeneratedFeedItem{} = item, %PipelineStep{} = step, mode)
-      when mode in [:future, :requested, :force] do
+      when mode in [:bookkeeping, :future, :requested, :force] do
     item =
       Repo.preload(item, [:generated_feed, article: [:extraction, :digests]], force: true)
 
@@ -297,14 +280,37 @@ defmodule Newspaper.Processing do
         |> GeneratedFeedItemStep.changeset(attrs)
         |> Repo.insert()
 
-      %GeneratedFeedItemStep{status: "succeeded"} = item_step when mode == :requested ->
+      %GeneratedFeedItemStep{} = item_step ->
+        ensure_existing_item_step(item_step, item.article, step, definition, mode)
+    end
+  end
+
+  defp ensure_existing_item_step(item_step, article, step, definition, mode) do
+    item_step_definition = Map.merge(definition, %{step_type: step.step_type})
+
+    reusable =
+      if mode == :force, do: :missing, else: reusable_artifact(article, item_step_definition)
+
+    case reusable do
+      {:ok, artifact_attrs} ->
+        attrs =
+          definition
+          |> Map.merge(artifact_attrs)
+          |> Map.merge(success_state(true))
+          |> Map.merge(%{pipeline_step_id: step.id, position: step.position})
+
+        item_step
+        |> GeneratedFeedItemStep.changeset(attrs)
+        |> Repo.update()
+
+      :missing when item_step.status == "succeeded" and mode == :requested ->
         {:ok, item_step}
 
-      %GeneratedFeedItemStep{} = item_step when mode in [:requested, :force] ->
+      :missing when mode in [:requested, :force] ->
         status =
           if mode == :force,
-            do: forced_status(item.article, step.step_type),
-            else: requested_status(item.article, step.step_type)
+            do: forced_status(article, step.step_type),
+            else: requested_status(article, step.step_type)
 
         attrs =
           definition
@@ -325,7 +331,7 @@ defmodule Newspaper.Processing do
         |> GeneratedFeedItemStep.changeset(attrs)
         |> Repo.update()
 
-      %GeneratedFeedItemStep{} = item_step ->
+      :missing ->
         {:ok, item_step}
     end
   end
@@ -348,7 +354,8 @@ defmodule Newspaper.Processing do
     end)
   end
 
-  defp advance_item_step(_item, %{status: "skipped"} = item_step, _opts) do
+  defp advance_item_step(_item, %{status: status} = item_step, _opts)
+       when status in ["succeeded", "skipped"] do
     {:continue, item_step}
   end
 
@@ -396,6 +403,7 @@ defmodule Newspaper.Processing do
         config: config
       })
       |> Repo.insert()
+      |> materialize_step_on_ok()
       |> broadcast_on_ok()
     end
   end
@@ -426,8 +434,21 @@ defmodule Newspaper.Processing do
         config: config
       })
       |> Repo.update()
+      |> materialize_step_on_ok()
       |> broadcast_on_ok()
     end
+  end
+
+  def materialize_missing_item_steps do
+    PipelineStep
+    |> order_by([step], asc: step.id)
+    |> Repo.all()
+    |> Enum.reduce_while({:ok, 0}, fn step, {:ok, total} ->
+      case materialize_step_items(step) do
+        {:ok, count} -> {:cont, {:ok, total + count}}
+        {:error, reason} -> {:halt, {:error, reason}}
+      end
+    end)
   end
 
   def delete_step(%PipelineStep{} = step) do
@@ -767,13 +788,17 @@ defmodule Newspaper.Processing do
     ])
   end
 
-  def retry_attempt(attempt_id) do
+  def retry_attempt(attempt_id, opts \\ []) do
     attempt = get_attempt!(attempt_id)
+    request_metadata = retry_request_metadata(opts)
 
     attempt
     |> retry_items()
     |> Enum.reduce_while({:ok, []}, fn item, {:ok, attempts} ->
-      case request_item_step(item, attempt.step_type, force: true) do
+      case request_item_step(item, attempt.step_type,
+             force: true,
+             request_metadata: request_metadata
+           ) do
         {:ok, item_attempts} -> {:cont, {:ok, item_attempts ++ attempts}}
         {:error, reason} -> {:halt, {:error, reason}}
       end
@@ -794,7 +819,11 @@ defmodule Newspaper.Processing do
     attempt = Repo.get!(PipelineStepAttempt, attempt.id)
 
     if automatic_rate_limit_retry?(attempt) do
-      retry_attempt(attempt.id)
+      retry_attempt(attempt.id,
+        origin: "automatic_rate_limit",
+        retry_number: rate_limit_failure_streak(attempt),
+        retry_limit: @automatic_rate_limit_retries
+      )
     else
       {:ok, nil}
     end
@@ -810,17 +839,6 @@ defmodule Newspaper.Processing do
         {:error, _reason} -> count
       end
     end)
-  end
-
-  def enqueue(
-        %PipelineStep{} = step,
-        %Article{} = article,
-        %GeneratedFeedItem{} = item,
-        opts \\ []
-      ) do
-    with {:ok, item_step} <- ensure_item_step(item, step, :requested) do
-      enqueue_item_step(%{item | article: article}, item_step, opts)
-    end
   end
 
   def mark_attempt_running(%PipelineStepAttempt{} = attempt) do
@@ -866,6 +884,41 @@ defmodule Newspaper.Processing do
     end
 
     refresh_attempt_batch(result)
+  end
+
+  def fail_dispatched_attempt(attempt_id, failure_kind, message, retryable \\ true)
+      when is_integer(attempt_id) do
+    attempt = get_attempt!(attempt_id)
+
+    if attempt.status in ["queued", "running"] do
+      if attempt.step_type == "extraction" do
+        Content.set_extraction_status(attempt.article, "failed")
+      end
+
+      result =
+        finish_attempt(attempt, "failed", %{
+          failure_kind: failure_kind,
+          retryable: retryable,
+          error_message: message
+        })
+
+      Operations.fail_running_pipeline_step_runs(attempt.id, message)
+
+      Operations.create_failure(%{
+        failure_type: "pipeline_step_#{failure_kind}",
+        message: message,
+        retryable: retryable,
+        related: %{
+          "pipeline_step_attempt_id" => attempt.id,
+          "pipeline_step_id" => attempt.pipeline_step_id,
+          "article_id" => attempt.article_id
+        }
+      })
+
+      result
+    else
+      {:ok, attempt}
+    end
   end
 
   def attach_artifact(%PipelineStepAttempt{} = attempt, %ArticleExtraction{} = extraction) do
@@ -1046,7 +1099,8 @@ defmodule Newspaper.Processing do
               "generated_feed_item_id" => item.id,
               "generated_feed_item_step_id" => item_step.id,
               "config" => item_step.config_snapshot,
-              "definition_fingerprint" => item_step.definition_fingerprint
+              "definition_fingerprint" => item_step.definition_fingerprint,
+              "request" => Keyword.get(opts, :request_metadata, %{})
             }
           })
           |> put_batch_run(Keyword.get(opts, :batch_run_id))
@@ -1120,6 +1174,15 @@ defmodule Newspaper.Processing do
     }
   end
 
+  defp initial_item_step_state(article, step_type, definition, :bookkeeping) do
+    item_step = Map.merge(definition, %{step_type: step_type})
+
+    case reusable_artifact(article, item_step) do
+      {:ok, artifact_attrs} -> Map.merge(artifact_attrs, success_state(true))
+      :missing -> bookkeeping_state(article, step_type)
+    end
+  end
+
   defp initial_item_step_state(article, step_type, definition, _mode) do
     item_step = Map.merge(definition, %{step_type: step_type})
 
@@ -1128,6 +1191,25 @@ defmodule Newspaper.Processing do
       :missing -> %{status: requested_status(article, step_type)}
     end
   end
+
+  defp bookkeeping_state(
+         %Article{extraction_status: "failed", extraction_metadata: metadata},
+         "extraction"
+       )
+       when is_map(metadata) do
+    if Map.get(metadata, "retryable") in [false, "false"],
+      do: %{status: "failed", error_message: Map.get(metadata, "message")},
+      else: %{status: "not_requested"}
+  end
+
+  defp bookkeeping_state(%Article{extraction_status: "skipped"}, "extraction"),
+    do: %{status: "skipped"}
+
+  defp bookkeeping_state(%Article{extraction: %ArticleExtraction{}}, "digestion"),
+    do: %{status: "not_requested"}
+
+  defp bookkeeping_state(_article, "digestion"), do: %{status: "blocked"}
+  defp bookkeeping_state(_article, _step_type), do: %{status: "not_requested"}
 
   defp requested_status(
          %Article{extraction_status: "failed", extraction_metadata: metadata},
@@ -1272,75 +1354,26 @@ defmodule Newspaper.Processing do
     :ok
   end
 
-  defp missing_extraction_artifacts(_feed_id, %{step_type: step_type}, _missing)
-       when step_type != "extraction",
-       do: 0
-
-  defp missing_extraction_artifacts(_feed_id, _step, missing) when missing <= 0, do: 0
-
-  defp missing_extraction_artifacts(feed_id, step, _missing) do
-    Repo.aggregate(
-      from(item in GeneratedFeedItem,
-        join: extraction in ArticleExtraction,
-        on: extraction.article_id == item.article_id,
-        left_join: item_step in GeneratedFeedItemStep,
-        on:
-          item_step.generated_feed_item_id == item.id and
-            item_step.pipeline_step_id == ^step.id,
-        where: item.generated_feed_id == ^feed_id and is_nil(item_step.id)
-      ),
-      :count,
-      :id
-    )
+  defp materialize_step_on_ok({:ok, %PipelineStep{} = step} = result) do
+    case materialize_step_items(step) do
+      {:ok, _count} -> result
+      {:error, reason} -> {:error, reason}
+    end
   end
 
-  defp missing_terminal_failures(_feed_id, %{step_type: step_type}, _missing)
-       when step_type != "extraction",
-       do: 0
+  defp materialize_step_on_ok(result), do: result
 
-  defp missing_terminal_failures(_feed_id, _step, missing) when missing <= 0, do: 0
-
-  defp missing_terminal_failures(feed_id, step, _missing) do
-    Repo.aggregate(
-      from(item in GeneratedFeedItem,
-        join: article in Article,
-        on: article.id == item.article_id,
-        left_join: item_step in GeneratedFeedItemStep,
-        on:
-          item_step.generated_feed_item_id == item.id and
-            item_step.pipeline_step_id == ^step.id,
-        where:
-          item.generated_feed_id == ^feed_id and is_nil(item_step.id) and
-            article.extraction_status == "failed" and
-            fragment("(?->>'retryable') = 'false'", article.extraction_metadata)
-      ),
-      :count,
-      :id
-    )
-  end
-
-  defp missing_prerequisite_blocks(_feed_id, %{step_type: step_type}, _missing)
-       when step_type != "digestion",
-       do: 0
-
-  defp missing_prerequisite_blocks(_feed_id, _step, missing) when missing <= 0, do: 0
-
-  defp missing_prerequisite_blocks(feed_id, step, _missing) do
-    Repo.aggregate(
-      from(item in GeneratedFeedItem,
-        left_join: extraction in ArticleExtraction,
-        on: extraction.article_id == item.article_id,
-        left_join: item_step in GeneratedFeedItemStep,
-        on:
-          item_step.generated_feed_item_id == item.id and
-            item_step.pipeline_step_id == ^step.id,
-        where:
-          item.generated_feed_id == ^feed_id and is_nil(item_step.id) and
-            is_nil(extraction.id)
-      ),
-      :count,
-      :id
-    )
+  defp materialize_step_items(%PipelineStep{} = step) do
+    GeneratedFeedItem
+    |> where([item], item.generated_feed_id == ^step.generated_feed_id)
+    |> preload(article: [:extraction, :digests])
+    |> Repo.all()
+    |> Enum.reduce_while({:ok, 0}, fn item, {:ok, count} ->
+      case ensure_item_step(item, step, :bookkeeping) do
+        {:ok, _item_step} -> {:cont, {:ok, count + 1}}
+        {:error, reason} -> {:halt, {:error, reason}}
+      end
+    end)
   end
 
   defp put_batch_run(changeset, nil), do: changeset
@@ -1399,6 +1432,16 @@ defmodule Newspaper.Processing do
       rate_limit_failure_streak(attempt) <= @automatic_rate_limit_retries
   end
 
+  defp retry_request_metadata(opts) do
+    %{
+      "retry_origin" => Keyword.get(opts, :origin, "manual"),
+      "retry_number" => Keyword.get(opts, :retry_number),
+      "retry_limit" => Keyword.get(opts, :retry_limit)
+    }
+    |> Enum.reject(fn {_key, value} -> is_nil(value) end)
+    |> Map.new()
+  end
+
   defp rate_limit_failure_streak(%PipelineStepAttempt{} = attempt) do
     last_successful_attempt_id =
       PipelineStepAttempt
@@ -1447,16 +1490,22 @@ defmodule Newspaper.Processing do
 
   defp dispatch(%PipelineStepAttempt{step_type: "extraction"} = attempt, article) do
     if Application.get_env(:newspaper, :processing_dispatcher_enabled, true) do
-      article
-      |> extraction_url()
-      |> Content.site_host()
-      |> then(
-        &Newspaper.Processing.Dispatcher.enqueue(
+      site_host = article |> extraction_url() |> Content.site_host()
+
+      if is_binary(site_host) do
+        Newspaper.Processing.Dispatcher.enqueue(
           attempt.id,
-          &1,
+          site_host,
           PriorityQueue.priority_for(attempt)
         )
-      )
+      else
+        fail_dispatched_attempt(
+          attempt.id,
+          "invalid_url",
+          "Article has no usable extraction URL",
+          false
+        )
+      end
     end
   end
 

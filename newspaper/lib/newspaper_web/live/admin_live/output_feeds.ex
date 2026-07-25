@@ -3,6 +3,7 @@ defmodule NewspaperWeb.AdminLive.OutputFeeds do
 
   alias Newspaper.{Intake, Publishing}
   alias Newspaper.Publishing.GeneratedFeed
+  alias NewspaperWeb.AdminLive.Format
   import NewspaperWeb.AdminLive.Nav
 
   def mount(_params, _session, socket) do
@@ -59,9 +60,24 @@ defmodule NewspaperWeb.AdminLive.OutputFeeds do
     end
   end
 
-  def handle_info({:newspaper_data_changed, _event}, socket) do
+  def handle_event("toggle_feed", %{"id" => id}, socket) do
+    feed = Publishing.get_generated_feed!(to_id(id))
+
+    case Publishing.update_generated_feed(feed, %{enabled: not feed.enabled}) do
+      {:ok, _feed} ->
+        {:noreply, assign_data(socket)}
+
+      {:error, _changeset} ->
+        {:noreply, put_flash(socket, :error, "Output feed could not be updated")}
+    end
+  end
+
+  def handle_info({:newspaper_data_changed, event}, socket)
+      when event in [:publishing_changed, :processing_changed, :intake_changed] do
     {:noreply, assign_data(socket)}
   end
+
+  def handle_info({:newspaper_data_changed, _event}, socket), do: {:noreply, socket}
 
   def render(assigns) do
     ~H"""
@@ -149,6 +165,16 @@ defmodule NewspaperWeb.AdminLive.OutputFeeds do
             </div>
 
             <div class="flex items-center gap-2 lg:justify-end">
+              <button
+                class="btn btn-sm btn-square"
+                phx-click="toggle_feed"
+                phx-value-id={feed.id}
+                id={"toggle-output-feed-#{feed.id}"}
+                title={if feed.enabled, do: "Disable output feed", else: "Enable output feed"}
+                aria-label={if feed.enabled, do: "Disable output feed", else: "Enable output feed"}
+              >
+                <.icon name={if feed.enabled, do: "hero-pause", else: "hero-play"} class="size-4" />
+              </button>
               <.link
                 navigate={~p"/output-feeds/#{feed.id}"}
                 class="btn btn-sm"
@@ -198,6 +224,12 @@ defmodule NewspaperWeb.AdminLive.OutputFeeds do
         label="Description"
         type="textarea"
       />
+      <input
+        id={"#{@id}-intake-groups-empty"}
+        type="hidden"
+        name="generated_feed[intake_group_ids][]"
+        value=""
+      />
       <.input
         name="generated_feed[intake_group_ids][]"
         label="Included intake groups"
@@ -206,6 +238,12 @@ defmodule NewspaperWeb.AdminLive.OutputFeeds do
         options={Enum.map(@groups, &{&1.name, &1.id})}
         value={@intake_group_ids}
         class="select select-bordered min-h-32 w-full"
+      />
+      <input
+        id={"#{@id}-input-feeds-empty"}
+        type="hidden"
+        name="generated_feed[input_feed_ids][]"
+        value=""
       />
       <.input
         name="generated_feed[input_feed_ids][]"
@@ -285,6 +323,5 @@ defmodule NewspaperWeb.AdminLive.OutputFeeds do
     Enum.join([title, body, link], " · ")
   end
 
-  defp to_id(id) when is_integer(id), do: id
-  defp to_id(id) when is_binary(id), do: String.to_integer(id)
+  defp to_id(id), do: Format.parse_id(id)
 end

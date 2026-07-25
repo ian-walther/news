@@ -7,6 +7,7 @@ defmodule NewspaperWeb.AdminLive.SiteExtractionPolicies do
   alias Newspaper.Content.SiteExtractionPolicy
   alias Newspaper.Processing.Dispatcher
   alias Newspaper.Processing.Registry
+  alias NewspaperWeb.AdminLive.Format
 
   def mount(_params, _session, socket) do
     if connected?(socket), do: Newspaper.Events.subscribe()
@@ -89,9 +90,12 @@ defmodule NewspaperWeb.AdminLive.SiteExtractionPolicies do
     {:noreply, socket |> put_flash(kind, message) |> assign_policies()}
   end
 
-  def handle_info({:newspaper_data_changed, _event}, socket) do
+  def handle_info({:newspaper_data_changed, event}, socket)
+      when event in [:site_extraction_policies_changed, :processing_changed] do
     {:noreply, assign_policies(socket)}
   end
+
+  def handle_info({:newspaper_data_changed, _event}, socket), do: {:noreply, socket}
 
   def render(assigns) do
     ~H"""
@@ -198,7 +202,7 @@ defmodule NewspaperWeb.AdminLive.SiteExtractionPolicies do
                 Last success: {extractor_label(policy.last_successful_implementation)}
               </span>
             </div>
-            <p :if={present?(policy.notes)} class="mt-2 text-sm text-base-content/75">
+            <p :if={Format.present?(policy.notes)} class="mt-2 text-sm text-base-content/75">
               {policy.notes}
             </p>
           </div>
@@ -324,8 +328,6 @@ defmodule NewspaperWeb.AdminLive.SiteExtractionPolicies do
       :error -> key
     end
   end
-
-  defp present?(value), do: is_binary(value) and String.trim(value) != ""
 
   defp retry_site_message(site_host) do
     case Dispatcher.retry_now(site_host) do

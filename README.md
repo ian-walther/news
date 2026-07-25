@@ -86,10 +86,10 @@ Later, production can point at a shared network Postgres instance by changing
 
 ## Current Surface
 
-- Intake groups and input feed configuration
-- Output feed configuration
-- Manual and scheduled global fetch
-- Eager raw item capture
-- Intake-group dedupe
-- Durable generated feed item snapshots
-- GUID-based RSS output URLs at `/feeds/:feed_guid.xml`
+- Optional intake groups, independent input feeds, and output-feed configuration
+- Manual and scheduled conditional feed collection with eager raw item capture
+- URL and feed-stable-ID dedupe within grouped or independent intake boundaries
+- Durable generated feed item snapshots and GUID-based RSS endpoints
+- Site-scoped simple/headless extraction with escalation, pacing, and retry history
+- Ollama-backed article title and summary digestion
+- Live processing, article, failure, and operation visibility

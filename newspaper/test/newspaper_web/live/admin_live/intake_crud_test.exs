@@ -71,6 +71,11 @@ defmodule NewspaperWeb.AdminLive.IntakeCrudTest do
     |> element("#edit-feed-#{feed.id}")
     |> render_click()
 
+    assert has_element?(
+             view,
+             "#edit-input-feed-auth-required-#{feed.id}[disabled]"
+           )
+
     view
     |> form("#edit-input-feed-form-#{feed.id}", %{
       "input_feed" => %{
@@ -78,8 +83,7 @@ defmodule NewspaperWeb.AdminLive.IntakeCrudTest do
         "url" => "https://example.com/garage-updated.xml",
         "outlet_name" => "Garage Outlet",
         "intake_group_id" => group.id,
-        "enabled" => "true",
-        "auth_required" => "false"
+        "enabled" => "true"
       }
     })
     |> render_submit()

@@ -25,10 +25,14 @@ defmodule NewspaperWeb.AdminLive.OutputFeed do
   end
 
   def handle_event("update_feed", %{"generated_feed" => params}, socket) do
+    params =
+      params
+      |> Map.put_new("intake_group_ids", [])
+      |> Map.put_new("input_feed_ids", [])
+
     changeset =
       socket.assigns.feed
       |> Publishing.change_generated_feed(params)
-      |> validate_rendering_dependencies(socket.assigns)
 
     if changeset.valid? do
       rendering_changed = rendering_changed?(socket.assigns.feed, changeset)
@@ -156,12 +160,21 @@ defmodule NewspaperWeb.AdminLive.OutputFeed do
      |> put_flash(:error, "Output feed re-render stopped: #{inspect(reason)}")}
   end
 
-  def handle_info({:newspaper_data_changed, _event}, socket) do
+  def handle_info({:newspaper_data_changed, event}, socket)
+      when event in [
+             :publishing_changed,
+             :processing_changed,
+             :operations_changed,
+             :settings_changed,
+             :intake_changed
+           ] do
     case Publishing.get_generated_feed(socket.assigns.feed_id) do
       nil -> {:noreply, push_navigate(socket, to: ~p"/output-feeds")}
-      feed -> {:noreply, assign_processing(socket, feed)}
+      feed -> {:noreply, socket |> assign_feed(feed) |> assign_processing(feed)}
     end
   end
+
+  def handle_info({:newspaper_data_changed, _event}, socket), do: {:noreply, socket}
 
   def render(assigns) do
     ~H"""
@@ -376,6 +389,12 @@ defmodule NewspaperWeb.AdminLive.OutputFeed do
 
             <section class="border-y border-base-300 py-5">
               <h3 class="mb-4 text-sm font-semibold uppercase text-base-content/55">Sources</h3>
+              <input
+                id="output-feed-intake-groups-empty"
+                type="hidden"
+                name="generated_feed[intake_group_ids][]"
+                value=""
+              />
               <.input
                 id="output-feed-intake-groups"
                 name="generated_feed[intake_group_ids][]"
@@ -385,6 +404,12 @@ defmodule NewspaperWeb.AdminLive.OutputFeed do
                 options={Enum.map(@groups, &{&1.name, &1.id})}
                 value={@intake_group_ids}
                 class="select min-h-28 w-full"
+              />
+              <input
+                id="output-feed-input-feeds-empty"
+                type="hidden"
+                name="generated_feed[input_feed_ids][]"
+                value=""
               />
               <.input
                 id="output-feed-input-feeds"
@@ -498,7 +523,6 @@ defmodule NewspaperWeb.AdminLive.OutputFeed do
 
   defp assign_feed(socket, feed \\ nil) do
     feed = feed || Publishing.get_generated_feed!(socket.assigns.feed_id)
-    feed = Publishing.get_generated_feed!(feed.id)
 
     socket
     |> assign(:feed, feed)
@@ -583,7 +607,7 @@ defmodule NewspaperWeb.AdminLive.OutputFeed do
   defp validate_processing_toggle(assigns, "digestion", true) do
     cond do
       not assigns.extraction_state.enabled -> {:error, :extraction_step_required}
-      blank?(assigns.settings.ollama_model) -> {:error, :ollama_model_not_configured}
+      Format.blank?(assigns.settings.ollama_model) -> {:error, :ollama_model_not_configured}
       true -> :ok
     end
   end
@@ -605,29 +629,6 @@ defmodule NewspaperWeb.AdminLive.OutputFeed do
   end
 
   defp validate_processing_toggle(_assigns, _step_type, _enabled), do: :ok
-
-  defp validate_rendering_dependencies(changeset, assigns) do
-    title_source = Changeset.get_field(changeset, :title_source)
-    body_source = Changeset.get_field(changeset, :body_source)
-    hosted_links = Changeset.get_field(changeset, :link_to_hosted_article)
-
-    changeset =
-      if (title_source == "digest" or body_source == "digest_summary") and
-           not assigns.digestion_state.enabled do
-        field = if title_source == "digest", do: :title_source, else: :body_source
-        Changeset.add_error(changeset, field, "requires article digestion")
-      else
-        changeset
-      end
-
-    if (hosted_links or body_source == "extracted_content" or title_source == "digest" or
-          body_source == "digest_summary") and not assigns.extraction_state.enabled do
-      field = if hosted_links, do: :link_to_hosted_article, else: :body_source
-      Changeset.add_error(changeset, field, "requires article extraction")
-    else
-      changeset
-    end
-  end
 
   defp rendering_changed?(feed, changeset) do
     Enum.any?([:link_to_hosted_article, :title_source, :body_source], fn field ->
@@ -654,14 +655,14 @@ defmodule NewspaperWeb.AdminLive.OutputFeed do
 
   defp digestion_toggle_disabled?(assigns) do
     not assigns.digestion_state.enabled and
-      (not assigns.extraction_state.enabled or blank?(assigns.settings.ollama_model))
+      (not assigns.extraction_state.enabled or Format.blank?(assigns.settings.ollama_model))
   end
 
   defp digestion_toggle_title(assigns) do
     cond do
       assigns.digestion_state.enabled -> nil
       not assigns.extraction_state.enabled -> "Enable article extraction first"
-      blank?(assigns.settings.ollama_model) -> "Configure an Ollama model first"
+      Format.blank?(assigns.settings.ollama_model) -> "Configure an Ollama model first"
       true -> nil
     end
   end
@@ -759,6 +760,4 @@ defmodule NewspaperWeb.AdminLive.OutputFeed do
       "#{counts["queued"] || 0} queued · #{counts["running"] || 0} running · " <>
       "#{counts["skipped"] || 0} skipped"
   end
-
-  defp blank?(value), do: value in [nil, ""]
 end

@@ -37,8 +37,7 @@ defmodule Newspaper.Publishing.GeneratedFeed do
       :enabled,
       :link_to_hosted_article,
       :title_source,
-      :body_source,
-      :policy_config
+      :body_source
     ])
     |> Newspaper.Guid.put_new(:guid, "feed")
     |> validate_required([:guid, :title, :item_limit])

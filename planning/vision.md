@@ -21,8 +21,8 @@ Reliable extraction across static, JavaScript-rendered, and authenticated source
 Generated feed curation is the initial product mode.
 
 - Subscribe to multiple source feeds and sub-feeds.
-- Group related input feeds into intake groups.
-- Deduplicate repeated articles within intake groups.
+- Optionally group related input feeds when they should share one dedupe boundary.
+- Deduplicate repeated articles within a group or within one ungrouped feed.
 - Preserve where each article appeared.
 - Publish output feeds from the post-intake article pool.
 - Use output feeds primarily for categories while keeping the mechanism generic.

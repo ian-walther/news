@@ -23,6 +23,15 @@ defmodule Newspaper.DigestionTest do
              Digestion.list_models("http://desktop.home:11434/")
   end
 
+  test "fingerprints only the content the model receives" do
+    model_input = String.duplicate("a", 60_000)
+    first = %ArticleExtraction{content_text: model_input <> "first ignored suffix"}
+    second = %ArticleExtraction{content_text: model_input <> "second ignored suffix"}
+
+    assert Digestion.input_fingerprint(first, "qwen3.6:27b") ==
+             Digestion.input_fingerprint(second, "qwen3.6:27b")
+  end
+
   test "generates and validates one structured article digest" do
     summary =
       1..100
@@ -82,6 +91,7 @@ defmodule Newspaper.DigestionTest do
     assert metadata.model == "qwen3.6:27b"
     assert metadata.input_metadata["article_extraction_id"] == 42
     refute Map.has_key?(metadata.output_metadata, "message")
+    assert Jason.decode!(metadata.output_metadata["raw_content"])["summary"] == summary
   end
 
   test "rejects undersized model output" do
@@ -95,7 +105,12 @@ defmodule Newspaper.DigestionTest do
 
     extraction = %ArticleExtraction{content_text: "Article content."}
 
-    assert {:error, "Generated summary is too short"} =
+    assert {:error,
+            %{
+              kind: "structured_output",
+              message: "Generated summary is too short",
+              retryable: false
+            }} =
              Digestion.generate(extraction, %{
                ollama_base_url: "http://desktop.home:11434",
                ollama_model: "qwen3.6:27b"

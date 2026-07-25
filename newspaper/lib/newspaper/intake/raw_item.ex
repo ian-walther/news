@@ -28,8 +28,6 @@ defmodule Newspaper.Intake.RawItem do
   def changeset(raw_item, attrs) do
     raw_item
     |> cast(attrs, [
-      :input_feed_id,
-      :intake_group_id,
       :feed_guid,
       :url,
       :title,
@@ -48,5 +46,7 @@ defmodule Newspaper.Intake.RawItem do
     |> validate_required([:input_feed_id, :discovered_at])
     |> assoc_constraint(:input_feed)
     |> assoc_constraint(:intake_group)
+    |> unique_constraint(:feed_guid, name: :raw_items_input_feed_id_feed_guid_index)
+    |> unique_constraint(:url, name: :raw_items_input_feed_id_url_index)
   end
 end

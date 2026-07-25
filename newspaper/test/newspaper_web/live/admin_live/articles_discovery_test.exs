@@ -56,6 +56,31 @@ defmodule NewspaperWeb.AdminLive.ArticlesDiscoveryTest do
     refute has_element?(not_requested_view, "#article-#{headlights.id}")
   end
 
+  test "treats SQL wildcard characters in article searches literally", %{conn: conn} do
+    {_feed, percent_article} =
+      source_article!(
+        "The Autopian",
+        "https://www.theautopian.com/feed/",
+        "https://www.theautopian.com/efficiency/",
+        "An engine reaches 100% efficiency",
+        ~U[2026-07-15 14:00:00Z]
+      )
+
+    {_feed, ordinary_article} =
+      source_article!(
+        "Ars Technica",
+        "https://feeds.arstechnica.com/arstechnica/index",
+        "https://arstechnica.com/science/ordinary/",
+        "An ordinary science article",
+        ~U[2026-07-15 15:00:00Z]
+      )
+
+    {:ok, view, _html} = live(conn, ~p"/articles?search=%25")
+
+    assert has_element?(view, "#article-#{percent_article.id}")
+    refute has_element?(view, "#article-#{ordinary_article.id}")
+  end
+
   test "filters articles by digestion state within the selected output feed", %{conn: conn} do
     {autopian, headlights} =
       source_article!(

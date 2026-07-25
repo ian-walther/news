@@ -19,16 +19,19 @@ defmodule NewspaperWeb.AdminLive.Articles do
     {:noreply, assign_data(socket, filters_from_params(params))}
   end
 
-  def handle_info({:newspaper_data_changed, _event}, socket) do
+  def handle_info({:newspaper_data_changed, event}, socket)
+      when event in [:processing_changed, :publishing_changed, :intake_changed] do
     {:noreply, assign_data(socket, socket.assigns.filters)}
   end
+
+  def handle_info({:newspaper_data_changed, _event}, socket), do: {:noreply, socket}
 
   def handle_event("filter", %{"filters" => params}, socket) do
     filters = %{
       socket.assigns.filters
       | search: String.trim(params["search"] || ""),
-        input_feed_id: parse_optional_id(params["input_feed_id"]),
-        generated_feed_id: parse_optional_id(params["generated_feed_id"]),
+        input_feed_id: Format.parse_id(params["input_feed_id"]),
+        generated_feed_id: Format.parse_id(params["generated_feed_id"]),
         page: 1
     }
 
@@ -191,7 +194,7 @@ defmodule NewspaperWeb.AdminLive.Articles do
         >
           <div class="min-w-0">
             <div class="flex flex-wrap items-center gap-2">
-              <span class={status_badge_class(entry.article.extraction_status)}>
+              <span class={Format.status_badge_class(entry.article.extraction_status)}>
                 {status_label(entry.article.extraction_status)}
               </span>
               <span :if={entry.article.extraction_metadata["failure_kind"]} class="text-xs text-error">
@@ -383,8 +386,8 @@ defmodule NewspaperWeb.AdminLive.Articles do
       stage: stage,
       status: allowed_status(stage, params["status"]),
       search: String.trim(params["search"] || ""),
-      input_feed_id: parse_optional_id(params["input_feed_id"]),
-      generated_feed_id: parse_optional_id(params["generated_feed_id"]),
+      input_feed_id: Format.parse_id(params["input_feed_id"]),
+      generated_feed_id: Format.parse_id(params["generated_feed_id"]),
       page: parse_page(params["page"])
     }
   end
@@ -414,18 +417,7 @@ defmodule NewspaperWeb.AdminLive.Articles do
   defp allowed_status("extraction", status) when status in @extraction_statuses, do: status
   defp allowed_status(_stage, _status), do: "all"
 
-  defp parse_optional_id(value) when is_integer(value) and value > 0, do: value
-
-  defp parse_optional_id(value) when is_binary(value) do
-    case Integer.parse(value) do
-      {id, ""} when id > 0 -> id
-      _ -> nil
-    end
-  end
-
-  defp parse_optional_id(_value), do: nil
-
-  defp parse_page(value), do: parse_optional_id(value) || 1
+  defp parse_page(value), do: Format.parse_id(value) || 1
 
   defp stage_options, do: [{"extraction", "Extraction"}, {"digestion", "Digestion"}]
 
@@ -456,14 +448,6 @@ defmodule NewspaperWeb.AdminLive.Articles do
   defp status_label("succeeded"), do: "Ready"
   defp status_label("not_requested"), do: "Not requested"
   defp status_label(value), do: Format.status_label(value)
-
-  defp status_badge_class("succeeded"), do: "badge badge-success badge-soft"
-  defp status_badge_class("failed"), do: "badge badge-error badge-soft"
-
-  defp status_badge_class(status) when status in ["queued", "running"],
-    do: "badge badge-info badge-soft"
-
-  defp status_badge_class(_status), do: "badge badge-ghost"
 
   defp extract_action?(entry) do
     entry.extraction_eligible? && not processing?(entry.article)
@@ -555,7 +539,7 @@ defmodule NewspaperWeb.AdminLive.Articles do
     |> Enum.map(& &1.input_feed.name)
     |> Enum.uniq()
     |> Enum.join(" · ")
-    |> empty_fallback(article.outlet_name || article_host(article.canonical_url))
+    |> empty_fallback(article.outlet_name || Format.article_host(article.canonical_url))
   end
 
   defp article_outputs(article) do
@@ -568,14 +552,4 @@ defmodule NewspaperWeb.AdminLive.Articles do
 
   defp empty_fallback("", fallback), do: fallback
   defp empty_fallback(value, _fallback), do: value
-
-  defp article_host(nil), do: "Unknown source"
-
-  defp article_host(url) do
-    url
-    |> URI.parse()
-    |> Map.get(:host)
-    |> to_string()
-    |> String.trim_leading("www.")
-  end
 end

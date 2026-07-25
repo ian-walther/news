@@ -1,7 +1,8 @@
 defmodule Newspaper.Publishing do
   import Ecto.Query
 
-  alias Newspaper.Content.{Article, ArticleDigest, ArticleExtraction}
+  alias Ecto.Changeset
+  alias Newspaper.Content.{Article, ArticleDigest, ArticleExtraction, ArticleSource}
   alias Newspaper.Intake.{InputFeed, IntakeGroup, RawItem}
   alias Newspaper.Publishing.{GeneratedFeed, GeneratedFeedItem}
   alias Newspaper.Processing
@@ -46,9 +47,11 @@ defmodule Newspaper.Publishing do
   end
 
   def update_generated_feed(%GeneratedFeed{} = feed, attrs) do
+    feed = preload_feed(feed)
+
     feed
-    |> preload_feed()
     |> GeneratedFeed.changeset(attrs)
+    |> validate_rendering_dependencies(feed.pipeline_steps)
     |> put_memberships(attrs)
     |> Repo.update()
     |> broadcast_on_ok(:publishing_changed)
@@ -61,9 +64,11 @@ defmodule Newspaper.Publishing do
   end
 
   def change_generated_feed(%GeneratedFeed{} = feed, attrs \\ %{}) do
+    feed = preload_feed(feed)
+
     feed
-    |> preload_feed()
     |> GeneratedFeed.changeset(attrs)
+    |> validate_rendering_dependencies(feed.pipeline_steps)
   end
 
   def list_recent_items(arg \\ 100)
@@ -131,29 +136,53 @@ defmodule Newspaper.Publishing do
     |> Repo.all()
   end
 
+  def list_eligible_articles(%GeneratedFeed{} = feed, opts \\ []) do
+    feed = preload_feed(feed)
+    after_id = Keyword.get(opts, :after_id, 0)
+    limit = Keyword.get(opts, :limit, 500)
+    direct_feed_ids = Enum.map(feed.input_feeds, & &1.id)
+    intake_group_ids = Enum.map(feed.intake_groups, & &1.id)
+
+    Article
+    |> join(:inner, [article], source in ArticleSource, on: source.article_id == article.id)
+    |> join(:inner, [_article, source], input_feed in InputFeed,
+      on: input_feed.id == source.input_feed_id
+    )
+    |> where(
+      [article, _source, input_feed],
+      article.id > ^after_id and
+        (input_feed.id in ^direct_feed_ids or
+           (input_feed.enabled == true and input_feed.intake_group_id in ^intake_group_ids))
+    )
+    |> distinct([article], article.id)
+    |> order_by([article], asc: article.id)
+    |> limit(^limit)
+    |> Repo.all()
+  end
+
   def publish_article_to_eligible_feeds(%Article{} = article) do
     article = Repo.preload(article, [:article_sources, :representative_raw_item])
     source_ids = Enum.map(article.article_sources, & &1.input_feed_id)
-    feed_ids = eligible_generated_feed_ids(article.intake_group_id, source_ids)
+    feed_ids = eligible_generated_feed_ids(source_ids)
 
-    Enum.map(feed_ids, fn feed_id ->
-      feed = Repo.get!(GeneratedFeed, feed_id)
-      create_item_if_missing(feed, article)
-    end)
+    GeneratedFeed
+    |> where([feed], feed.id in ^feed_ids)
+    |> Repo.all()
+    |> Enum.map(&create_item_if_missing(&1, article))
   end
 
   def create_item_if_missing(%GeneratedFeed{} = feed, %Article{} = article) do
     case ensure_item_for_feed(feed, article) do
       {:created, item} -> {:ok, item}
       {:existing, item} -> {:ok, item}
+      {:error, _reason} = error -> error
     end
   end
 
   def ensure_item_for_feed(%GeneratedFeed{} = feed, %Article{} = article) do
     case Repo.get_by(GeneratedFeedItem, generated_feed_id: feed.id, article_id: article.id) do
       nil ->
-        {:ok, item} = create_item!(feed, article)
-        {:created, item}
+        create_item(feed, article)
 
       item ->
         {:existing, item}
@@ -187,7 +216,7 @@ defmodule Newspaper.Publishing do
 
   def feed_url(%GeneratedFeed{guid: guid}), do: "/feeds/#{guid}.xml"
 
-  defp create_item!(feed, article) do
+  defp create_item(feed, article) do
     article = Repo.preload(article, [:representative_raw_item, :extraction])
 
     raw_item =
@@ -205,15 +234,38 @@ defmodule Newspaper.Publishing do
       }
       |> Map.merge(render_attrs(feed, article, raw_item, nil, now))
 
-    result =
+    insert_result =
       %GeneratedFeedItem{}
       |> GeneratedFeedItem.changeset(attrs)
-      |> Repo.insert()
-      |> broadcast_on_ok(:publishing_changed)
+      |> Repo.insert(
+        on_conflict: :nothing,
+        conflict_target: [:generated_feed_id, :article_id]
+      )
 
-    with {:ok, item} <- result,
-         {:ok, _attempts} <- Processing.enqueue_item(item),
-         {:ok, item} <- rerender_item(item) do
+    case insert_result do
+      {:ok, %GeneratedFeedItem{id: nil}} ->
+        {:existing,
+         Repo.get_by!(GeneratedFeedItem,
+           generated_feed_id: feed.id,
+           article_id: article.id
+         )}
+
+      {:ok, item} ->
+        with {:ok, _attempts} <- Processing.enqueue_item(item),
+             {:ok, item} <- maybe_rerender_new_item(item, feed) do
+          Newspaper.Events.broadcast_data_changed(:publishing_changed)
+          {:created, item}
+        end
+
+      {:error, _changeset} = error ->
+        error
+    end
+  end
+
+  defp maybe_rerender_new_item(item, feed) do
+    if feed.title_source == "digest" or feed.body_source == "digest_summary" do
+      rerender_item(item, broadcast: false)
+    else
       {:ok, item}
     end
   end
@@ -335,9 +387,7 @@ defmodule Newspaper.Publishing do
          raw_item
        ) do
     if extracted_html(article) do
-      NewspaperWeb.Endpoint.url()
-      |> URI.merge("/articles/#{guid}")
-      |> URI.to_string()
+      "/articles/#{guid}"
     else
       raw_item && raw_item.url
     end
@@ -350,30 +400,9 @@ defmodule Newspaper.Publishing do
     content_html
   end
 
-  defp extracted_html(%Article{
-         extraction_status: "succeeded",
-         extracted_content: extracted_content
-       })
-       when is_binary(extracted_content) and extracted_content != "" do
-    extracted_content
-  end
-
   defp extracted_html(_article), do: nil
 
-  defp eligible_generated_feed_ids(intake_group_id, source_ids) do
-    intake_group_feed_ids =
-      if is_nil(intake_group_id) do
-        []
-      else
-        Repo.all(
-          from gfig in "generated_feed_intake_groups",
-            join: gf in GeneratedFeed,
-            on: gf.id == gfig.generated_feed_id,
-            where: gf.enabled == true and gfig.intake_group_id == ^intake_group_id,
-            select: gfig.generated_feed_id
-        )
-      end
-
+  defp eligible_generated_feed_ids(source_ids) do
     input_feed_feed_ids =
       if source_ids == [] do
         []
@@ -387,29 +416,93 @@ defmodule Newspaper.Publishing do
         )
       end
 
-    Enum.uniq(intake_group_feed_ids ++ input_feed_feed_ids)
+    intake_group_feed_ids =
+      if source_ids == [] do
+        []
+      else
+        Repo.all(
+          from gfig in "generated_feed_intake_groups",
+            join: gf in GeneratedFeed,
+            on: gf.id == gfig.generated_feed_id,
+            join: input_feed in InputFeed,
+            on: input_feed.intake_group_id == gfig.intake_group_id,
+            where:
+              gf.enabled == true and input_feed.enabled == true and
+                input_feed.id in ^source_ids,
+            select: gfig.generated_feed_id
+        )
+      end
+
+    Enum.uniq(input_feed_feed_ids ++ intake_group_feed_ids)
   end
 
-  defp preload_feed(feed), do: Repo.preload(feed, [:intake_groups, :input_feeds])
+  defp preload_feed(feed), do: Repo.preload(feed, [:intake_groups, :input_feeds, :pipeline_steps])
+
+  defp validate_rendering_dependencies(changeset, steps) do
+    title_source = Changeset.get_field(changeset, :title_source)
+    body_source = Changeset.get_field(changeset, :body_source)
+    hosted_links = Changeset.get_field(changeset, :link_to_hosted_article)
+    extraction_enabled? = enabled_step?(steps, "extraction")
+    digestion_enabled? = enabled_step?(steps, "digestion")
+
+    changeset =
+      if (title_source == "digest" or body_source == "digest_summary") and
+           not digestion_enabled? do
+        field = if title_source == "digest", do: :title_source, else: :body_source
+        Changeset.add_error(changeset, field, "requires article digestion")
+      else
+        changeset
+      end
+
+    if (hosted_links or body_source == "extracted_content" or title_source == "digest" or
+          body_source == "digest_summary") and not extraction_enabled? do
+      field =
+        cond do
+          hosted_links -> :link_to_hosted_article
+          title_source == "digest" -> :title_source
+          true -> :body_source
+        end
+
+      Changeset.add_error(changeset, field, "requires article extraction")
+    else
+      changeset
+    end
+  end
+
+  defp enabled_step?(steps, step_type) do
+    Enum.any?(steps, &(&1.step_type == step_type and &1.enabled))
+  end
 
   defp put_memberships(changeset, attrs) do
-    intake_group_ids = list_ids(attrs, "intake_group_ids", :intake_group_ids)
-    input_feed_ids = list_ids(attrs, "input_feed_ids", :input_feed_ids)
-
     changeset
-    |> Ecto.Changeset.put_assoc(
+    |> maybe_put_membership(
+      attrs,
       :intake_groups,
-      Repo.all(from g in IntakeGroup, where: g.id in ^intake_group_ids)
+      "intake_group_ids",
+      :intake_group_ids,
+      IntakeGroup
     )
-    |> Ecto.Changeset.put_assoc(
+    |> maybe_put_membership(
+      attrs,
       :input_feeds,
-      Repo.all(from f in InputFeed, where: f.id in ^input_feed_ids)
+      "input_feed_ids",
+      :input_feed_ids,
+      InputFeed
     )
   end
 
-  defp list_ids(attrs, string_key, atom_key) do
-    attrs
-    |> Map.get(string_key, Map.get(attrs, atom_key, []))
+  defp maybe_put_membership(changeset, attrs, association, string_key, atom_key, schema) do
+    if Map.has_key?(attrs, string_key) or Map.has_key?(attrs, atom_key) do
+      ids = list_ids(Map.get(attrs, string_key, Map.get(attrs, atom_key)))
+      records = Repo.all(from record in schema, where: record.id in ^ids)
+      Ecto.Changeset.put_assoc(changeset, association, records)
+    else
+      changeset
+    end
+  end
+
+  defp list_ids(value) do
+    value
     |> List.wrap()
     |> Enum.reject(&(&1 in [nil, ""]))
     |> Enum.map(fn

@@ -8,7 +8,7 @@ defmodule Newspaper.ProcessingBatchTest do
   alias Newspaper.Operations.Run
   alias Newspaper.Pipeline
   alias Newspaper.Processing
-  alias Newspaper.Processing.{BatchDispatcher, PipelineStepAttempt}
+  alias Newspaper.Processing.{BatchDispatcher, GeneratedFeedItemStep, PipelineStepAttempt}
   alias Newspaper.Publishing
   alias Newspaper.Repo
 
@@ -20,6 +20,17 @@ defmodule Newspaper.ProcessingBatchTest do
     end)
 
     :ok
+  end
+
+  test "enabling a step materializes bookkeeping rows for existing feed items" do
+    feed = extraction_feed_with_articles!()
+
+    item_steps = Repo.all(GeneratedFeedItemStep)
+    assert length(item_steps) == 2
+    assert Enum.all?(item_steps, &(&1.status == "not_requested"))
+
+    [step] = Processing.list_steps(feed.id)
+    assert Processing.feed_step_counts(feed.id)[step.id].not_requested == 2
   end
 
   test "tracks a feed extraction batch from queue through completion" do
@@ -141,11 +152,19 @@ defmodule Newspaper.ProcessingBatchTest do
     assert Processing.feed_processing_counts(feed.id) == %{
              items: 2,
              extracted: 0,
-             unavailable: 1,
-             not_requested: 1
+             unavailable: 0,
+             not_requested: 2
            }
 
     batch = start_feed_batch_and_wait!(feed)
+
+    assert Processing.feed_processing_counts(feed.id) == %{
+             items: 2,
+             extracted: 0,
+             unavailable: 1,
+             not_requested: 0
+           }
+
     assert batch.summary_counts["items_considered"] == 2
     assert batch.summary_counts["total"] == 1
     assert batch.summary_counts["skipped"] == 1

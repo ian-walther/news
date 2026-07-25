@@ -13,6 +13,7 @@ defmodule Newspaper.Application do
       {DNSCluster, query: Application.get_env(:newspaper, :dns_cluster_query) || :ignore},
       {Phoenix.PubSub, name: Newspaper.PubSub},
       {Task.Supervisor, name: Newspaper.Processing.TaskSupervisor},
+      Newspaper.Operations.Recovery,
       Newspaper.Processing.BatchDispatcher,
       Newspaper.Processing.Dispatcher,
       Newspaper.Digestion.Dispatcher,

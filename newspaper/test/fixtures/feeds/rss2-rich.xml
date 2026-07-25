@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"
+     xmlns:content="http://purl.org/rss/1.0/modules/content/"
+     xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>The Autopian</title>
+    <link>https://www.theautopian.com/</link>
+    <description>Independent car news and culture.</description>
+    <lastBuildDate>Thu, 23 Jul 2026 14:30:00 GMT</lastBuildDate>
+    <category>Cars</category>
+    <item>
+      <guid isPermaLink="false">autopian-rich-entry</guid>
+      <link>https://www.theautopian.com/a-rich-feed-entry/</link>
+      <title>A Rich Feed Entry</title>
+      <dc:creator>Mercedes Streeter</dc:creator>
+      <pubDate>Thu, 23 Jul 2026 14:00:00 GMT</pubDate>
+      <dc:date>2026-07-23T14:05:00Z</dc:date>
+      <description><![CDATA[<p>A short feed summary.</p>]]></description>
+      <content:encoded><![CDATA[
+        <article>
+          <p>The complete article body from the publisher feed.</p>
+          <p>This paragraph must survive durable intake.</p>
+        </article>
+      ]]></content:encoded>
+      <category>Cars</category>
+      <category>Design</category>
+      <enclosure
+        url="https://www.theautopian.com/media/story.mp3"
+        type="audio/mpeg"
+        length="123456"
+      />
+    </item>
+  </channel>
+</rss>

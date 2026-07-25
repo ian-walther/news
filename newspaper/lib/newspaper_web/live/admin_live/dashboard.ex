@@ -63,7 +63,7 @@ defmodule NewspaperWeb.AdminLive.Dashboard do
       </header>
 
       <section id="article-health" class="mb-10 border-y border-base-300">
-        <div class="grid grid-cols-2 divide-x divide-y divide-base-300 sm:grid-cols-4 sm:divide-y-0">
+        <div class="grid grid-cols-2 divide-x divide-y divide-base-300 sm:grid-cols-5 sm:divide-y-0">
           <div id="article-stat-total" class="px-4 py-5 first:pl-0">
             <p class="text-xs font-medium uppercase text-base-content/55">Articles</p>
             <p class="mt-1 text-2xl font-semibold tabular-nums">{@article_stats.total}</p>
@@ -97,6 +97,13 @@ defmodule NewspaperWeb.AdminLive.Dashboard do
               {@article_stats.not_requested} not requested
             </p>
           </div>
+          <div id="article-stat-skipped" class="px-4 py-5">
+            <p class="text-xs font-medium uppercase text-base-content/55">No content</p>
+            <p class="mt-1 text-2xl font-semibold tabular-nums">
+              {@article_stats.skipped}
+            </p>
+            <p class="mt-1 text-xs text-base-content/55">Intentionally skipped</p>
+          </div>
         </div>
       </section>
 
@@ -122,7 +129,7 @@ defmodule NewspaperWeb.AdminLive.Dashboard do
                 <p class="truncate font-medium">
                   {batch.related["generated_feed_title"] || "Output feed"}
                 </p>
-                <span class={status_badge_class(batch.status)}>
+                <span class={Format.status_badge_class(batch.status)}>
                   {Format.status_label(batch.status)}
                 </span>
               </div>
@@ -175,7 +182,7 @@ defmodule NewspaperWeb.AdminLive.Dashboard do
                 </.link>
                 <p class="mt-1 truncate text-xs text-base-content/55">
                   {article.outlet_name || article.extraction.site_name ||
-                    article_host(article.canonical_url)}
+                    Format.article_host(article.canonical_url)}
                 </p>
               </div>
               <.local_time
@@ -274,7 +281,7 @@ defmodule NewspaperWeb.AdminLive.Dashboard do
             <h2 class="mb-3 text-base font-semibold">Latest feed refresh</h2>
             <div class="border-y border-base-300 py-4 text-sm">
               <div class="flex items-center justify-between gap-3">
-                <span class={status_badge_class(@latest_fetch.status)}>
+                <span class={Format.status_badge_class(@latest_fetch.status)}>
                   {Format.status_label(@latest_fetch.status)}
                 </span>
                 <.local_time
@@ -316,21 +323,6 @@ defmodule NewspaperWeb.AdminLive.Dashboard do
     total = max(counts["total"] || 0, 1)
     complete = (counts["succeeded"] || 0) + (counts["failed"] || 0)
     min(round(complete / total * 100), 100)
-  end
-
-  defp status_badge_class("succeeded"), do: "badge badge-success badge-soft"
-  defp status_badge_class("failed"), do: "badge badge-error badge-soft"
-  defp status_badge_class("running"), do: "badge badge-info badge-soft"
-  defp status_badge_class(_status), do: "badge badge-ghost"
-
-  defp article_host(nil), do: "Unknown source"
-
-  defp article_host(url) do
-    url
-    |> URI.parse()
-    |> Map.get(:host)
-    |> to_string()
-    |> String.trim_leading("www.")
   end
 
   defp occurrence_label(1), do: "1 occurrence"

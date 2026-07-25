@@ -9,7 +9,7 @@ defmodule Newspaper.Operations do
 
   def get_settings do
     Repo.one(from s in AppSettings, order_by: [asc: s.id], limit: 1) ||
-      create_default_settings!()
+      create_default_settings()
   end
 
   def update_settings(%AppSettings{} = settings, attrs) do
@@ -99,6 +99,45 @@ defmodule Newspaper.Operations do
     |> broadcast_on_ok(:operations_changed)
   end
 
+  def fail_running_pipeline_step_runs(attempt_id, message) when is_integer(attempt_id) do
+    {count, _rows} =
+      Run
+      |> where(
+        [run],
+        run.run_type == "pipeline_step" and run.status == "running" and
+          run.pipeline_step_attempt_id == ^attempt_id
+      )
+      |> Repo.update_all(
+        set: [
+          status: "failed",
+          finished_at: DateTime.utc_now(:second),
+          error_summary: message
+        ]
+      )
+
+    if count > 0, do: Newspaper.Events.broadcast_data_changed(:operations_changed)
+    :ok
+  end
+
+  def fail_interrupted_operation_runs do
+    {count, _rows} =
+      Run
+      |> where(
+        [run],
+        run.status == "running" and run.run_type not in ["pipeline_step", "pipeline_batch"]
+      )
+      |> Repo.update_all(
+        set: [
+          status: "failed",
+          finished_at: DateTime.utc_now(:second),
+          error_summary: "Application restarted while run was in progress"
+        ]
+      )
+
+    if count > 0, do: Newspaper.Events.broadcast_data_changed(:operations_changed)
+    count
+  end
+
   def list_failures(limit \\ 50) do
     Failure
     |> order_by([f], desc: f.inserted_at)
@@ -169,10 +208,12 @@ defmodule Newspaper.Operations do
     |> Enum.take(limit)
   end
 
-  defp create_default_settings! do
+  defp create_default_settings do
     %AppSettings{}
     |> AppSettings.changeset(%{})
-    |> Repo.insert!()
+    |> Repo.insert(on_conflict: :nothing)
+
+    Repo.one!(from settings in AppSettings, order_by: [asc: settings.id], limit: 1)
   end
 
   defp broadcast_on_ok({:ok, value}, event) do
@@ -334,7 +375,10 @@ defmodule Newspaper.Operations do
     end
   end
 
-  defp healthy_input_feed?(%InputFeed{last_fetch_status: "ok"}), do: true
+  defp healthy_input_feed?(%InputFeed{last_fetch_status: status})
+       when status in ["ok", "not_modified"],
+       do: true
+
   defp healthy_input_feed?(_feed), do: false
 
   defp failure_group_key(failure, input_feeds) do

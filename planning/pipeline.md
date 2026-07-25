@@ -4,7 +4,7 @@
 
 The system is a pipeline with two separate feed concepts:
 
-- Input feeds enter the system through intake groups.
+- Input feeds enter the system either independently or through optional intake groups.
 - Output feeds are published to FreshRSS after selection, categorization, filtering, and rendering.
 
 Intake groups and output feeds should not be collapsed into one abstraction.
@@ -28,11 +28,13 @@ Examples:
 
 ### Intake Group
 
-An intake group is an aggregation and deduplication unit for related input feeds.
+An intake group is an optional aggregation and deduplication unit for related input feeds.
 
 An intake group commonly represents one outlet or one logical source family. For example, a WSJ intake group may contain several WSJ sub-feeds. The intake group preserves every raw source appearance while resolving repeated entries to one canonical article record.
 
-Deduplication belongs primarily at the intake-group layer.
+Use an intake group only when more than one feed should share a deduplication boundary. An ungrouped input feed forms its own boundary. Existing feeds do not need artificial per-site groups merely to participate in intake or output feeds.
+
+Deduplication belongs at the intake boundary: the intake group when present, otherwise the individual input feed.
 
 ### Article Pool
 
@@ -89,10 +91,10 @@ The output-scoped extraction implementation is `extraction.site_policy`. Simple 
 
 ```text
 input feeds
-  -> intake group
+  -> intake boundary
        fetch feeds
        store raw feed entries and raw parsed metadata
-       dedupe related source feeds
+       dedupe within an optional group or one ungrouped feed
        preserve source appearances
   -> article pool
        canonical article records
@@ -130,10 +132,10 @@ The feed foundation is:
 
 ```text
 input feed configured
-  -> intake group configured
+  -> optional intake group configured for cross-feed dedupe
   -> feed fetched
   -> raw item stored
-  -> canonical article resolved within intake group
+  -> canonical article resolved within its intake boundary
   -> source appearance recorded
   -> output feed eligibility determined by deterministic rules
   -> generated feed item record created or updated
@@ -211,7 +213,7 @@ extraction.simple_html
 
 The app should store site-level extraction policy so future articles can skip extractors that are known not to work for that site. For example, if a site consistently requires a real logged-in browser session, future extraction should begin at the headed-browser implementation rather than wasting time on simple HTML or isolated headless rendering.
 
-Workers should return normalized success, no-content, quality, and failure information. Failure kinds such as JavaScript required, auth required, paywall, or blocking can trigger escalation. A no-content result from a lower-capability extractor also triggers escalation. Network errors and timeouts should remain ordinary transient failures. A retryable rate limit should create a durable queued attempt so site backoff, process restarts, and later site recovery cannot strand the article in a failed state. Automatic retries should have a finite budget; exhausting it leaves a visible, manually retryable failure. The first simple-client rate limit should back off, honoring any explicit `Retry-After`. If Simple is rate-limited again on a later attempt, the same attempt should probe Headless because publishers can use `429` for bot classification. Explicit retry timing controls when the later attempt is allowed, not whether it may escalate. A headless rate limit must preserve adaptive backoff and must not automatically escalate into the persistent headed browser.
+Workers should return normalized success, no-content, quality, and failure information. The direct and isolated-headless workers need concrete transport outcomes such as rate limited, not found, blocked, unsupported content type, timeout, network error, and generic HTTP or browser failure. Richer semantic outcomes such as JavaScript required, auth required, and paywall should be added only when representative pages provide deterministic evidence for them; they are part of the headed-browser quality work rather than labels to infer speculatively. A no-content result from a lower-capability extractor also triggers escalation. Network errors and timeouts should remain ordinary transient failures. A retryable rate limit should create a durable queued attempt so site backoff, process restarts, and later site recovery cannot strand the article in a failed state. Automatic retries should have a finite budget; exhausting it leaves a visible, manually retryable failure. The first simple-client rate limit should back off, honoring any explicit `Retry-After`. If Simple is rate-limited again on a later attempt, the same attempt should probe Headless because publishers can use `429` for bot classification. Explicit retry timing controls when the later attempt is allowed, not whether it may escalate. A headless rate limit must preserve adaptive backoff and must not automatically escalate into the persistent headed browser.
 
 Extractor success means that a usable article body remains after shared structural and semantic boilerplate removal. Navigation, legal footers, related-link blocks, executable media embeds, player chrome, and other page furniture must not count toward extraction quality. Embed cleanup should remove narrowly identified low-prose media containers and explicit fallback instructions while preserving ordinary editorial figures and surrounding prose. An embedded-media page with no remaining article body returns `no_content` with a zero-length usable result. The app escalates when another extractor is available; a terminal no-content result is a valid skipped outcome, creates no failure record, and skips downstream content-dependent steps. A later successful re-extraction reactivates those skipped steps through normal pipeline advancement. Legitimate short prose, structured schedules, and link-rich editorial text remain article content rather than being rejected by a prose-only heuristic. Workers should expose candidate length plus removed-boilerplate and embedded-media measurements so quality decisions remain auditable.
 
@@ -219,7 +221,7 @@ An article URL can become stale while a publisher keeps the underlying post avai
 
 ## Deduplication Boundary
 
-Deduplication should focus on duplicates within an intake group, especially repeated articles published to multiple feeds from the same outlet.
+Deduplication should focus on duplicates within an intake boundary. A grouped boundary catches repeated articles published to multiple related feeds; an ungrouped feed deduplicates only against its own history.
 
 Current dedupe should use normalized URL and feed-provided stable ID as its initial signals. The dedupe engine should be extensible, but title/date similarity, canonical link metadata from extracted pages, redirects, and semantic clustering should wait until real feed behavior shows they are needed.
 
@@ -263,6 +265,6 @@ Supported inclusion rules:
 
 Current rules are additive only. Explicit excludes should wait for later policy work.
 
-Including an intake group means all enabled input feeds currently in that intake group, plus enabled input feeds added to that intake group later. Individual input feed inclusion exists for precision when an output feed should include only selected feeds from an intake group.
+Including an intake group means all enabled input feeds currently in that intake group, plus enabled input feeds added to that intake group later. Individual input feed inclusion exists both for ungrouped feeds and for precision when an output feed should include only selected feeds from an intake group.
 
 If a canonical article is eligible for an output feed through multiple included input feeds or intake groups, it should still create only one generated feed item for that output feed.

@@ -3,6 +3,7 @@ defmodule NewspaperWeb.AdminLive.Intake do
 
   alias Newspaper.{Intake, Pipeline}
   alias Newspaper.Intake.{InputFeed, IntakeGroup}
+  alias NewspaperWeb.AdminLive.Format
   import NewspaperWeb.AdminLive.Nav
 
   def mount(_params, _session, socket) do
@@ -190,9 +191,11 @@ defmodule NewspaperWeb.AdminLive.Intake do
     {:noreply, socket |> put_flash(:info, "Feed fetch started") |> assign_data()}
   end
 
-  def handle_info({:newspaper_data_changed, _event}, socket) do
+  def handle_info({:newspaper_data_changed, :intake_changed}, socket) do
     {:noreply, assign_data(socket)}
   end
+
+  def handle_info({:newspaper_data_changed, _event}, socket), do: {:noreply, socket}
 
   def render(assigns) do
     ~H"""
@@ -465,9 +468,13 @@ defmodule NewspaperWeb.AdminLive.Intake do
         <.input
           id={"edit-input-feed-auth-required-#{@feed.id}"}
           field={@feed_edit_form[:auth_required]}
-          label="Auth required"
+          label="Signed-in headed browser required (reserved)"
           type="checkbox"
+          disabled
         />
+        <p class="text-xs text-base-content/55 md:col-span-2">
+          Reserved for the headed-browser extraction tier; it does not affect fetching yet.
+        </p>
         <div class="flex gap-2 md:col-span-2">
           <.button>Save feed</.button>
           <button type="button" class="btn" phx-click="cancel_edit_feed">
@@ -605,6 +612,5 @@ defmodule NewspaperWeb.AdminLive.Intake do
   defp fetch_status_class("failed"), do: "badge badge-error badge-soft"
   defp fetch_status_class(_status), do: "badge badge-ghost"
 
-  defp to_id(id) when is_integer(id), do: id
-  defp to_id(id) when is_binary(id), do: String.to_integer(id)
+  defp to_id(id), do: Format.parse_id(id)
 end

@@ -16,7 +16,7 @@ defmodule NewspaperWeb.AdminLive.SettingsTest do
     end)
 
     {:ok, view, _html} = live(conn, ~p"/settings")
-    _ = :sys.get_state(view.pid)
+    render_async(view)
 
     assert has_element?(view, "#settings-form input[name='app_settings[ollama_base_url]']")
     assert has_element?(view, "#settings-form select[name='app_settings[ollama_model]']")
@@ -27,7 +27,6 @@ defmodule NewspaperWeb.AdminLive.SettingsTest do
     |> form("#settings-form", %{
       "app_settings" => %{
         "fetch_interval_minutes" => "60",
-        "run_history_enabled" => "true",
         "ollama_base_url" => "http://desktop.home:11434",
         "ollama_model" => "qwen3.6:27b"
       }
@@ -52,7 +51,7 @@ defmodule NewspaperWeb.AdminLive.SettingsTest do
     end)
 
     {:ok, view, _html} = live(conn, ~p"/settings")
-    _ = :sys.get_state(view.pid)
+    render_async(view)
 
     assert has_element?(view, "#settings-form option[value='qwen3.6:27b'][selected]")
     assert has_element?(view, "#ollama-connection-status", "Unavailable")

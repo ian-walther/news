@@ -6,6 +6,7 @@ import {
   parseReadableArticle,
   sanitizeArticleHtml
 } from "../src/extractor.mjs";
+import { parseRetryAfter } from "@newspaper/extraction-core";
 
 test("parseReadableArticle extracts a fixture article", async () => {
   const html = await readFile(new URL("./fixtures/readable-article.html", import.meta.url), "utf8");
@@ -183,6 +184,60 @@ test("extractFromRequest reports rate limiting distinctly", async () => {
   assert.equal(result.debug_metadata.retry_after_ms, 120_000);
 });
 
+test("parseRetryAfter accepts an HTTP date", () => {
+  const retryAt = new Date(Date.now() + 60_000).toUTCString();
+  const retryAfterMs = parseRetryAfter(retryAt);
+
+  assert.ok(retryAfterMs >= 59_000);
+  assert.ok(retryAfterMs <= 60_000);
+});
+
+test("extractFromRequest preserves the final redirect URL", async () => {
+  const html = await readFixture("readable-article.html");
+  const response = new Response(html, {
+    status: 200,
+    headers: { "content-type": "text/html; charset=utf-8" }
+  });
+
+  Object.defineProperty(response, "url", {
+    value: "https://example.com/news/canonical-story"
+  });
+
+  const result = await extractFromRequest(
+    {
+      schema_version: 1,
+      implementation: "extraction.simple_html",
+      url: "https://example.com/news/redirecting-story",
+      options: { minimum_text_length: 100 }
+    },
+    { fetchImpl: async () => response }
+  );
+
+  assert.equal(result.status, "ok");
+  assert.equal(result.final_url, "https://example.com/news/canonical-story");
+});
+
+test("extractFromRequest rejects unsupported content types", async () => {
+  const result = await extractFromRequest(
+    {
+      schema_version: 1,
+      implementation: "extraction.simple_html",
+      url: "https://example.com/document.pdf"
+    },
+    {
+      fetchImpl: async () =>
+        new Response("%PDF", {
+          status: 200,
+          headers: { "content-type": "application/pdf" }
+        })
+    }
+  );
+
+  assert.equal(result.status, "failed");
+  assert.equal(result.failure_kind, "unsupported_content_type");
+  assert.equal(result.retryable, false);
+});
+
 test("sanitizeArticleHtml removes active content and resolves relative URLs", () => {
   const html = `
     <article onclick="alert('bad')">
@@ -197,6 +252,15 @@ test("sanitizeArticleHtml removes active content and resolves relative URLs", ()
   assert.doesNotMatch(sanitized, /script|onclick|onerror|style=/);
   assert.match(sanitized, /href="https:\/\/example.com\/story"/);
   assert.match(sanitized, /src="https:\/\/example.com\/image.jpg"/);
+});
+
+test("sanitizeArticleHtml preserves awkward text delimiters", () => {
+  const sanitized = sanitizeArticleHtml(
+    "<article><p>An awkward delimiter: ]]&gt; remains article text.</p></article>",
+    "https://example.com/news/page"
+  );
+
+  assert.match(sanitized, /An awkward delimiter: \]\]&gt; remains article text\./);
 });
 
 function fixtureFetch(html, url) {

@@ -58,7 +58,10 @@ defmodule Newspaper.DigestionPipelineTest do
     assert {:noreply, recovered_state} =
              Newspaper.Digestion.Dispatcher.handle_info(:recover, %{
                queue: PriorityQueue.new(),
-               running?: true
+               running?: true,
+               task_pid: nil,
+               task_ref: nil,
+               attempt_id: nil
              })
 
     assert PriorityQueue.to_list(recovered_state.queue) == [attempt.id]
@@ -112,6 +115,15 @@ defmodule Newspaper.DigestionPipelineTest do
              {"extraction", "succeeded"},
              {"digestion", "queued"}
            ]
+
+    extraction_step = Enum.find(item_steps, &(&1.step_type == "extraction"))
+
+    extraction_step
+    |> GeneratedFeedItemStep.changeset(%{
+      finished_at: ~U[2026-07-20 12:00:00Z],
+      reused_artifact: false
+    })
+    |> Repo.update!()
 
     attempt = Repo.one!(PipelineStepAttempt)
     assert attempt.step_type == "digestion"
@@ -169,6 +181,7 @@ defmodule Newspaper.DigestionPipelineTest do
     assert digest.generated_title =~ "rectangular headlights"
     assert digest.generated_summary == summary
     refute Map.has_key?(digest.output_metadata, "message")
+    assert Jason.decode!(digest.output_metadata["raw_content"])["summary"] == summary
 
     digestion_step =
       Repo.get_by!(GeneratedFeedItemStep,
@@ -178,6 +191,10 @@ defmodule Newspaper.DigestionPipelineTest do
 
     assert digestion_step.status == "succeeded"
     assert digestion_step.article_digest_id == digest.id
+
+    extraction_step = Repo.get!(GeneratedFeedItemStep, extraction_step.id)
+    assert extraction_step.finished_at == ~U[2026-07-20 12:00:00Z]
+    refute extraction_step.reused_artifact
 
     item = Repo.get!(GeneratedFeedItem, item.id)
     assert item.publication_status == "published"

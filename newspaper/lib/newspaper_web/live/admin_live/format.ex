@@ -71,6 +71,42 @@ defmodule NewspaperWeb.AdminLive.Format do
 
   def status_label(value), do: humanize(value)
 
+  def status_badge_class("succeeded"), do: "badge badge-success badge-soft"
+  def status_badge_class("failed"), do: "badge badge-error badge-soft"
+  def status_badge_class("running"), do: "badge badge-info badge-soft"
+  def status_badge_class("queued"), do: "badge badge-warning badge-soft"
+  def status_badge_class(_status), do: "badge badge-ghost"
+
+  def parse_id(value) when is_integer(value) and value > 0, do: value
+
+  def parse_id(value) when is_binary(value) do
+    case Integer.parse(value) do
+      {id, ""} when id > 0 -> id
+      _ -> nil
+    end
+  end
+
+  def parse_id(_value), do: nil
+
+  def article_host(url), do: url_host(url) || "Unknown source"
+
+  def url_host(nil), do: nil
+
+  def url_host(url) do
+    url
+    |> URI.parse()
+    |> Map.get(:host)
+    |> case do
+      nil -> nil
+      host -> String.trim_leading(host, "www.")
+    end
+  rescue
+    _ -> nil
+  end
+
+  def blank?(value), do: value in [nil, ""]
+  def present?(value), do: is_binary(value) and String.trim(value) != ""
+
   def duration(%{started_at: nil}), do: "Duration unavailable"
 
   def duration(%{started_at: started_at, finished_at: finished_at}) do
@@ -112,19 +148,5 @@ defmodule NewspaperWeb.AdminLive.Format do
     |> to_string()
     |> String.replace("_", " ")
     |> String.capitalize()
-  end
-
-  defp url_host(nil), do: nil
-
-  defp url_host(url) do
-    url
-    |> URI.parse()
-    |> Map.get(:host)
-    |> case do
-      nil -> nil
-      host -> String.trim_leading(host, "www.")
-    end
-  rescue
-    _ -> nil
   end
 end

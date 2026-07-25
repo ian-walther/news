@@ -26,8 +26,10 @@ config :logger, level: :warning
 config :newspaper, :processing_dispatcher_enabled, false
 config :newspaper, :pipeline_scheduler_enabled, false
 config :newspaper, :pipeline_batch_recovery_enabled, false
+config :newspaper, :operations_recovery_enabled, false
 
 config :newspaper, :ollama_req_options, plug: {Req.Test, Newspaper.Digestion.OllamaClient}
+config :newspaper, :feed_req_options, plug: {Req.Test, Newspaper.Pipeline.FeedClient}
 
 # Initialize plugs at runtime for faster test compilation
 config :phoenix, :plug_init_mode, :runtime

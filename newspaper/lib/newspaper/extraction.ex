@@ -42,6 +42,15 @@ defmodule Newspaper.Extraction do
            run_url_candidates(url_candidates, article, policy, attempt) do
       finish_result(run, attempt, article, policy, result, input_snapshot)
     else
+      {:error, {:extractor_unavailable, implementation_key}} ->
+        fail_execution(
+          attempt,
+          "Configured extractor is not available: #{implementation_key}",
+          "extractor_unavailable",
+          run,
+          false
+        )
+
       {:error, reason} ->
         fail_execution(attempt, inspect(reason), "execution_error", run)
     end
@@ -70,37 +79,41 @@ defmodule Newspaper.Extraction do
   defp run_implementation_chain(url, article, policy, attempt) do
     candidates = Registry.extraction_candidates(policy.minimum_implementation)
 
-    candidates
-    |> Enum.with_index()
-    |> Enum.reduce_while({:error, :no_available_implementation}, fn
-      {implementation_key, index}, _result ->
-        implementation = Registry.fetch_extractor!(implementation_key)
+    if candidates == [] do
+      {:error, {:extractor_unavailable, policy.minimum_implementation}}
+    else
+      candidates
+      |> Enum.with_index()
+      |> Enum.reduce_while({:error, :no_available_implementation}, fn
+        {implementation_key, index}, _result ->
+          implementation = Registry.fetch_extractor!(implementation_key)
 
-        {result, input_snapshot, started_at, finished_at} =
-          run_implementation(implementation, url, article, policy, attempt)
+          {result, input_snapshot, started_at, finished_at} =
+            run_implementation(implementation, url, article, policy, attempt)
 
-        case record_worker_attempt(
-               article,
-               policy,
-               attempt,
-               result,
-               input_snapshot,
-               started_at,
-               finished_at
-             ) do
-          {:ok, _worker_attempt} ->
-            more_candidates? = index < length(candidates) - 1
+          case record_worker_attempt(
+                 article,
+                 policy,
+                 attempt,
+                 result,
+                 input_snapshot,
+                 started_at,
+                 finished_at
+               ) do
+            {:ok, _worker_attempt} ->
+              more_candidates? = index < length(candidates) - 1
 
-            if escalate?(policy, result) and more_candidates? do
-              {:cont, {:ok, {result, input_snapshot}}}
-            else
-              {:halt, {:ok, {result, input_snapshot}}}
-            end
+              if escalate?(policy, result) and more_candidates? do
+                {:cont, {:ok, {result, input_snapshot}}}
+              else
+                {:halt, {:ok, {result, input_snapshot}}}
+              end
 
-          {:error, reason} ->
-            {:halt, {:error, reason}}
-        end
-    end)
+            {:error, reason} ->
+              {:halt, {:error, reason}}
+          end
+      end)
+    end
   end
 
   defp run_implementation(implementation, url, article, policy, attempt) do
@@ -267,21 +280,23 @@ defmodule Newspaper.Extraction do
     end
   end
 
-  defp fail_execution(attempt, message, failure_kind, run \\ nil) do
+  defp fail_execution(attempt, message, failure_kind, run \\ nil, retryable \\ true) do
     attempt = Processing.get_attempt!(attempt.id)
     Content.set_extraction_status(attempt.article, "failed")
 
     result =
       Processing.finish_attempt(attempt, "failed", %{
         failure_kind: failure_kind,
-        retryable: true,
+        retryable: retryable,
         error_message: message
       })
 
-    create_failure(run, attempt, failure_kind, message, true)
+    create_failure(run, attempt, failure_kind, message, retryable)
 
     if run do
       Operations.finish_run(run, "failed", %{error_summary: message})
+    else
+      Operations.fail_running_pipeline_step_runs(attempt.id, message)
     end
 
     result

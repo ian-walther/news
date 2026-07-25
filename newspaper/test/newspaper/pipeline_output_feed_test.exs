@@ -1,7 +1,8 @@
 defmodule Newspaper.PipelineOutputFeedTest do
   use Newspaper.DataCase
 
-  alias Newspaper.Content.{Article, ArticleSource}
+  alias Newspaper.Content
+  alias Newspaper.Content.{Article, ArticleDedupeKey, ArticleSource}
   alias Newspaper.Intake
   alias Newspaper.Intake.RawItem
   alias Newspaper.Pipeline
@@ -129,7 +130,12 @@ defmodule Newspaper.PipelineOutputFeedTest do
       })
 
     assert {:ok, run} = Pipeline.process_intake_group(f1_group.id, "test")
-    assert run.summary_counts == %{"articles_seen" => 1, "raw_items" => 2}
+
+    assert run.summary_counts == %{
+             "articles_seen" => 1,
+             "item_failures" => 0,
+             "raw_items" => 2
+           }
 
     article = Repo.one!(Article) |> Repo.preload(:article_sources)
     assert article.representative_raw_item_id == earlier_raw_item.id
@@ -140,6 +146,52 @@ defmodule Newspaper.PipelineOutputFeedTest do
              autosport.id,
              racer.id
            ]
+  end
+
+  test "dedupes different URLs across grouped feeds by publisher stable ID" do
+    {:ok, outlet} = Intake.create_intake_group(%{name: "Example Outlet"})
+
+    {:ok, technology_feed} =
+      Intake.create_input_feed(%{
+        intake_group_id: outlet.id,
+        name: "Example Technology",
+        url: "https://example.com/technology.xml"
+      })
+
+    {:ok, business_feed} =
+      Intake.create_input_feed(%{
+        intake_group_id: outlet.id,
+        name: "Example Business",
+        url: "https://example.com/business.xml"
+      })
+
+    stable_id = "tag:example.com,2026:shared-story"
+
+    for {feed, url} <- [
+          {technology_feed, "https://example.com/story?ref=technology"},
+          {business_feed, "https://example.com/story?ref=business"}
+        ] do
+      assert {:ok, _raw_item} =
+               Intake.upsert_raw_item(feed, %{
+                 feed_guid: stable_id,
+                 url: url,
+                 title: "A story shared by two publisher feeds",
+                 published_at: ~U[2026-07-23 12:00:00Z],
+                 discovered_at: ~U[2026-07-23 12:01:00Z]
+               })
+    end
+
+    assert {:ok, run} = Pipeline.process_intake_group(outlet.id, "test")
+
+    assert run.summary_counts == %{
+             "articles_seen" => 1,
+             "item_failures" => 0,
+             "raw_items" => 2
+           }
+
+    assert Repo.aggregate(Article, :count) == 1
+    assert Repo.aggregate(ArticleDedupeKey, :count) == 3
+    assert Repo.aggregate(ArticleSource, :count) == 2
   end
 
   test "backfill skips disabled output feeds" do
@@ -185,7 +237,132 @@ defmodule Newspaper.PipelineOutputFeedTest do
     assert Repo.aggregate(GeneratedFeedItem, :count) == 0
   end
 
-  test "retrying an unsupported retryable failure records the manual attempt" do
+  test "updating output settings without membership fields preserves memberships" do
+    {:ok, group} = Intake.create_intake_group(%{name: "Technology"})
+    {:ok, feed} = Intake.create_input_feed(%{name: "Ars", url: "https://example.com/ars.xml"})
+
+    {:ok, output} =
+      Publishing.create_generated_feed(%{
+        "title" => "Tech",
+        "intake_group_ids" => [group.id],
+        "input_feed_ids" => [feed.id]
+      })
+
+    assert {:ok, updated} = Publishing.update_generated_feed(output, %{"title" => "Technology"})
+
+    updated = Publishing.get_generated_feed!(updated.id)
+    assert Enum.map(updated.intake_groups, & &1.id) == [group.id]
+    assert Enum.map(updated.input_feeds, & &1.id) == [feed.id]
+  end
+
+  test "rendering dependencies are enforced outside the LiveView" do
+    {:ok, output_feed} = Publishing.create_generated_feed(%{"title" => "Cars"})
+
+    assert {:error, changeset} =
+             Publishing.update_generated_feed(output_feed, %{
+               link_to_hosted_article: true
+             })
+
+    assert {"requires article extraction", _metadata} =
+             Keyword.fetch!(changeset.errors, :link_to_hosted_article)
+  end
+
+  test "group backfill excludes articles seen only through disabled input feeds" do
+    {:ok, group} = Intake.create_intake_group(%{name: "Motorsport"})
+
+    {:ok, input_feed} =
+      Intake.create_input_feed(%{
+        intake_group_id: group.id,
+        name: "Racer",
+        url: "https://racer.com/feed/"
+      })
+
+    assert {:ok, _raw_item} =
+             Intake.upsert_raw_item(input_feed, %{
+               feed_guid: "disabled-source-article",
+               url: "https://racer.com/disabled-source-article/",
+               title: "An article from a disabled source",
+               discovered_at: ~U[2026-07-24 12:00:00Z]
+             })
+
+    assert {:ok, _run} = Pipeline.process_intake_group(group.id, "test")
+    assert {:ok, _input_feed} = Intake.update_input_feed(input_feed, %{enabled: false})
+
+    {:ok, output_feed} =
+      Publishing.create_generated_feed(%{
+        "title" => "Motorsport",
+        "intake_group_ids" => [group.id]
+      })
+
+    assert {:ok, run} = Pipeline.backfill_output_feed(output_feed.id, "test")
+    assert run.summary_counts["articles_considered"] == 0
+    assert Repo.aggregate(GeneratedFeedItem, :count) == 0
+  end
+
+  test "an earlier source appearance does not replace extraction-corrected metadata" do
+    {:ok, group} = Intake.create_intake_group(%{name: "The Autopian"})
+
+    {:ok, later_feed} =
+      Intake.create_input_feed(%{
+        intake_group_id: group.id,
+        name: "Autopian Cars",
+        url: "https://example.com/autopian-cars.xml"
+      })
+
+    {:ok, earlier_feed} =
+      Intake.create_input_feed(%{
+        intake_group_id: group.id,
+        name: "Autopian Features",
+        url: "https://example.com/autopian-features.xml"
+      })
+
+    stable_id = "autopian-shared-article"
+
+    assert {:ok, _later_raw_item} =
+             Intake.upsert_raw_item(later_feed, %{
+               feed_guid: stable_id,
+               url: "https://www.theautopian.com/raw-feed-url/",
+               title: "A Clickbait Feed Title",
+               author: "The Autopian Staff",
+               published_at: ~U[2026-07-24 13:00:00Z],
+               discovered_at: ~U[2026-07-24 13:01:00Z]
+             })
+
+    assert {:ok, _run} = Pipeline.process_intake_group(group.id, "test")
+    article = Repo.one!(Article)
+    assert {:ok, policy} = Content.get_site_extraction_policy_for_url(article.canonical_url)
+
+    assert {:ok, {_, _, _}} =
+             Content.record_extraction_success(article, policy, nil, %{
+               "implementation" => "extraction.simple_html",
+               "final_url" => "https://www.theautopian.com/canonical-article/",
+               "title" => "The Extracted Article Title",
+               "byline" => "Mercedes Streeter",
+               "content_html" => "<p>Complete article content.</p>",
+               "content_text" => "Complete article content.",
+               "quality" => %{"score" => 1}
+             })
+
+    assert {:ok, earlier_raw_item} =
+             Intake.upsert_raw_item(earlier_feed, %{
+               feed_guid: stable_id,
+               url: "https://www.theautopian.com/older-feed-url/",
+               title: "An Older Raw Feed Title",
+               author: "Unknown",
+               published_at: ~U[2026-07-24 12:00:00Z],
+               discovered_at: ~U[2026-07-24 12:01:00Z]
+             })
+
+    assert {:ok, _run} = Pipeline.process_intake_group(group.id, "test")
+
+    article = Repo.one!(Article)
+    assert article.representative_raw_item_id == earlier_raw_item.id
+    assert article.title == "The Extracted Article Title"
+    assert article.author == "Mercedes Streeter"
+    assert article.resolved_url == "https://www.theautopian.com/canonical-article/"
+  end
+
+  test "retrying an unsupported failure does not record an attempt that never ran" do
     {:ok, failure} =
       Newspaper.Operations.create_failure(%{
         failure_type: "generated_feed_render_failed",
@@ -197,7 +374,7 @@ defmodule Newspaper.PipelineOutputFeedTest do
     assert {:error, :unsupported_failure_type} = Pipeline.retry_failure(failure.id, "test_retry")
 
     failure = Newspaper.Operations.get_failure!(failure.id)
-    assert failure.retry_count == 1
-    assert failure.last_attempted_at
+    assert failure.retry_count == 0
+    refute failure.last_attempted_at
   end
 end

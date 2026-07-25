@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <id>https://www.theverge.com/rss/index.xml</id>
+  <title>The Verge</title>
+  <subtitle>Technology, science, art, and culture.</subtitle>
+  <updated>2026-07-23T15:30:00Z</updated>
+  <link rel="alternate" href="https://www.theverge.com/" />
+  <link rel="self" href="https://www.theverge.com/rss/index.xml" />
+  <category term="Technology" />
+  <entry>
+    <id>tag:theverge.com,2026:rich-entry</id>
+    <title>Atom Feeds Can Carry Complete Articles</title>
+    <published>2026-07-23T15:00:00Z</published>
+    <updated>2026-07-23T15:05:00Z</updated>
+    <link rel="alternate" href="https://www.theverge.com/tech/rich-entry" />
+    <link
+      rel="enclosure"
+      href="https://cdn.vox-cdn.com/rich-entry.jpg"
+      type="image/jpeg"
+      length="654321"
+    />
+    <author>
+      <name>Sean Hollister</name>
+      <email>sean@example.com</email>
+    </author>
+    <category term="Technology" />
+    <category term="AI" />
+    <summary type="html"><![CDATA[<p>A concise Atom summary.</p>]]></summary>
+    <content type="html"><![CDATA[
+      <article>
+        <p>The complete Atom article body.</p>
+        <p>It is preferred over the summary.</p>
+      </article>
+    ]]></content>
+  </entry>
+</feed>

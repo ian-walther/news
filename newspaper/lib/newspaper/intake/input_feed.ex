@@ -11,6 +11,8 @@ defmodule Newspaper.Intake.InputFeed do
     field :auth_required, :boolean, default: false
     field :last_fetch_status, :string
     field :last_fetched_at, :utc_datetime
+    field :etag, :string
+    field :last_modified, :string
 
     belongs_to :intake_group, Newspaper.Intake.IntakeGroup
     has_many :raw_items, Newspaper.Intake.RawItem
@@ -25,15 +27,22 @@ defmodule Newspaper.Intake.InputFeed do
       :name,
       :url,
       :outlet_name,
-      :default_metadata,
       :enabled,
-      :auth_required,
-      :last_fetch_status,
-      :last_fetched_at
+      :auth_required
     ])
     |> validate_required([:name, :url])
     |> validate_format(:url, ~r/^https?:\/\//)
     |> assoc_constraint(:intake_group)
     |> unique_constraint(:url)
+  end
+
+  def fetch_state_changeset(feed, attrs) do
+    feed
+    |> cast(attrs, [
+      :last_fetch_status,
+      :last_fetched_at,
+      :etag,
+      :last_modified
+    ])
   end
 end

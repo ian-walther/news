@@ -17,6 +17,15 @@ defmodule Newspaper.Processing.Dispatcher do
     GenServer.cast(__MODULE__, {:enqueue, attempt_id, site_host, priority})
   end
 
+  def enqueue(attempt_id, _site_host, _priority) when is_integer(attempt_id) do
+    Processing.fail_dispatched_attempt(
+      attempt_id,
+      "invalid_url",
+      "Article has no usable extraction URL",
+      false
+    )
+  end
+
   def enqueue(_attempt_id, _site_host, _priority), do: :ok
 
   def retry_now(site_host) when is_binary(site_host) do
@@ -51,12 +60,25 @@ defmodule Newspaper.Processing.Dispatcher do
         attempt = Processing.get_attempt!(attempt.id)
         url = attempt.article.resolved_url || attempt.article.canonical_url
 
-        enqueue_attempt(
-          state,
-          attempt.id,
-          Content.site_host(url),
-          PriorityQueue.priority_for(attempt)
-        )
+        case Content.site_host(url) do
+          site_host when is_binary(site_host) ->
+            enqueue_attempt(
+              state,
+              attempt.id,
+              site_host,
+              PriorityQueue.priority_for(attempt)
+            )
+
+          _site_host ->
+            Processing.fail_dispatched_attempt(
+              attempt.id,
+              "invalid_url",
+              "Article has no usable extraction URL",
+              false
+            )
+
+            state
+        end
       end)
 
     {:noreply, state}
@@ -70,6 +92,25 @@ defmodule Newspaper.Processing.Dispatcher do
         {:noreply, state}
 
       _host_state ->
+        {:noreply, state}
+    end
+  end
+
+  def handle_info({:DOWN, ref, :process, _pid, reason}, state) do
+    case host_for_task_ref(state, ref) do
+      {site_host, host_state} ->
+        message = "Extraction dispatcher task exited: #{inspect(reason)}"
+
+        Processing.fail_dispatched_attempt(
+          host_state.attempt_id,
+          "dispatcher_task_exit",
+          message
+        )
+
+        state = put_host(state, site_host, clear_running(host_state))
+        {:noreply, schedule_host(state, site_host)}
+
+      nil ->
         {:noreply, state}
     end
   end
@@ -99,15 +140,19 @@ defmodule Newspaper.Processing.Dispatcher do
     {:noreply, enqueue_attempt(state, attempt_id, site_host, priority)}
   end
 
-  def handle_cast({:finished, site_host, result}, state) do
-    schedule_automatic_retry(result)
+  def handle_cast({:finished, site_host, task_pid, result}, state) do
+    case Map.get(state.hosts, site_host) do
+      %{task_pid: ^task_pid} = host_state ->
+        Process.demonitor(host_state.task_ref, [:flush])
+        schedule_automatic_retry(result)
 
-    host_state = Map.fetch!(state.hosts, site_host)
-    state = put_host(state, site_host, %{host_state | running?: false})
-    {:noreply, schedule_host(state, site_host)}
+        state = put_host(state, site_host, clear_running(host_state))
+        {:noreply, schedule_host(state, site_host)}
+
+      _host_state ->
+        {:noreply, state}
+    end
   end
-
-  defp enqueue_attempt(state, _attempt_id, nil, _priority), do: state
 
   defp enqueue_attempt(state, attempt_id, site_host, priority) do
     host_state = Map.get(state.hosts, site_host, new_host_state())
@@ -139,7 +184,15 @@ defmodule Newspaper.Processing.Dispatcher do
   end
 
   defp new_host_state do
-    %{queue: PriorityQueue.new(), running?: false, timer: nil, timer_token: nil}
+    %{
+      queue: PriorityQueue.new(),
+      running?: false,
+      timer: nil,
+      timer_token: nil,
+      task_pid: nil,
+      task_ref: nil,
+      attempt_id: nil
+    }
   end
 
   defp start_next(state, site_host) do
@@ -153,16 +206,34 @@ defmodule Newspaper.Processing.Dispatcher do
         result =
           Task.Supervisor.start_child(Newspaper.Processing.TaskSupervisor, fn ->
             result = Extraction.execute_attempt(attempt_id)
-            GenServer.cast(__MODULE__, {:finished, site_host, result})
+            GenServer.cast(__MODULE__, {:finished, site_host, self(), result})
           end)
 
         case result do
           {:ok, pid} ->
+            task_ref = Process.monitor(pid)
+            host_state = Map.fetch!(state.hosts, site_host)
+
+            state =
+              put_host(state, site_host, %{
+                host_state
+                | task_pid: pid,
+                  task_ref: task_ref,
+                  attempt_id: attempt_id
+              })
+
             {state, {:started, pid}}
 
           {:error, reason} ->
-            GenServer.cast(__MODULE__, {:finished, site_host, {:error, reason}})
-            {state, {:error, reason}}
+            Processing.fail_dispatched_attempt(
+              attempt_id,
+              "dispatcher_start_failed",
+              "Could not start extraction task: #{inspect(reason)}"
+            )
+
+            host_state = state.hosts[site_host]
+            state = put_host(state, site_host, clear_running(host_state))
+            {schedule_host(state, site_host), {:error, reason}}
         end
 
       {:empty, _queue} ->
@@ -178,6 +249,20 @@ defmodule Newspaper.Processing.Dispatcher do
   end
 
   defp clear_timer(host_state), do: %{host_state | timer: nil, timer_token: nil}
+
+  defp clear_running(host_state) do
+    %{
+      host_state
+      | running?: false,
+        task_pid: nil,
+        task_ref: nil,
+        attempt_id: nil
+    }
+  end
+
+  defp host_for_task_ref(state, ref) do
+    Enum.find(state.hosts, fn {_site_host, host_state} -> host_state.task_ref == ref end)
+  end
 
   defp put_host(state, site_host, host_state) do
     put_in(state, [:hosts, site_host], host_state)

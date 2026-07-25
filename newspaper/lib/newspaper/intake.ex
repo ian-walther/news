@@ -89,11 +89,16 @@ defmodule Newspaper.Intake do
     |> broadcast_on_ok(:intake_changed)
   end
 
-  def mark_input_feed_fetched(%InputFeed{} = feed, status) do
-    update_input_feed(feed, %{
-      last_fetch_status: status,
-      last_fetched_at: DateTime.utc_now(:second)
-    })
+  def mark_input_feed_fetched(%InputFeed{} = feed, status, attrs \\ %{}) do
+    attrs =
+      attrs
+      |> Map.put(:last_fetch_status, status)
+      |> Map.put(:last_fetched_at, DateTime.utc_now(:second))
+
+    feed
+    |> InputFeed.fetch_state_changeset(attrs)
+    |> Repo.update()
+    |> broadcast_on_ok(:intake_changed)
   end
 
   def change_input_feed(%InputFeed{} = feed, attrs \\ %{}) do
@@ -114,42 +119,72 @@ defmodule Newspaper.Intake do
     feed_guid = Map.get(attrs, :feed_guid) || Map.get(attrs, "feed_guid")
     url = Map.get(attrs, :url) || Map.get(attrs, "url")
 
-    cond do
-      present?(feed_guid) ->
-        Repo.one(
+    query =
+      cond do
+        present?(feed_guid) and present?(url) ->
           from r in RawItem,
-            where: r.input_feed_id == ^input_feed_id and r.feed_guid == ^feed_guid,
-            limit: 1
-        )
+            where:
+              r.input_feed_id == ^input_feed_id and
+                (r.feed_guid == ^feed_guid or r.url == ^url)
 
-      present?(url) ->
-        Repo.one(
+        present?(feed_guid) ->
           from r in RawItem,
-            where: r.input_feed_id == ^input_feed_id and r.url == ^url,
-            limit: 1
-        )
+            where: r.input_feed_id == ^input_feed_id and r.feed_guid == ^feed_guid
 
-      true ->
-        nil
+        present?(url) ->
+          from r in RawItem,
+            where: r.input_feed_id == ^input_feed_id and r.url == ^url
+
+        true ->
+          nil
+      end
+
+    if query do
+      query
+      |> order_by([r], asc: r.inserted_at)
+      |> limit(1)
+      |> Repo.one()
     end
   end
 
-  def upsert_raw_item(%InputFeed{} = feed, attrs) do
+  def upsert_raw_item(%InputFeed{} = feed, attrs, opts \\ []) do
     attrs =
       attrs
-      |> Map.put(:input_feed_id, feed.id)
-      |> Map.put(:intake_group_id, feed.intake_group_id)
       |> Map.put_new(:discovered_at, DateTime.utc_now(:second))
 
     case find_raw_item(feed, attrs) do
       nil ->
-        %RawItem{}
-        |> RawItem.changeset(attrs)
-        |> Repo.insert()
-        |> broadcast_on_ok(:intake_changed)
+        changeset =
+          %RawItem{
+            input_feed_id: feed.id,
+            intake_group_id: feed.intake_group_id
+          }
+          |> RawItem.changeset(attrs)
+
+        case Repo.insert(changeset, on_conflict: :nothing) do
+          {:ok, %RawItem{id: id} = raw_item} when not is_nil(id) ->
+            maybe_broadcast_raw_item(raw_item, opts)
+
+          {:ok, %RawItem{}} ->
+            case find_raw_item(feed, attrs) do
+              %RawItem{} = raw_item -> {:ok, raw_item}
+              nil -> {:error, :raw_item_conflict_without_match}
+            end
+
+          {:error, _changeset} = error ->
+            error
+        end
 
       %RawItem{} = raw_item ->
         {:ok, raw_item}
+    end
+  end
+
+  defp maybe_broadcast_raw_item(raw_item, opts) do
+    if Keyword.get(opts, :broadcast, true) do
+      broadcast_on_ok({:ok, raw_item}, :intake_changed)
+    else
+      {:ok, raw_item}
     end
   end
 

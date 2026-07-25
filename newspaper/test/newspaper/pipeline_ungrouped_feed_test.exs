@@ -36,7 +36,12 @@ defmodule Newspaper.PipelineUngroupedFeedTest do
 
     assert {:ok, run} = Pipeline.process_input_feed(input_feed.id, "test")
     assert run.status == "succeeded"
-    assert run.summary_counts == %{"articles_seen" => 1, "raw_items" => 1}
+
+    assert run.summary_counts == %{
+             "articles_seen" => 1,
+             "item_failures" => 0,
+             "raw_items" => 1
+           }
 
     item = Repo.one!(GeneratedFeedItem)
     assert item.generated_feed_id == generated_feed.id
@@ -48,6 +53,8 @@ defmodule Newspaper.PipelineUngroupedFeedTest do
 
     assert response(conn, 200) =~ "<title>Ungrouped Output</title>"
     assert response(conn, 200) =~ "<title>Ungrouped Entry</title>"
-    assert response(conn, 200) =~ "<![CDATA[<p>Original feed body</p>]]>"
+
+    assert response(conn, 200) =~
+             "<description>&lt;p&gt;Original feed body&lt;/p&gt;</description>"
   end
 end

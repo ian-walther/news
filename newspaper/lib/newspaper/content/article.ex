@@ -13,11 +13,11 @@ defmodule Newspaper.Content.Article do
     field :dedupe_scope, :string
     field :dedupe_key, :string
     field :extraction_status, :string, default: "not_requested"
-    field :extracted_content, :string
     field :extraction_metadata, :map, default: %{}
 
     belongs_to :intake_group, Newspaper.Intake.IntakeGroup
     belongs_to :representative_raw_item, Newspaper.Intake.RawItem
+    has_many :dedupe_keys, Newspaper.Content.ArticleDedupeKey
     has_many :article_sources, Newspaper.Content.ArticleSource
     has_many :article_extraction_attempts, Newspaper.Content.ArticleExtractionAttempt
     has_one :extraction, Newspaper.Content.ArticleExtraction
@@ -43,7 +43,6 @@ defmodule Newspaper.Content.Article do
       :dedupe_scope,
       :dedupe_key,
       :extraction_status,
-      :extracted_content,
       :extraction_metadata
     ])
     |> Newspaper.Guid.put_new(:guid, "art")

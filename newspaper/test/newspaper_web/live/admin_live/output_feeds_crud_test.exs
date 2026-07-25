@@ -114,4 +114,33 @@ defmodule NewspaperWeb.AdminLive.OutputFeedsCrudTest do
     assert has_element?(view, "#backfill-output-feed")
     assert has_element?(view, "#rerender-output-feed")
   end
+
+  test "toggles an output feed from the list without changing its membership", %{conn: conn} do
+    {:ok, input_feed} =
+      Intake.create_input_feed(%{
+        name: "The Autopian",
+        url: "https://www.theautopian.com/feed/"
+      })
+
+    {:ok, output_feed} =
+      Publishing.create_generated_feed(%{
+        "title" => "Cars",
+        "input_feed_ids" => [input_feed.id]
+      })
+
+    {:ok, view, _html} = live(conn, ~p"/output-feeds")
+
+    view
+    |> element("#toggle-output-feed-#{output_feed.id}")
+    |> render_click()
+
+    output_feed =
+      output_feed.id
+      |> Publishing.get_generated_feed!()
+      |> Repo.preload(:input_feeds, force: true)
+
+    refute output_feed.enabled
+    assert Enum.map(output_feed.input_feeds, & &1.id) == [input_feed.id]
+    assert has_element?(view, "#output-feed-#{output_feed.id}", "Disabled")
+  end
 end
