@@ -10,12 +10,14 @@ defmodule NewspaperWeb.AdminLive.Processing do
   alias NewspaperWeb.AdminLive.Format
 
   @stages ~w(all extraction digestion operations)
+  @refresh_delay_ms 300
 
   def mount(_params, _session, socket) do
     if connected?(socket), do: Newspaper.Events.subscribe()
 
     {:ok,
      socket
+     |> assign(:refresh_queued, false)
      |> stream_configure(:running_work, dom_id: &"running-#{&1.id}")
      |> stream_configure(:queued_extraction, dom_id: &"queued-extraction-#{&1.id}")
      |> stream_configure(:queued_digestion, dom_id: &"queued-digestion-#{&1.id}")
@@ -39,17 +41,25 @@ defmodule NewspaperWeb.AdminLive.Processing do
     {:noreply, push_patch(socket, to: processing_path(filters))}
   end
 
+  def handle_info({:newspaper_data_changed, :processing_changed}, socket) do
+    {:noreply, queue_refresh(socket)}
+  end
+
   def handle_info({:newspaper_data_changed, event}, socket)
-      when event in [
-             :processing_changed,
-             :operations_changed,
-             :publishing_changed,
-             :site_extraction_policies_changed
-           ] do
+      when event in [:operations_changed, :publishing_changed, :site_extraction_policies_changed] do
     {:noreply, assign_data(socket, socket.assigns.filters)}
   end
 
   def handle_info({:newspaper_data_changed, _event}, socket), do: {:noreply, socket}
+
+  def handle_info(:refresh_processing_data, %{assigns: %{refresh_queued: true}} = socket) do
+    {:noreply,
+     socket
+     |> assign(:refresh_queued, false)
+     |> assign_data(socket.assigns.filters)}
+  end
+
+  def handle_info(:refresh_processing_data, socket), do: {:noreply, socket}
 
   def render(assigns) do
     ~H"""
@@ -492,6 +502,13 @@ defmodule NewspaperWeb.AdminLive.Processing do
     |> stream(:queued_digestion, Enum.take(queued_digestion, 50), reset: true)
     |> stream(:waiting_work, waiting_work, reset: true)
     |> stream(:recent_work, recent_work, reset: true)
+  end
+
+  defp queue_refresh(%{assigns: %{refresh_queued: true}} = socket), do: socket
+
+  defp queue_refresh(socket) do
+    Process.send_after(self(), :refresh_processing_data, @refresh_delay_ms)
+    assign(socket, :refresh_queued, true)
   end
 
   defp attempt_opts(filters) do

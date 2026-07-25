@@ -62,6 +62,19 @@ test("extractFromRequest reports no content as a non-error outcome", async () =>
   assert.equal(result.retryable, undefined);
 });
 
+test("extractFromRequest treats minimum text length as a strict floor", async () => {
+  const belowMinimum = await extractTextWithLength(499, 500);
+  const atMinimum = await extractTextWithLength(500, 500);
+
+  assert.equal(belowMinimum.quality.content_length, 499);
+  assert.equal(belowMinimum.status, "no_content");
+  assert.equal(belowMinimum.reason, "content_text_shorter_than_500");
+
+  assert.equal(atMinimum.quality.content_length, 500);
+  assert.equal(atMinimum.status, "ok");
+  assert.equal(atMinimum.quality.reason, "sufficient_content");
+});
+
 test("extractFromRequest removes embedded-player chrome without removing article media", async () => {
   const html = await readFixture("article-with-promotional-video-embed.html");
   const result = await extractFixture(html, "https://www.theautopian.com/useful-story/");
@@ -282,6 +295,21 @@ function extractFixture(html, url) {
       implementation: "extraction.simple_html",
       url,
       options: { minimum_text_length: 500 }
+    },
+    { fetchImpl: fixtureFetch(html, url) }
+  );
+}
+
+function extractTextWithLength(length, minimumTextLength) {
+  const url = `https://example.com/article-${length}`;
+  const html = `<html><head><title>Boundary article</title></head><body><article><p>${"a".repeat(length)}</p></article></body></html>`;
+
+  return extractFromRequest(
+    {
+      schema_version: 1,
+      implementation: "extraction.simple_html",
+      url,
+      options: { minimum_text_length: minimumTextLength }
     },
     { fetchImpl: fixtureFetch(html, url) }
   );

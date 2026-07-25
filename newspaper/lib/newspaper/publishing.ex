@@ -168,7 +168,7 @@ defmodule Newspaper.Publishing do
     GeneratedFeed
     |> where([feed], feed.id in ^feed_ids)
     |> Repo.all()
-    |> Enum.map(&create_item_if_missing(&1, article))
+    |> Enum.map(fn feed -> {feed, create_item_if_missing(feed, article)} end)
   end
 
   def create_item_if_missing(%GeneratedFeed{} = feed, %Article{} = article) do

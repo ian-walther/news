@@ -1,87 +1,50 @@
-# Codebase Audit — 2026-07-24
+# Codebase Audit — Reconciled 2026-07-25
 
-Independent audit of the Newspaper implementation against the planning docs in
-`planning/`. Performed by a reviewer who was not involved in the implementation.
-The full test suite (76 Elixir tests, 16 worker JS tests) passed at audit time
-on commit `b83bcb7`.
+Independent audit performed 2026-07-24 against commit `b83bcb7`; the
+implementation pass landed in `329770f` and was reconciled by the Auditor on
+2026-07-25 (full diff review of semantics-bearing changes, full test suites
+re-run: 104 Elixir + 20 worker JS tests green, credo clean).
 
-## How to read this audit
-
-Findings are grouped into files by category. Every finding has:
-
-- **ID** — stable reference (`C-1`, `D-3`, …) for discussion and fix tracking.
-- **Severity** — `critical` / `high` / `medium` / `low`.
-- **Confidence** — `certain` (verified by reading the exact code paths),
-  `likely` (strong code evidence, not executed), or `possible` (plausible from
-  reading, may be refuted by context the auditor lacks).
-- **Location** — `file:line` references into the repo at audit time.
-- **Spec reference** — for divergences, the planning-doc passage being violated.
-
-Some findings may have been deliberate decisions made in implementation chats
-that never made it into the planning docs. Those are flagged with a
-"possible justification" note where the auditor could imagine one. Per the
-audit brief, disagreements get resolved in the audit-processing phase — the
-findings below are written skeptically and assume nothing was intentional
-unless a planning doc says so.
+These docs are **forward-facing**: completed findings are deleted, not marked
+done. Gaps in ID sequences mean implemented-and-removed. What remains below is
+only open work, residuals, refutations, and deliberate leave-alone verdicts.
 
 ## Files
 
-| File | Contents |
+| File | Open contents |
 | --- | --- |
-| [01-correctness-bugs.md](01-correctness-bugs.md) | Bugs with concrete failure scenarios (`C-*`) |
-| [02-robustness-and-failure-handling.md](02-robustness-and-failure-handling.md) | Crash/wedge/stuck-state risks (`R-*`) |
-| [03-plan-divergences.md](03-plan-divergences.md) | Where the implementation strays from `planning/` (`D-*`) |
-| [04-architecture-concerns.md](04-architecture-concerns.md) | Structural problems worth fixing before the next chapter (`A-*`) |
-| [05-performance-and-scalability.md](05-performance-and-scalability.md) | Unbounded work, N+1s, re-render storms (`P-*`) |
-| [06-dead-code-and-schema-cruft.md](06-dead-code-and-schema-cruft.md) | Inert settings, unused fields, legacy duplication (`X-*`) |
-| [07-test-coverage-gaps.md](07-test-coverage-gaps.md) | What the (otherwise good) test suite does not cover (`T-*`) |
-| [08-minor-issues.md](08-minor-issues.md) | Nitpicks and small spec-compliance notes (`N-*`) |
-| [09-strengths.md](09-strengths.md) | What is genuinely good and should NOT be "fixed" |
+| [01-correctness-bugs.md](01-correctness-bugs.md) | C-6 residual |
+| [02-robustness-and-failure-handling.md](02-robustness-and-failure-handling.md) | R-9 (new, low); R-6 leave-alone verdict |
+| [03-plan-divergences.md](03-plan-divergences.md) | D-6 open (implementer refutation was incorrect); leave-alone notes |
+| [04-architecture-concerns.md](04-architecture-concerns.md) | A-6 residual; A-8 decision pointer; leave-alone verdicts |
+| [05-performance-and-scalability.md](05-performance-and-scalability.md) | P-1 residual; P-3 informational; leave-alone verdicts |
+| [06-dead-code-and-schema-cruft.md](06-dead-code-and-schema-cruft.md) | No open findings; one audit-claim refutation recorded |
+| [07-test-coverage-gaps.md](07-test-coverage-gaps.md) | T-10 residual (blocked on D-6) |
+| [08-minor-issues.md](08-minor-issues.md) | N-2 open (product decision); leave-alone verdicts |
+| [09-strengths.md](09-strengths.md) | Verified behaviors that must not be "fixed" (unchanged) |
 
-## Top findings (fix-first shortlist)
+## Reconciliation summary
 
-If the fix budget is limited, these give the most value, in rough order:
+Implemented and verified (removed from docs): C-1–C-5, C-7–C-10, R-1–R-5,
+R-7, R-8, D-1–D-3, D-5, D-7–D-11, A-1–A-4, A-9, P-2, P-5, X-1–X-4, X-6–X-8,
+T-1–T-9, N-1, N-3–N-6, N-8, N-9, N-11–N-15, N-17. X-5 was implemented except
+one sub-item where the audit's no-caller claim was stale (refutation recorded
+in 06). The implementation was faithful and in several places better than the
+audit's suggested fix (dedupe alias table with advisory locks and historical
+GUID backfill; data-preserving legacy-content migration; process-group worker
+termination; the "intake boundary" planning-doc treatment of ungrouped feeds).
 
-1. **C-1 — Feed parsing permanently discards most raw item data.** The chosen
-   parser (Fiet) only exposes five fields; author, categories, enclosures,
-   `content:encoded` full bodies, and updated timestamps are silently dropped
-   at capture time and cannot be backfilled, because the "raw metadata"
-   snapshot is built from the same five fields. This quietly violates the
-   eager-durable-intake foundation the whole plan rests on, and it degrades
-   the published feeds today (`description`-only bodies, no categories).
-2. **C-2 — Cross-feed stable-ID dedupe never fires.** The `feed_guid` dedupe
-   key embeds the input-feed ID, so the same publisher GUID appearing in two
-   sub-feeds of one intake group produces different keys. Only normalized-URL
-   matching actually dedupes across feeds — half of the specced dedupe signal
-   is dead code.
-3. **R-1 / R-2 — The extraction/digestion dispatchers can wedge permanently.**
-   A single unexpected exception in the execution task (for example, the
-   attempt row being deleted between enqueue and execution) permanently stalls
-   that site's queue (extraction) or the entire digestion queue until restart,
-   with no visibility.
-4. **C-4 — One bad raw item crashes the whole feed fetch** and leaves the run
-   record stuck `running` forever, with no failure record — the exact "silent
-   omission" failure mode the plan says to avoid.
-5. **C-3 — RSS output builds XML by string interpolation with an unescaped
-   CDATA body.** Any article body containing `]]>` produces invalid XML for
-   the whole feed.
-6. **A-1 — Every fetch reprocesses the entire intake history.** Work per fetch
-   cycle grows without bound as raw items accumulate; an intake group with N
-   feeds is fully reprocessed N times per cycle.
-7. **C-6 — `advance_item` rewrites completed step history** (resets
-   `finished_at`, forces `reused_artifact: true`) every time it re-walks an
-   item, corrupting exactly the audit trail the plan says attempts/item-steps
-   exist to preserve.
+Still open, in priority order:
 
-## Scope and method
-
-- Read all planning docs first (`vision`, `architecture`, `pipeline`,
-  `data-model`, `workflow`, `rss-output-shape`, `prod-topology`,
-  `next-scope`, `implementation-roadmap`, `open-questions`,
-  `features/006-browser-extraction-and-escalation`).
-- Read every non-generated Elixir file under `newspaper/lib`, all migrations,
-  configs, the seed file, all three JS workers, the Dockerfile, both compose
-  files, and all repo scripts.
-- Read the test suite inventory and ran the full suite (`scripts/test.sh`).
-- Did not run the app against live feeds; findings marked `likely`/`possible`
-  were not reproduced at runtime.
+1. **D-6** — `minimum_text_length` is not the strict floor the receipt claimed
+   (refutation verified incorrect with arithmetic; see 03).
+2. **C-6 residual** — explicit digestion requests still rewrite the succeeded
+   extraction item-step's history via the `:bookkeeping` reuse path (see 01).
+3. **P-1 residual** — per-attempt `:processing_changed` broadcasts still drive
+   full requeries of the Processing/OutputFeed pages during batches (see 05).
+4. **A-6 residual** — output-feed eligibility exists as two queries that can
+   drift (see 04).
+5. **R-9** — item-creation errors in the live publish loop are silently
+   swallowed (new, low; see 02).
+6. **A-8 / N-2** — product decisions parked in `planning/open-questions.md`
+   (auth posture / direct port exposure; URL-parameter stripping).

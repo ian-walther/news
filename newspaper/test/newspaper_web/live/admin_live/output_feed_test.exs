@@ -193,7 +193,7 @@ defmodule NewspaperWeb.AdminLive.OutputFeedTest do
 
     [batch] = Processing.list_feed_batches(feed.id)
     assert :ok = BatchDispatcher.await(batch.id)
-    _ = :sys.get_state(view.pid)
+    refresh_output_feed(view)
     [attempt] = Processing.list_attempts_for_batch(batch.id)
 
     assert has_element?(view, "#pipeline-batch-#{batch.id}")
@@ -206,7 +206,7 @@ defmodule NewspaperWeb.AdminLive.OutputFeedTest do
     assert has_element?(view, "#process-existing-extraction[disabled]", "Processing 0 of 1")
 
     assert {:ok, _attempt} = Processing.finish_attempt(attempt, "succeeded")
-    _ = :sys.get_state(view.pid)
+    refresh_output_feed(view)
 
     assert has_element?(view, "#pipeline-batch-#{batch.id}", "1 succeeded")
     assert Repo.get!(PipelineStepAttempt, attempt.id).batch_run_id == batch.id
@@ -233,6 +233,34 @@ defmodule NewspaperWeb.AdminLive.OutputFeedTest do
              "#process-existing-digestion[disabled]",
              "Waiting for extraction"
            )
+  end
+
+  test "coalesces bursts of processing events before refreshing feed state", %{conn: conn} do
+    feed = output_feed_with_article!()
+    assert {:ok, _step} = Processing.create_extraction_step(feed)
+
+    {:ok, view, _html} = live(conn, ~p"/output-feeds/#{feed.id}")
+    assert has_element?(view, "#processing-extraction", "1 not requested")
+
+    item = Repo.one!(GeneratedFeedItem)
+    assert {:ok, [_attempt]} = Processing.request_item_step(item, "extraction")
+
+    for _index <- 1..10 do
+      send(view.pid, {:newspaper_data_changed, :processing_changed})
+    end
+
+    _ = :sys.get_state(view.pid)
+    assert has_element?(view, "#processing-extraction", "1 not requested")
+
+    send(view.pid, :refresh_output_feed_data)
+    _ = :sys.get_state(view.pid)
+
+    assert has_element?(view, "#processing-extraction", "1 processing")
+  end
+
+  defp refresh_output_feed(view) do
+    send(view.pid, :refresh_output_feed_data)
+    _ = :sys.get_state(view.pid)
   end
 
   defp feed_params(feed, overrides) do

@@ -45,13 +45,13 @@ defmodule NewspaperWeb.AdminLive.ProcessingTest do
     assert has_element?(view, "#recent-run-#{batch.id}", "Digestion batch")
 
     assert {:ok, digestion} = Processing.mark_attempt_running(digestion)
-    _ = :sys.get_state(view.pid)
+    refresh_processing(view)
 
     refute has_element?(view, "#queued-digestion-digestion-#{digestion.id}")
     assert has_element?(view, "#running-attempt-#{digestion.id}", "Digestion")
 
     assert {:ok, _digestion} = Processing.finish_attempt(digestion, "succeeded")
-    _ = :sys.get_state(view.pid)
+    refresh_processing(view)
 
     refute has_element?(view, "#running-attempt-#{digestion.id}")
     assert has_element?(view, "#recent-attempt-#{digestion.id}", "Digestion")
@@ -85,6 +85,34 @@ defmodule NewspaperWeb.AdminLive.ProcessingTest do
     {:ok, view, _html} = live(conn, ~p"/processing")
 
     assert has_element?(view, "#recent-attempt-#{digestion.id}", "Duration unavailable")
+  end
+
+  test "coalesces bursts of processing events into one queued refresh", %{conn: conn} do
+    %{digestion: digestion} = processing_fixture!()
+    {:ok, view, _html} = live(conn, ~p"/processing")
+
+    assert has_element?(view, "#queued-digestion-digestion-#{digestion.id}")
+    assert {:ok, digestion} = Processing.mark_attempt_running(digestion)
+
+    for _index <- 1..10 do
+      send(view.pid, {:newspaper_data_changed, :processing_changed})
+    end
+
+    _ = :sys.get_state(view.pid)
+
+    assert has_element?(view, "#queued-digestion-digestion-#{digestion.id}")
+    refute has_element?(view, "#running-attempt-#{digestion.id}")
+
+    send(view.pid, :refresh_processing_data)
+    _ = :sys.get_state(view.pid)
+
+    refute has_element?(view, "#queued-digestion-digestion-#{digestion.id}")
+    assert has_element?(view, "#running-attempt-#{digestion.id}")
+  end
+
+  defp refresh_processing(view) do
+    send(view.pid, :refresh_processing_data)
+    _ = :sys.get_state(view.pid)
   end
 
   defp processing_fixture! do

@@ -82,6 +82,6 @@ Valid no-content outcome:
 }
 ```
 
-A no-content response is successful execution with no usable article body. It allows the application to try a more capable extractor and, if the chain is exhausted, record a valid skipped outcome rather than a failure.
+A no-content response is successful execution with no usable article body. The configured `minimum_text_length` is a strict floor applied after shared cleanup; content below it returns `no_content`. This allows the application to try a more capable extractor and, if the chain is exhausted, record a valid skipped outcome rather than a failure.
 
 Network, HTTP, and worker failures use `status: "failed"`. Rate-limited responses use `failure_kind: "rate_limited"`. When the server provides a valid `Retry-After` header, `debug_metadata.retry_after_ms` carries the requested delay for app-owned per-host scheduling.

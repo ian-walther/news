@@ -119,7 +119,7 @@ export function extractArticleFromHtml({
   const contentHtml = sanitizeArticleHtml(parsed.content, finalUrl);
   const quality = scoreQuality(contentText, parsed, minimumTextLength);
 
-  if (quality.score < 0.35) {
+  if (contentText.length < minimumTextLength || quality.score < 0.35) {
     return noContent({
       schemaVersion,
       implementation,

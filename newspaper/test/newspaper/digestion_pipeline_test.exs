@@ -205,6 +205,10 @@ defmodule Newspaper.DigestionPipelineTest do
 
     assert {:ok, 1} = Processing.enqueue_article_step(article.id, "digestion", force: true)
 
+    extraction_step = Repo.get!(GeneratedFeedItemStep, extraction_step.id)
+    assert extraction_step.finished_at == ~U[2026-07-20 12:00:00Z]
+    refute extraction_step.reused_artifact
+
     second_attempt =
       PipelineStepAttempt
       |> where([attempt], attempt.article_id == ^article.id and attempt.step_type == "digestion")

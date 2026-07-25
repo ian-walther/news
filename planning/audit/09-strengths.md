@@ -1,8 +1,14 @@
 # Strengths — Do Not "Fix" These
 
-A skeptical audit should also mark what is correct and deliberate, so the
-fix-up phase doesn't churn good code. These observed behaviors match the
-planning docs closely and are, in several cases, subtle to get right.
+A skeptical audit should also mark what is correct and deliberate, so future
+passes don't churn good code. These observed behaviors match the planning docs
+closely and are, in several cases, subtle to get right.
+
+Reconciliation 2026-07-25: the implementation pass preserved all of these —
+verified via the behavioral test suite (all pre-existing tests still pass
+unmodified in semantics) and diff review. The worker-sanitization guarantee
+now extends to the legacy-content migration (old `articles.extracted_content`
+values were themselves worker-sanitized at capture).
 
 ## Faithful-to-spec behaviors verified during the audit
 

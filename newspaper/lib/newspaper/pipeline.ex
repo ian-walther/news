@@ -274,8 +274,32 @@ defmodule Newspaper.Pipeline do
     Enum.reduce(raw_items, {[], []}, fn raw_item, {articles, errors} ->
       try do
         article = Content.create_or_update_from_raw_item(raw_item, dedupe_keys(raw_item))
-        Publishing.publish_article_to_eligible_feeds(article)
-        {[article | articles], errors}
+
+        publishing_errors =
+          article
+          |> Publishing.publish_article_to_eligible_feeds()
+          |> Enum.flat_map(fn
+            {_feed, {:ok, _item}} ->
+              []
+
+            {feed, {:error, reason}} ->
+              Operations.create_failure(%{
+                failure_type: "generated_feed_item_create_failed",
+                message: inspect(reason),
+                retryable: false,
+                related: %{
+                  "generated_feed_id" => feed.id,
+                  "article_id" => article.id,
+                  "raw_item_id" => raw_item.id,
+                  "input_feed_id" => raw_item.input_feed_id
+                },
+                run_id: run.id
+              })
+
+              [%{raw_item: raw_item, generated_feed: feed, reason: reason}]
+          end)
+
+        {[article | articles], Enum.reverse(publishing_errors, errors)}
       rescue
         exception ->
           error = %{raw_item: raw_item, reason: exception}

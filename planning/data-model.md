@@ -280,7 +280,7 @@ Per-site extraction escalation memory.
 - escalation enabled flag
 - minimum request interval and adaptive backoff state
 - extraction timeout
-- minimum acceptable text length
+- strict minimum acceptable text length after article cleanup
 - notes
 - created/updated timestamps
 

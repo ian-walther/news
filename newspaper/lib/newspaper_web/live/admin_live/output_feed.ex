@@ -8,6 +8,8 @@ defmodule NewspaperWeb.AdminLive.OutputFeed do
   alias Newspaper.Processing.PipelineStep
   alias NewspaperWeb.AdminLive.Format
 
+  @refresh_delay_ms 300
+
   def mount(%{"id" => id}, _session, socket) do
     if connected?(socket), do: Newspaper.Events.subscribe()
 
@@ -20,6 +22,7 @@ defmodule NewspaperWeb.AdminLive.OutputFeed do
      |> assign(:rerender_task_ref, nil)
      |> assign(:rerender_pending, false)
      |> assign(:rerendering, false)
+     |> assign(:refresh_queued, false)
      |> assign_feed()
      |> assign_processing()}
   end
@@ -160,21 +163,24 @@ defmodule NewspaperWeb.AdminLive.OutputFeed do
      |> put_flash(:error, "Output feed re-render stopped: #{inspect(reason)}")}
   end
 
+  def handle_info({:newspaper_data_changed, :processing_changed}, socket) do
+    {:noreply, queue_refresh(socket)}
+  end
+
   def handle_info({:newspaper_data_changed, event}, socket)
-      when event in [
-             :publishing_changed,
-             :processing_changed,
-             :operations_changed,
-             :settings_changed,
-             :intake_changed
-           ] do
-    case Publishing.get_generated_feed(socket.assigns.feed_id) do
-      nil -> {:noreply, push_navigate(socket, to: ~p"/output-feeds")}
-      feed -> {:noreply, socket |> assign_feed(feed) |> assign_processing(feed)}
-    end
+      when event in [:publishing_changed, :operations_changed, :settings_changed, :intake_changed] do
+    refresh_output_feed(socket)
   end
 
   def handle_info({:newspaper_data_changed, _event}, socket), do: {:noreply, socket}
+
+  def handle_info(:refresh_output_feed_data, %{assigns: %{refresh_queued: true}} = socket) do
+    socket
+    |> assign(:refresh_queued, false)
+    |> refresh_output_feed()
+  end
+
+  def handle_info(:refresh_output_feed_data, socket), do: {:noreply, socket}
 
   def render(assigns) do
     ~H"""
@@ -564,6 +570,20 @@ defmodule NewspaperWeb.AdminLive.OutputFeed do
     )
     |> assign(:batch_count, length(batches))
     |> stream(:batches, batches, reset: true)
+  end
+
+  defp queue_refresh(%{assigns: %{refresh_queued: true}} = socket), do: socket
+
+  defp queue_refresh(socket) do
+    Process.send_after(self(), :refresh_output_feed_data, @refresh_delay_ms)
+    assign(socket, :refresh_queued, true)
+  end
+
+  defp refresh_output_feed(socket) do
+    case Publishing.get_generated_feed(socket.assigns.feed_id) do
+      nil -> {:noreply, push_navigate(socket, to: ~p"/output-feeds")}
+      feed -> {:noreply, socket |> assign_feed(feed) |> assign_processing(feed)}
+    end
   end
 
   defp build_processing_state(step_type, steps, counts, item_count) do

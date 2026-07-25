@@ -5,7 +5,9 @@ defmodule Newspaper.PipelineOutputFeedTest do
   alias Newspaper.Content.{Article, ArticleDedupeKey, ArticleSource}
   alias Newspaper.Intake
   alias Newspaper.Intake.RawItem
+  alias Newspaper.Operations.Failure
   alias Newspaper.Pipeline
+  alias Newspaper.Processing.PipelineStep
   alias Newspaper.Publishing
   alias Newspaper.Publishing.GeneratedFeedItem
   alias Newspaper.Repo
@@ -297,6 +299,51 @@ defmodule Newspaper.PipelineOutputFeedTest do
     assert {:ok, run} = Pipeline.backfill_output_feed(output_feed.id, "test")
     assert run.summary_counts["articles_considered"] == 0
     assert Repo.aggregate(GeneratedFeedItem, :count) == 0
+  end
+
+  test "records output item creation errors in the processing run" do
+    {:ok, input_feed} =
+      Intake.create_input_feed(%{
+        name: "The Autopian",
+        url: "https://www.theautopian.com/feed/"
+      })
+
+    assert {:ok, _raw_item} =
+             Intake.upsert_raw_item(input_feed, %{
+               feed_guid: "autopian-invalid-output-enrollment",
+               url: "https://www.theautopian.com/invalid-output-enrollment/",
+               title: "An article that reaches a corrupt pipeline definition",
+               discovered_at: ~U[2026-07-25 12:00:00Z]
+             })
+
+    assert {:ok, _run} = Pipeline.process_input_feed(input_feed.id, "test")
+
+    {:ok, output_feed} =
+      Publishing.create_generated_feed(%{
+        "title" => "Cars",
+        "input_feed_ids" => [input_feed.id]
+      })
+
+    %PipelineStep{}
+    |> Ecto.Changeset.change(%{
+      generated_feed_id: output_feed.id,
+      step_type: "extraction",
+      implementation_key: "",
+      position: 0,
+      enabled: true,
+      config: %{}
+    })
+    |> Repo.insert!()
+
+    assert {:ok, run} = Pipeline.process_input_feed(input_feed.id, "test")
+    assert run.status == "failed"
+    assert run.summary_counts["item_failures"] == 1
+
+    failure = Repo.one!(Failure)
+    assert failure.failure_type == "generated_feed_item_create_failed"
+    assert failure.run_id == run.id
+    assert failure.related["generated_feed_id"] == output_feed.id
+    assert failure.related["article_id"] == Repo.one!(Article).id
   end
 
   test "an earlier source appearance does not replace extraction-corrected metadata" do

@@ -296,7 +296,7 @@ defmodule Newspaper.Processing do
         attrs =
           definition
           |> Map.merge(artifact_attrs)
-          |> Map.merge(success_state(true))
+          |> maybe_mark_reused_success(item_step, artifact_attrs)
           |> Map.merge(%{pipeline_step_id: step.id, position: step.position})
 
         item_step
@@ -334,6 +334,15 @@ defmodule Newspaper.Processing do
       :missing ->
         {:ok, item_step}
     end
+  end
+
+  defp maybe_mark_reused_success(attrs, item_step, artifact_attrs) do
+    same_artifact? =
+      item_step.status == "succeeded" and
+        item_step.article_extraction_id == Map.get(artifact_attrs, :article_extraction_id) and
+        item_step.article_digest_id == Map.get(artifact_attrs, :article_digest_id)
+
+    if same_artifact?, do: attrs, else: Map.merge(attrs, success_state(true))
   end
 
   def advance_item(item_id, opts \\ []) when is_integer(item_id) do

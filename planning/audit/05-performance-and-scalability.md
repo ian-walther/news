@@ -1,119 +1,64 @@
 # Performance and Scalability
 
-Single-operator app, small data today — none of this is an emergency. But the
-plan explicitly wants no accidental retention limits and verbose history, so
-data only grows; these are the paths that degrade first. A-1 (full-history
-reprocessing per fetch) is the biggest item and lives in the architecture
-file.
+Reconciled 2026-07-25. P-2 (keyset backfill without the 5,000-article cliff)
+and P-5 (batched feed loads, conditional new-item render, async Ollama
+discovery, de-duplicated feed fetches) were implemented, verified, and
+removed. P-1 is partially done; the residual below is the remaining item of
+substance.
 
 ---
 
-## P-1 — Broadcast storm × full-requery LiveViews
+## P-1 (residual) — Per-attempt processing broadcasts still drive full-page requeries during batches
 
-- **Severity:** high (first thing to degrade in daily use)
+- **Severity:** low-medium (single operator; visible mainly while a batch runs with the Processing page open)
 - **Confidence:** certain
-- **Location:** `newspaper/lib/newspaper/events.ex` (single topic), all `broadcast_on_ok` call sites (`intake.ex`, `publishing.ex`, `operations.ex`, `processing.ex`), every admin LiveView's `handle_info({:newspaper_data_changed, _event}, socket)`
+- **Location:** `newspaper/lib/newspaper/processing.ex` (`broadcast_on_ok/1` on every attempt/item-step mutation), `newspaper_web/live/admin_live/processing.ex` (`assign_data/2` reloading running/queued/recent/waiting sets — queued capped at 5,000 with 7 preloads), `admin_live/output_feed.ex` (`assign_processing/2` including `feed_step_counts`)
 
-Every raw-item insert, item render, attempt status change, run update, and
-failure insert broadcasts on one topic. Every mounted admin LiveView responds
-to **any** event by re-running its entire data assembly:
+What landed: fetch ingestion batches per-row events into one intake update,
+and every LiveView now pattern-matches event atoms so unrelated domains no
+longer trigger reloads (verified in `articles.ex`, `processing.ex`,
+`output_feed.ex`; the dashboard's catch-all is legitimate since it renders
+all domains). That fixed the worst multiplier.
 
-- `AdminLive.Processing.assign_data/2` reloads running (250) + queued
-  (**5,000 cap**) + recent (75) attempts, each with 7 preloaded associations,
-  plus waiting steps, counts, operations, and all site policies — per event.
-  During an extraction batch, each attempt generates ~4 broadcasts
-  (queue, running, finished, item-step updates), so a 500-article batch
-  triggers thousands of full reloads on an open Processing page.
-- `AdminLive.Articles`, `Dashboard`, `Intake`, `OutputFeed`, `OutputFeeds`
-  behave the same with their own query sets (`OutputFeed.assign_processing`
-  runs the expensive `feed_step_counts`, see A-4).
-- A fetch cycle that stores 100 new raw items emits ≥100 `:intake_changed`
-  events (one per insert, `intake.ex:156-161`) plus per-item publish events.
+What remains: pipeline execution still emits `:processing_changed` several
+times per attempt (queue, running, finish, item-step sync), and the
+Processing and OutputFeed pages respond to each by re-running their entire
+query set. A 500-article extraction batch still produces a few thousand
+full reloads on an open Processing page over its lifetime.
 
-**Fix directions (any subset helps):**
-- Debounce in the LiveViews (collapse events within ~250–500 ms; a simple
-  `Process.send_after` re-render token is enough).
-- Batch broadcasts at the operation level (one event per fetch/publish run,
-  not per row).
-- Split the topic per domain (`intake`, `publishing`, `processing`,
-  `operations`) — half the views can then ignore most events; the
-  `handle_info` clauses already pattern-match an `event` atom that is mostly
-  ignored today.
+**Decision:** coalesce on the consumer side — in the Processing and
+OutputFeed LiveViews, on a relevant event set a `@refresh_queued` flag +
+`Process.send_after(self(), :refresh, 300)` token instead of reloading
+inline, so bursts collapse to ≤3 reloads/second regardless of batch volume.
+(Alternative, one sentence: coalesce on the producer side with a debounced
+broadcaster process; consumer-side is simpler and testable with
+`render_async`-style assertions.) Keep the existing event-atom filtering.
+
+**Guardrails/tests:** LiveView test that sends N rapid
+`{:newspaper_data_changed, :processing_changed}` messages and asserts the
+data-assembly function ran once (e.g., via a counting stub around
+`Processing.list_processing_attempts/2` or a telemetry counter).
+
+**Effort:** S–M.
 
 ---
 
-## P-2 — Backfill is a hard-capped N+1
+## P-3 — Attempt/run/failure growth (informational, deferred by design)
 
-- **Severity:** medium
-- **Confidence:** certain
-- **Location:** `newspaper/lib/newspaper/pipeline.ex:140-172` (`backfill_output_feed/2`), `pipeline.ex:267-276`
-
-`Content.list_articles(5_000)` loads the 5,000 most recent articles **with
-four preloaded association trees each**, then filters in Elixir with
-`eligible_for_feed?/2`, which re-preloads the feed's memberships *and* the
-article's sources **per article** (≈10,001 queries per backfill), then calls
-`ensure_item_for_feed` per match. Two problems:
-
-1. Cost: ~2–4 queries per article regardless of eligibility.
-2. Correctness cliff: once the pool exceeds 5,000 articles, backfill silently
-   ignores older articles with no indication — contradicting "Backfill creates
-   missing generated feed items from already-ingested articles"
-   (`workflow.md`) with no documented window.
-
-One SQL statement can do the whole thing (insert-select of eligible articles
-lacking an item row, feed memberships joined in). At minimum, hoist the feed
-preload out of the loop and drop the cap in favor of batched streaming.
+Unchanged from the original audit: `runs`, `failures`,
+`pipeline_step_attempts`, `article_extraction_attempts` grow without bound
+until the planned explicit retention policy exists
+(`planning/open-questions.md` Retention). The dashboard's
+`list_actionable_failure_groups` (newest 500, filtered in memory) is the
+first query to degrade. No action now; this entry exists so retention work
+starts from these tables.
 
 ---
 
-## P-3 — Attempt/run/failure tables grow forever with no pruning path
+## Explicitly Fine / Leave-Alone
 
-- **Severity:** low today, structural later
-- **Confidence:** certain
-- **Location:** `runs`, `failures`, `pipeline_step_attempts`, `article_extraction_attempts`; plan: `workflow.md` Retention, `open-questions.md`
-
-Deliberately deferred by the plan ("Retention should be an explicit policy") —
-this entry just quantifies the pressure: every article on an extract+digest
-feed generates ≥2 attempts, ≥2 runs, per-worker attempts, and failures never
-resolve or expire (`list_actionable_failure_groups` loads the newest 500 and
-filters in memory on every dashboard render). The `runs` table also absorbs a
-`pipeline_step` run per attempt execution. When retention arrives, these are
-the tables to start with; until then the dashboard failure query is the first
-one to slow down.
-
----
-
-## P-4 — Headless extraction launches a fresh Chromium per article
-
-- **Severity:** low (throughput), acceptable (isolation is a plan goal)
-- **Confidence:** certain
-- **Location:** `workers/extraction-headless-browser/src/extractor.mjs` (`chromium.launch` per request), `command_worker.ex` (new OS process per attempt)
-
-Every headless attempt pays node start + Playwright + Chromium launch
-(~1–2 s) before navigation. The plan wants isolated contexts, which
-`browser.newContext()` per request inside one long-lived browser would satisfy
-equally well; a persistent worker (stdin-per-line protocol or small HTTP
-sidecar) would cut per-article latency substantially once headless volume
-grows. Fine to defer; noted so the per-article cost is a known choice.
-
----
-
-## P-5 — Assorted smaller N+1s / double work
-
-- **Severity:** low
-- **Confidence:** certain
-
-- `Publishing.publish_article_to_eligible_feeds/1` runs `Repo.get!` per
-  eligible feed per article (`publishing.ex:139-143`).
-- `create_item!` renders the item, then `enqueue_item`, then re-renders it
-  (`publishing.ex:190-219`) — two renders and two broadcasts per new item.
-- `AdminLive.OutputFeed.assign_feed/2` fetches the feed twice back-to-back
-  (`output_feed.ex:499-501`).
-- `Extraction`/`Digestion` `rerender_article_items/1` reloads each item with
-  heavy preloads one at a time (`extraction.ex:312-321`).
-- Extraction dispatcher `:recover` calls `Processing.get_attempt!/1`
-  (7 preloads) per queued attempt just to compute a host
-  (`dispatcher.ex` handle_info `:recover`).
-- `Settings` LiveView calls Ollama discovery synchronously in
-  `handle_info`/`handle_event` with a 5 s receive timeout, blocking the
-  LiveView process (use `assign_async`/`start_async`).
+- **P-4 (fresh Chromium per headless extraction):** accepted for isolation
+  and operational simplicity. Revisit only when measured headless throughput
+  becomes a real constraint.
+- **Backfill remains row-oriented for item creation** (side effects per
+  item); eligibility and pagination are now SQL — accepted shape.

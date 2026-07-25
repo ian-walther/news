@@ -6,4 +6,4 @@ This worker is the middle extraction tier. It does not reuse cookies or authenti
 
 It reads one JSON request from stdin and writes one JSON response to stdout. Human-readable diagnostics belong on stderr.
 
-Like the simple worker, it returns `status: "no_content"` when execution succeeds but shared article cleanup leaves no usable body. The application treats a terminal no-content result as skipped, not failed.
+Like the simple worker, it returns `status: "no_content"` when execution succeeds but shared article cleanup leaves no usable body or the cleaned body falls below the configured strict `minimum_text_length` floor. The application treats a terminal no-content result as skipped, not failed.
