@@ -1,0 +1,199 @@
+{
+  "formatVersion": 1,
+  "source": {
+    "system": "TriliumNext",
+    "rootNoteId": "LwHoLq61L0cO",
+    "rootTitle": "Newspaper App",
+    "exportedAtUtc": "2026-07-26T02:57:42.676Z"
+  },
+  "noteCount": 10,
+  "notes": [
+    {
+      "noteId": "LwHoLq61L0cO",
+      "title": "Newspaper App",
+      "parentNoteIds": [
+        "e3Wmjd2aSXQz"
+      ],
+      "childNoteIds": [
+        "c68SCQez9Qvw",
+        "0fUOFajiCzMK",
+        "e1OCATQ08PQL"
+      ],
+      "triliumBlobId": "WtF7nrFfAR4XqGsHVMhg",
+      "triliumContentHash": "WtF7nrFfAR4XqGsHVMhg",
+      "exactContentSha256": "045084ffb2422929159ad6aa7c3dcc2abb2b9c5db0e2074109b4972e180c20d8",
+      "htmlFile": "notes/LwHoLq61L0cO-newspaper-app.html",
+      "htmlFileSha256": "5393684adf91d15ac7a294fac8f8bae396c94744203ba070e4c3372a1f967f01",
+      "markdownFile": "markdown/LwHoLq61L0cO-newspaper-app.md",
+      "markdownFileSha256": "5393684adf91d15ac7a294fac8f8bae396c94744203ba070e4c3372a1f967f01",
+      "mirrorAddsTerminalNewline": true
+    },
+    {
+      "noteId": "c68SCQez9Qvw",
+      "title": "Why This Project Should Exist",
+      "parentNoteIds": [
+        "LwHoLq61L0cO"
+      ],
+      "childNoteIds": [
+
+      ],
+      "triliumBlobId": "xNBpnLXCYtvPKQZeXDys",
+      "triliumContentHash": "xNBpnLXCYtvPKQZeXDys",
+      "exactContentSha256": "5b50dea28048752e384b7874d397256f0c872e4b739d229c18c47b645c47af35",
+      "htmlFile": "notes/c68SCQez9Qvw-why-this-project-should-exist.html",
+      "htmlFileSha256": "10eb090a868a453f348a788bc22272041c1056ae803f68462f6156fa62b5ecd9",
+      "markdownFile": "markdown/c68SCQez9Qvw-why-this-project-should-exist.md",
+      "markdownFileSha256": "10eb090a868a453f348a788bc22272041c1056ae803f68462f6156fa62b5ecd9",
+      "mirrorAddsTerminalNewline": true
+    },
+    {
+      "noteId": "0fUOFajiCzMK",
+      "title": "Research Lineage And Concept Map",
+      "parentNoteIds": [
+        "LwHoLq61L0cO"
+      ],
+      "childNoteIds": [
+
+      ],
+      "triliumBlobId": "YUlBrxadWZn5dOA3GZWI",
+      "triliumContentHash": "YUlBrxadWZn5dOA3GZWI",
+      "exactContentSha256": "464d0b2f75740b45d31f3ea333c5bd0af8bb0da5ebf08aefe1763c7dac92e6a3",
+      "htmlFile": "notes/0fUOFajiCzMK-research-lineage-and-concept-map.html",
+      "htmlFileSha256": "8596eea7fa54f1616cc46da69dd225eed4ff6d1bbd9f8e6065e8699d1c4278f7",
+      "markdownFile": "markdown/0fUOFajiCzMK-research-lineage-and-concept-map.md",
+      "markdownFileSha256": "8596eea7fa54f1616cc46da69dd225eed4ff6d1bbd9f8e6065e8699d1c4278f7",
+      "mirrorAddsTerminalNewline": true
+    },
+    {
+      "noteId": "e1OCATQ08PQL",
+      "title": "Product Definition and Editorial Model",
+      "parentNoteIds": [
+        "LwHoLq61L0cO"
+      ],
+      "childNoteIds": [
+        "hgzrog60aqcK",
+        "PVGbgrVhZK68",
+        "jt3iDNAWwMg6",
+        "mtOY4pVdFeCk",
+        "audSvnHkNhaN",
+        "p2N40lHGIcNh"
+      ],
+      "triliumBlobId": "EcacrDxIQx83bpy4vYFf",
+      "triliumContentHash": "EcacrDxIQx83bpy4vYFf",
+      "exactContentSha256": "ce1ffc088ca9358e0808eb3cb7b1eb586142d330280f8e49db205a753dde5df9",
+      "htmlFile": "notes/e1OCATQ08PQL-product-definition-and-editorial-model.html",
+      "htmlFileSha256": "f36d84b41a1a89ea63d756309630736024cd03265334226634fdd4e7c45c4281",
+      "markdownFile": "markdown/e1OCATQ08PQL-product-definition-and-editorial-model.md",
+      "markdownFileSha256": "f36d84b41a1a89ea63d756309630736024cd03265334226634fdd4e7c45c4281",
+      "mirrorAddsTerminalNewline": true
+    },
+    {
+      "noteId": "hgzrog60aqcK",
+      "title": "Product Experience and Edition Contract",
+      "parentNoteIds": [
+        "e1OCATQ08PQL"
+      ],
+      "childNoteIds": [
+
+      ],
+      "triliumBlobId": "FXv9NLG4qL7BG9prXtBk",
+      "triliumContentHash": "FXv9NLG4qL7BG9prXtBk",
+      "exactContentSha256": "afaf08843613f9af56694349e52ac877a66ddbed2e373fd8d6ec6f680cd7e6c5",
+      "htmlFile": "notes/hgzrog60aqcK-product-experience-and-edition-contract.html",
+      "htmlFileSha256": "6d0b0bdd772d2214ce5eb7ba4328f81f07a62c78942c59a4e3d6ac1899e48381",
+      "markdownFile": "markdown/hgzrog60aqcK-product-experience-and-edition-contract.md",
+      "markdownFileSha256": "6d0b0bdd772d2214ce5eb7ba4328f81f07a62c78942c59a4e3d6ac1899e48381",
+      "mirrorAddsTerminalNewline": true
+    },
+    {
+      "noteId": "PVGbgrVhZK68",
+      "title": "Source Configuration, Admission, and Ranking",
+      "parentNoteIds": [
+        "e1OCATQ08PQL"
+      ],
+      "childNoteIds": [
+
+      ],
+      "triliumBlobId": "O5RXswF2NTaxgjG3CR2O",
+      "triliumContentHash": "O5RXswF2NTaxgjG3CR2O",
+      "exactContentSha256": "65f9715fb6d0d19776ee7a0d5d87d4464c023d92eb9ef9c37d49b5c0bf3f2ac9",
+      "htmlFile": "notes/PVGbgrVhZK68-source-configuration-admission-and-ranking.html",
+      "htmlFileSha256": "f795947d0e8b08353f8c435baa903a6683ad2e60790efb1811264c7181f5905f",
+      "markdownFile": "markdown/PVGbgrVhZK68-source-configuration-admission-and-ranking.md",
+      "markdownFileSha256": "f795947d0e8b08353f8c435baa903a6683ad2e60790efb1811264c7181f5905f",
+      "mirrorAddsTerminalNewline": true
+    },
+    {
+      "noteId": "jt3iDNAWwMg6",
+      "title": "Editorial Synthesis, Evidence, and Corrections",
+      "parentNoteIds": [
+        "e1OCATQ08PQL"
+      ],
+      "childNoteIds": [
+
+      ],
+      "triliumBlobId": "Pi4XCUYP5niYNPcVfUKy",
+      "triliumContentHash": "Pi4XCUYP5niYNPcVfUKy",
+      "exactContentSha256": "bd6413d149651d6940c452a5bc2cae1b04f35fc925fdfd2ae8435b43b18cfbc4",
+      "htmlFile": "notes/jt3iDNAWwMg6-editorial-synthesis-evidence-and-corrections.html",
+      "htmlFileSha256": "00ffadcecec3971f17ca1cc10c218b5cb787834fd4962a8c5371ec5a487b6e43",
+      "markdownFile": "markdown/jt3iDNAWwMg6-editorial-synthesis-evidence-and-corrections.md",
+      "markdownFileSha256": "00ffadcecec3971f17ca1cc10c218b5cb787834fd4962a8c5371ec5a487b6e43",
+      "mirrorAddsTerminalNewline": true
+    },
+    {
+      "noteId": "mtOY4pVdFeCk",
+      "title": "Story, Event, Timeline, and Section Model",
+      "parentNoteIds": [
+        "e1OCATQ08PQL"
+      ],
+      "childNoteIds": [
+
+      ],
+      "triliumBlobId": "SZTbqgKPcYwiZatpE90p",
+      "triliumContentHash": "SZTbqgKPcYwiZatpE90p",
+      "exactContentSha256": "26b290ffac74daca29051fda7049b78aa19e48a4afa8203b2d489e4dda8a91ce",
+      "htmlFile": "notes/mtOY4pVdFeCk-story-event-timeline-and-section-model.html",
+      "htmlFileSha256": "2c08e06b5765c458f6e9fe94d2c39fbb346a45d068bdbce73874e694c139de0b",
+      "markdownFile": "markdown/mtOY4pVdFeCk-story-event-timeline-and-section-model.md",
+      "markdownFileSha256": "2c08e06b5765c458f6e9fe94d2c39fbb346a45d068bdbce73874e694c139de0b",
+      "mirrorAddsTerminalNewline": true
+    },
+    {
+      "noteId": "audSvnHkNhaN",
+      "title": "Product Decision Ledger and Open Questions",
+      "parentNoteIds": [
+        "e1OCATQ08PQL"
+      ],
+      "childNoteIds": [
+
+      ],
+      "triliumBlobId": "SLPz9AL9pC2ctJgzR0Y8",
+      "triliumContentHash": "SLPz9AL9pC2ctJgzR0Y8",
+      "exactContentSha256": "f4c36bc170b1df1b3efa6c9ae290a27497c05521f06f6d8a8eb4d506dcd7565c",
+      "htmlFile": "notes/audSvnHkNhaN-product-decision-ledger-and-open-questions.html",
+      "htmlFileSha256": "af8bdd5979345bb0c38eb04e88a4676bc58296f9139533c08d730191f0a907d8",
+      "markdownFile": "markdown/audSvnHkNhaN-product-decision-ledger-and-open-questions.md",
+      "markdownFileSha256": "af8bdd5979345bb0c38eb04e88a4676bc58296f9139533c08d730191f0a907d8",
+      "mirrorAddsTerminalNewline": true
+    },
+    {
+      "noteId": "p2N40lHGIcNh",
+      "title": "Outlet and Upstream Processing Domain Model",
+      "parentNoteIds": [
+        "e1OCATQ08PQL"
+      ],
+      "childNoteIds": [
+
+      ],
+      "triliumBlobId": "4saQJ17BGIwDWhYrXSvZ",
+      "triliumContentHash": "4saQJ17BGIwDWhYrXSvZ",
+      "exactContentSha256": "ae7ed4143e5a8f98ad3b507f6ade96b25c93d88918e3605a3ba248e4f3e12195",
+      "htmlFile": "notes/p2N40lHGIcNh-outlet-and-upstream-processing-domain-model.html",
+      "htmlFileSha256": "43fa1ded00e12d177dcdc2aec71cb6f3b74b4792d4c65eaf42f5645438cc10c7",
+      "markdownFile": "markdown/p2N40lHGIcNh-outlet-and-upstream-processing-domain-model.md",
+      "markdownFileSha256": "43fa1ded00e12d177dcdc2aec71cb6f3b74b4792d4c65eaf42f5645438cc10c7",
+      "mirrorAddsTerminalNewline": true
+    }
+  ]
+}
