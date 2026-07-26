@@ -56,12 +56,17 @@ apt-get install -y --no-install-recommends \
 # disables blanking and DPMS, so no graphical locker belongs in this session.
 apt-get purge -y light-locker xfce4-screensaver || true
 
-chrome_package="$(mktemp --suffix=.deb)"
-trap 'rm -f "${chrome_package}"' EXIT
-curl --fail --location --silent --show-error \
-  https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb \
-  --output "${chrome_package}"
-apt-get install -y "${chrome_package}"
+if dpkg-query -W -f='${Status}' google-chrome-stable 2>/dev/null |
+    grep -q '^install ok installed$'; then
+  apt-get install -y google-chrome-stable
+else
+  chrome_package="$(mktemp --suffix=.deb)"
+  trap 'rm -f "${chrome_package}"' EXIT
+  curl --fail --location --silent --show-error \
+    https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb \
+    --output "${chrome_package}"
+  apt-get install -y "${chrome_package}"
+fi
 
 if ! id "${BROWSER_USER}" >/dev/null 2>&1; then
   useradd --create-home --shell /bin/bash "${BROWSER_USER}"
@@ -143,7 +148,6 @@ chown -R "${BROWSER_USER}:${BROWSER_USER}" "${BROWSER_HOME}/.config"
 
 systemctl daemon-reload
 systemctl set-default graphical.target
-systemctl enable lightdm.service
 systemctl enable newspaper-x11vnc.service
 systemctl restart lightdm.service
 systemctl restart newspaper-x11vnc.service

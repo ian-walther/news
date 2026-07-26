@@ -72,7 +72,23 @@ echo
 
 echo
 echo "== Listeners =="
-ss -lntp | awk 'NR == 1 || /:5900|:9222/'
+listeners="$(ss -lntp)"
+awk 'NR == 1 || /:5900|:9222/' <<<"${listeners}"
+
+vnc_listeners="$(awk '$4 ~ /:5900$/ {print $4}' <<<"${listeners}")"
+cdp_listeners="$(awk '$4 ~ /:9222$/ {print $4}' <<<"${listeners}")"
+
+if [[ "${vnc_listeners}" != "192.168.1.234:5900" ]]; then
+  echo "VNC must listen only on 192.168.1.234:5900; found:" >&2
+  printf '%s\n' "${vnc_listeners}" >&2
+  exit 1
+fi
+
+if [[ "${cdp_listeners}" != "127.0.0.1:9222" ]]; then
+  echo "CDP must listen only on 127.0.0.1:9222; found:" >&2
+  printf '%s\n' "${cdp_listeners}" >&2
+  exit 1
+fi
 
 echo
 echo "== VNC credential =="
