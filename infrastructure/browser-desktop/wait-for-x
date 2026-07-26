@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+display="${DISPLAY:-:0}"
+socket_number="${display#:}"
+socket_number="${socket_number%%.*}"
+socket="/tmp/.X11-unix/X${socket_number}"
+attempts=60
+
+for ((attempt = 1; attempt <= attempts; attempt++)); do
+  if [[ -S "${socket}" ]]; then
+    exit 0
+  fi
+
+  sleep 1
+done
+
+echo "Xorg display ${display} did not create ${socket} within ${attempts} seconds" >&2
+exit 1

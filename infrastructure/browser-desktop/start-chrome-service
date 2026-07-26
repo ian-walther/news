@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+environment_names=()
+
+for name in DISPLAY XAUTHORITY DBUS_SESSION_BUS_ADDRESS XDG_RUNTIME_DIR; do
+  if [[ -n "${!name:-}" ]]; then
+    environment_names+=("${name}")
+  fi
+done
+
+if ((${#environment_names[@]} == 0)); then
+  echo "No graphical-session environment is available" >&2
+  exit 1
+fi
+
+systemctl --user import-environment "${environment_names[@]}"
+
+if command -v dbus-update-activation-environment >/dev/null 2>&1; then
+  dbus-update-activation-environment --systemd "${environment_names[@]}"
+fi
+
+systemctl --user daemon-reload
+systemctl --user restart newspaper-chrome.service

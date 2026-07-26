@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Newspaper Chrome
+Comment=Start the persistent headed browser under the user systemd manager
+Exec=/usr/local/libexec/newspaper-browser/start-chrome-service
+OnlyShowIn=XFCE;
+Terminal=false
+StartupNotify=false
+X-GNOME-Autostart-enabled=true

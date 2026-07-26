@@ -46,15 +46,16 @@ and requires a separate security design before deployment.
 
 The host should run a persistent real desktop session. Remote access should view and control that existing session rather than creating a new session per connection.
 
-Preferred direction:
-
-- Xorg display, likely `:1`.
-- Xorg dummy display configuration, not a physical dummy HDMI plug.
-- Lightweight desktop environment, likely XFCE.
-- Fixed virtual display resolution.
-- A dedicated Linux user for the browser/desktop session, such as `news-browser`.
+- LightDM owns an automatic local login for the dedicated, non-sudo
+  `news-browser` user.
+- XFCE runs on Xorg display `:0`.
+- The Xorg dummy display is fixed at `1920x1080` and 24-bit color.
+- No physical display, HDMI dummy plug, or active VNC client is required.
 
 The desktop session should exist because the host starts it, not because a human connected remotely.
+
+See `planning/persistent-browser-desktop.md` for the complete host,
+service-lifecycle, networking, credential, and acceptance contract.
 
 ## Remote Desktop Access
 
@@ -78,10 +79,11 @@ Chrome should always be running and managed by systemd. It should not depend on 
 Expected shape:
 
 ```text
-systemd starts Xorg :1 with dummy display
-systemd starts XFCE or another lightweight session on DISPLAY=:1
-systemd starts headed Chrome on DISPLAY=:1
-x11vnc shares DISPLAY=:1 for human access
+LightDM starts Xorg :0 with the dummy display
+LightDM starts XFCE as news-browser
+XFCE imports the graphical environment into the news-browser systemd manager
+systemd starts headed Chrome on DISPLAY=:0
+x11vnc shares DISPLAY=:0 for human access
 ```
 
 Chrome should use a dedicated persistent profile for this project.
@@ -89,13 +91,16 @@ Chrome should use a dedicated persistent profile for this project.
 Example command shape:
 
 ```bash
-DISPLAY=:1 google-chrome \
-  --user-data-dir=/home/news-browser/.config/chrome-news-profile \
+DISPLAY=:0 google-chrome \
+  --user-data-dir=/home/news-browser/.config/newspaper-chrome \
   --remote-debugging-address=127.0.0.1 \
   --remote-debugging-port=9222
 ```
 
-The exact systemd unit layout can be decided during implementation, but the invariant is that Chrome is a continuously running headed browser process attached to the persistent Xorg session.
+Chrome is a continuously running headed browser process attached to the
+persistent Xorg session. Its systemd user service receives the real graphical
+session environment through XFCE autostart and restarts Chrome after an
+unexpected or manual browser exit.
 
 ## Chrome Security
 

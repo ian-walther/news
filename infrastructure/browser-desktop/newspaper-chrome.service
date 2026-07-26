@@ -1,0 +1,12 @@
+[Unit]
+Description=Newspaper persistent headed Chrome
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/google-chrome-stable --ozone-platform=x11 --user-data-dir=%h/.config/newspaper-chrome --remote-debugging-address=127.0.0.1 --remote-debugging-port=9222 --no-first-run --no-default-browser-check --disable-background-mode --disable-session-crashed-bubble --password-store=basic about:blank
+Restart=always
+RestartSec=5
+KillMode=mixed
+TimeoutStopSec=20

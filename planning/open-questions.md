@@ -51,8 +51,6 @@
 
 - Which future services should run in Docker and which should stay on the host alongside the Chrome/desktop stack?
 - How should deploy, backup, restore, logs, and upgrades work?
-- What exact systemd unit structure should manage Xorg, the desktop session, Chrome, and x11vnc?
-- What fixed virtual display resolution should the Xorg dummy display use?
 
 ## Extraction
 

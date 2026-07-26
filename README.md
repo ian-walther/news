@@ -94,6 +94,35 @@ docker compose --env-file .env.prod -f docker-compose.prod.yml exec app /app/bin
 Later, production can point at a shared network Postgres instance by changing
 `DATABASE_URL`.
 
+### Persistent Browser Desktop
+
+Install or reconcile the host-owned desktop, headed Chrome, and VNC services
+from the repo root:
+
+```sh
+scripts/setup-browser-host.sh
+```
+
+The helper updates the production checkout, installs the pinned host
+configuration, preserves an existing Chrome profile and VNC password, and
+restarts the graphical stack. Verify the complete server-side contract with:
+
+```sh
+scripts/verify-browser-host.sh
+```
+
+Retrieve the generated VNC password when configuring a client:
+
+```sh
+ssh news 'sudo cat /etc/newspaper-browser/vnc-password'
+```
+
+Connect to the shared persistent desktop at `vnc://news.home:5900`. Chrome CDP
+remains host-local at `127.0.0.1:9222`.
+
+See `planning/persistent-browser-desktop.md` for the topology, lifecycle,
+security boundary, and acceptance contract.
+
 ## Current Surface
 
 - Optional intake groups, independent input feeds, and output-feed configuration
