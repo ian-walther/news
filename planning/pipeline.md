@@ -248,6 +248,13 @@ Output feed rendering should use durable generated feed item records and their r
 
 If extraction or digestion succeeds, metadata is corrected, or title/body/link rendering policy changes, a deterministic re-render step should update stored generated feed item snapshots. Saving rendering policy is itself the explicit command to start a scoped re-render. The generated feed item GUID should remain stable.
 
+Hosted article presentation is also output-feed-specific. A hosted RSS link
+should carry the stable output-feed identity as presentation context so the
+same canonical article can show its selected digest for one output feed and
+omit it for another. The page should use the successful digest artifact
+referenced by that generated feed item's digestion state rather than choosing
+an unrelated globally latest digest.
+
 Pipeline and membership configuration changes should apply to newly processed articles by default. Backfilling existing articles or rebuilding generated feed items should require explicit user action. Rendering policy is presentation rather than processing configuration, so saving it should refresh existing snapshots without generating new extraction or digestion artifacts.
 
 Backfill and re-render are separate operations. Backfill creates missing generated feed item records from existing articles. Re-render updates stored RSS snapshots for existing generated feed items using app-owned stored data. Re-render may run automatically after rendering-policy changes or manually for recovery; it does not fetch upstream RSS, generate processing artifacts, mutate raw intake records, or change generated feed item GUIDs.

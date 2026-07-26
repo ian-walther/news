@@ -371,6 +371,12 @@ defmodule NewspaperWeb.AdminLive.OutputFeed do
                 type="checkbox"
               />
               <.input
+                id="output-feed-hosted-digest"
+                field={@form[:show_digest_in_hosted_article]}
+                label="Show digest on hosted articles"
+                type="checkbox"
+              />
+              <.input
                 id="output-feed-title-source"
                 field={@form[:title_source]}
                 label="Item title"
@@ -651,9 +657,17 @@ defmodule NewspaperWeb.AdminLive.OutputFeed do
   defp validate_processing_toggle(_assigns, _step_type, _enabled), do: :ok
 
   defp rendering_changed?(feed, changeset) do
-    Enum.any?([:link_to_hosted_article, :title_source, :body_source], fn field ->
-      Map.get(feed, field) != Changeset.get_field(changeset, field)
-    end)
+    Enum.any?(
+      [
+        :link_to_hosted_article,
+        :show_digest_in_hosted_article,
+        :title_source,
+        :body_source
+      ],
+      fn field ->
+        Map.get(feed, field) != Changeset.get_field(changeset, field)
+      end
+    )
   end
 
   defp start_rerender(%{assigns: %{rerender_task_ref: ref}} = socket) when not is_nil(ref) do

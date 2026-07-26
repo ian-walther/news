@@ -90,7 +90,8 @@ defmodule Newspaper.ExtractionTest do
     assert item.body_mode == "extracted_content"
     assert item.rendered_body =~ "Extracted article body"
 
-    assert item.rendered_link_url == "/articles/#{article.guid}"
+    assert item.rendered_link_url ==
+             "/articles/#{article.guid}?feed=#{output_feed.guid}"
 
     assert output_feed.body_source == "extracted_content"
     assert output_feed.link_to_hosted_article

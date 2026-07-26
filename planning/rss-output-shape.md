@@ -33,8 +33,12 @@ Output feed identifiers should be usable for:
 Example hosted article URL shape:
 
 ```text
-/articles/:article_guid
+/articles/:article_guid?feed=:feed_guid
 ```
+
+The article GUID identifies the canonical article. The feed GUID supplies
+presentation context when the link came from an output feed; it does not
+change article identity.
 
 Example generated feed URL shape:
 
@@ -97,6 +101,10 @@ Suggested setting:
 
 When false, RSS item links point to the original article. When true and extracted hosting is available, RSS item links point to the local hosted article URL.
 
+Hosted links should include the stable output-feed GUID as context because one
+article may appear in multiple output feeds with different hosted-page
+presentation settings.
+
 ## Title Source
 
 Each output feed should select its rendered item title source explicitly:
@@ -137,6 +145,26 @@ The default is `original_feed`. Moving to one selector avoids overlapping boolea
 
 If a digest title or body is selected and the item's digest artifact is not ready, publication waits. The item becomes publishable after successful digestion and an explicit render snapshot update; original content is not used as a silent digest fallback.
 
+## Hosted Article Presentation
+
+Each output feed should have a boolean setting controlling whether its hosted
+article pages include the successful digest selected by that generated feed
+item.
+
+Setting:
+
+- `show_digest_in_hosted_article`
+
+The default is true to preserve the established hosted-page behavior. This
+setting is independent of `body_source`: an output feed may use
+`digest_summary` as its RSS body while hiding the digest block on the hosted
+full-article page.
+
+The hosted page should resolve the output-feed context from the RSS link and
+use the exact successful digest referenced by that feed item's digestion
+state. Direct article-library links without output-feed context may continue
+to show the latest digest for operator inspection.
+
 ## Configurability
 
 Keep rendering settings simple while processing pipeline steps are introduced.
@@ -144,6 +172,7 @@ Keep rendering settings simple while processing pipeline steps are introduced.
 Output-feed rendering settings:
 
 - `link_to_hosted_article`
+- `show_digest_in_hosted_article`
 - `title_source`
 - `body_source`
 

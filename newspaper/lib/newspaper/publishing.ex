@@ -382,12 +382,12 @@ defmodule Newspaper.Publishing do
   defp summary_html(_summary), do: nil
 
   defp rendered_link_url(
-         %GeneratedFeed{link_to_hosted_article: true},
+         %GeneratedFeed{link_to_hosted_article: true, guid: feed_guid},
          %Article{guid: guid} = article,
          raw_item
        ) do
     if extracted_html(article) do
-      "/articles/#{guid}"
+      "/articles/#{guid}?#{URI.encode_query(%{"feed" => feed_guid})}"
     else
       raw_item && raw_item.url
     end

@@ -6,13 +6,23 @@ Build a local-first personal news intake system that improves the existing Fresh
 
 The morning newspaper is the long-term product goal. The intermediate feed features are intentionally useful on their own, and each one should move the system closer to that final newspaper workflow.
 
-## First Useful Product
+## Feed Product
 
 The feed foundation is generated RSS feeds.
 
 The app should keep input feeds, intake groups, canonical articles, and generated output feeds as separate concepts. Reeder Classic remains the primary reading client through FreshRSS for the bulk of news consumption.
 
-Reliable extraction across static, JavaScript-rendered, and authenticated sources is the foundation for local-LLM digestion and filtering. The next compelling product milestone is a factual replacement title and useful reading summary for successfully extracted articles; complete browser coverage does not need to block learning from sources that already extract cleanly.
+The feed product should stand on its own as a dependable personal reading
+system: aggregate and deduplicate source feeds, publish stable output feeds,
+extract readable articles, and optionally replace feed titles or bodies with a
+durable local-LLM digest. Output feeds should independently control RSS
+presentation and whether hosted article pages include the selected digest.
+
+Reliable extraction across static, JavaScript-rendered, and authenticated
+sources is the foundation for later filtering and newspaper work. Direct and
+isolated-browser extraction cover ordinary sources; the authenticated headed
+browser is the remaining extraction tier for sources that depend on a
+persistent signed-in session.
 
 ## Product Modes
 

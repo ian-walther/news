@@ -90,7 +90,7 @@ The first configurable scope should be output feeds. Additional scope inheritanc
 
 For extraction, the output-feed step only enables the site-policy coordinator. The article host owns the starting extractor, escalation, pacing, timeout, and extraction-quality thresholds. Output feeds must not select competing extraction methods for the same article.
 
-The extraction step's enabled state is the output-level scheduling control. It automatically requests extraction for future generated feed items. Enabling it is not retroactive; the operator must explicitly request extraction of existing items. Output link and body settings only decide how an available extraction artifact is rendered.
+The extraction step's enabled state is the output-level scheduling control. It automatically requests extraction for future generated feed items. Enabling it is not retroactive; the operator must explicitly request extraction of existing items. Output title, body, link, and hosted-page settings only decide how available extraction and digest artifacts are presented.
 
 ## Failure Handling
 
@@ -120,7 +120,7 @@ Re-rendering should remain an explicit application operation rather than live co
 
 Processing and membership changes should be future-only by default.
 
-Changing output feed membership or source settings should not automatically rewrite existing generated feed items or backfill old articles into feeds. Changing title, body, or link rendering policy is different: saving that policy should automatically re-render existing generated feed items from their stored artifacts so the published feed matches the selected presentation. A manual re-render remains available as a recovery and debugging action.
+Changing output feed membership or source settings should not automatically rewrite existing generated feed items or backfill old articles into feeds. Changing title, body, link, or hosted-page presentation policy is different: saving that policy should automatically re-render existing generated feed items from their stored artifacts so published links and feed snapshots match the selected presentation. A manual re-render remains available as a recovery and debugging action.
 
 ## Enabled / Disabled Semantics
 

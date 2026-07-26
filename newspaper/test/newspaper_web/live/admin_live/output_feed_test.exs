@@ -27,6 +27,7 @@ defmodule NewspaperWeb.AdminLive.OutputFeedTest do
     {:ok, view, _html} = live(conn, ~p"/output-feeds/#{feed.id}")
 
     assert has_element?(view, "#output-feed-settings-form")
+    assert has_element?(view, "#output-feed-hosted-digest[checked]")
     assert has_element?(view, "#toggle-extraction-processing:not([checked])")
     assert has_element?(view, "#toggle-digestion-processing[disabled]")
     refute has_element?(view, "select[name='pipeline_step[implementation_key]']")
@@ -66,6 +67,7 @@ defmodule NewspaperWeb.AdminLive.OutputFeedTest do
       "#output-feed-settings-form",
       feed_params(feed, %{
         "link_to_hosted_article" => "true",
+        "show_digest_in_hosted_article" => "false",
         "title_source" => "digest",
         "body_source" => "digest_summary"
       })
@@ -76,6 +78,7 @@ defmodule NewspaperWeb.AdminLive.OutputFeedTest do
 
     feed = Publishing.get_generated_feed!(feed.id)
     assert feed.link_to_hosted_article
+    refute Map.get(feed, :show_digest_in_hosted_article, true)
     assert feed.title_source == "digest"
     assert feed.body_source == "digest_summary"
 
@@ -271,6 +274,7 @@ defmodule NewspaperWeb.AdminLive.OutputFeedTest do
         "item_limit" => Integer.to_string(feed.item_limit),
         "enabled" => to_string(feed.enabled),
         "link_to_hosted_article" => to_string(feed.link_to_hosted_article),
+        "show_digest_in_hosted_article" => to_string(feed.show_digest_in_hosted_article),
         "title_source" => feed.title_source,
         "body_source" => feed.body_source,
         "input_feed_ids" => Enum.map(feed.input_feeds, & &1.id),

@@ -102,4 +102,5 @@ Later, production can point at a shared network Postgres instance by changing
 - Durable generated feed item snapshots and GUID-based RSS endpoints
 - Site-scoped simple/headless extraction with escalation, pacing, and retry history
 - Ollama-backed article title and summary digestion
+- Per-output-feed RSS and hosted-article presentation controls
 - Live processing, article, failure, and operation visibility

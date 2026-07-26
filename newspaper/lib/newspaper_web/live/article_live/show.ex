@@ -3,8 +3,9 @@ defmodule NewspaperWeb.ArticleLive.Show do
 
   alias Newspaper.Content
   alias Newspaper.Content.ArticleExtraction
+  alias Newspaper.Publishing.GeneratedFeedItem
 
-  def mount(%{"guid" => guid}, _session, socket) do
+  def mount(%{"guid" => guid} = params, _session, socket) do
     article = Content.get_article_by_guid!(guid)
 
     if is_nil(article.extraction) do
@@ -14,7 +15,7 @@ defmodule NewspaperWeb.ArticleLive.Show do
     {:ok,
      socket
      |> assign(:article, article)
-     |> assign(:digest, latest_digest(article))
+     |> assign(:digest, selected_digest(article, params["feed"]))
      |> assign(:page_title, article.title || "Article")}
   end
 
@@ -86,5 +87,27 @@ defmodule NewspaperWeb.ArticleLive.Show do
     article.digests
     |> Enum.sort_by(&{&1.generated_at, &1.id}, :desc)
     |> List.first()
+  end
+
+  defp selected_digest(article, nil), do: latest_digest(article)
+
+  defp selected_digest(article, feed_guid) do
+    item =
+      Enum.find(
+        article.generated_feed_items,
+        &(&1.generated_feed.guid == feed_guid)
+      ) || raise Ecto.NoResultsError, queryable: GeneratedFeedItem
+
+    if item.generated_feed.show_digest_in_hosted_article do
+      item.pipeline_item_steps
+      |> Enum.find(
+        &(&1.step_type == "digestion" and &1.status == "succeeded" and
+            not is_nil(&1.article_digest))
+      )
+      |> case do
+        nil -> nil
+        item_step -> item_step.article_digest
+      end
+    end
   end
 end

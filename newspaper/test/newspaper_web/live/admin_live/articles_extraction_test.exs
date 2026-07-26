@@ -11,6 +11,7 @@ defmodule NewspaperWeb.AdminLive.ArticlesExtractionTest do
   alias Newspaper.Processing
   alias Newspaper.Processing.PipelineStepAttempt
   alias Newspaper.Publishing
+  alias Newspaper.Publishing.GeneratedFeedItem
   alias Newspaper.Repo
 
   setup do
@@ -125,6 +126,35 @@ defmodule NewspaperWeb.AdminLive.ArticlesExtractionTest do
     assert {:ok, article_view, _html} = live(conn, ~p"/articles/#{article.guid}")
     assert has_element?(article_view, "#article-digest", "Rectangular headlights")
     assert has_element?(article_view, "#article-digest", "summary120")
+
+    assert {:ok, output_feed} =
+             Publishing.update_generated_feed(output_feed, %{
+               link_to_hosted_article: true,
+               show_digest_in_hosted_article: false
+             })
+
+    assert {:ok, _run} = Pipeline.rerender_output_feed(output_feed.id, "test")
+
+    item =
+      Repo.get_by!(GeneratedFeedItem,
+        generated_feed_id: output_feed.id,
+        article_id: article.id
+      )
+
+    hosted_path = "/articles/#{article.guid}?feed=#{output_feed.guid}"
+    assert item.rendered_link_url == hosted_path
+
+    assert {:ok, hosted_view, _html} = live(conn, hosted_path)
+    refute has_element?(hosted_view, "#article-digest")
+    assert has_element?(hosted_view, "#extracted-article-content")
+
+    assert {:ok, _output_feed} =
+             Publishing.update_generated_feed(output_feed, %{
+               show_digest_in_hosted_article: true
+             })
+
+    assert {:ok, digest_view, _html} = live(conn, hosted_path)
+    assert has_element?(digest_view, "#article-digest", "Rectangular headlights")
   end
 
   defp configure_extraction!(article) do

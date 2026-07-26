@@ -347,7 +347,7 @@ defmodule Newspaper.Content do
       :article_extraction_attempts,
       :pipeline_step_attempts,
       generated_feed_items: [
-        :pipeline_item_steps,
+        pipeline_item_steps: :article_digest,
         generated_feed: :pipeline_steps
       ]
     ])

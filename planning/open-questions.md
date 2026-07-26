@@ -1,10 +1,11 @@
 # Open Questions
 
-## Product Center Of Gravity
+## Deferred Product Expansion
 
 - What does the first satisfying morning newspaper look like?
-- Which intermediate features are required before the newspaper is worth building?
 - Which future modes belong in this app versus a separate project?
+- Which Trilium expansion decisions supersede the current high-level
+  newspaper and semantic-filtering sketches when that planning is imported?
 
 ## Intake And Output Feed Semantics
 

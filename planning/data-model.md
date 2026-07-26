@@ -107,6 +107,7 @@ Definitions for output feeds published to FreshRSS.
 - inclusion rules over intake groups, sources, categories, or later policies
 - optional future filtering/routing policy reference
 - boolean controlling whether links point to hosted article pages
+- boolean controlling whether feed-contextual hosted pages show the selected digest
 - title source selector: original or digest
 - body source selector: original feed, extracted content, or digest summary
 - configurable processing pipeline reference or scoped pipeline steps
