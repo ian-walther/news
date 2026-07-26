@@ -9,7 +9,7 @@ Type=simple
 Environment=FD_XDM=1
 EnvironmentFile=/etc/newspaper-browser/browser-desktop.env
 ExecStartPre=/usr/local/libexec/newspaper-browser/wait-for-x
-ExecStart=/usr/bin/x11vnc -no6 -display ${DISPLAY} -auth guess -rfbauth /etc/newspaper-browser/x11vnc.pass -rfbport ${VNC_PORT} -listen ${VNC_LISTEN_ADDRESS} -forever -shared -repeat -noxdamage -xkb
+ExecStart=/usr/bin/x11vnc -no6 -noipv6 -display ${DISPLAY} -auth guess -rfbauth /etc/newspaper-browser/x11vnc.pass -rfbport ${VNC_PORT} -rfbportv6 0 -listen ${VNC_LISTEN_ADDRESS} -forever -shared -repeat -noxdamage -xkb
 Restart=always
 RestartSec=5
 TimeoutStopSec=10
