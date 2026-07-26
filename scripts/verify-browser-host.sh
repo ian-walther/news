@@ -12,6 +12,43 @@ browser_uid="$(id -u "${browser_user}")"
 user_runtime="/run/user/${browser_uid}"
 user_bus="unix:path=${user_runtime}/bus"
 
+user_service_active() {
+  sudo -u "${browser_user}" \
+    XDG_RUNTIME_DIR="${user_runtime}" \
+    DBUS_SESSION_BUS_ADDRESS="${user_bus}" \
+    systemctl --user is-active --quiet newspaper-chrome.service
+}
+
+xfce_active() {
+  pgrep -u "${browser_user}" -f xfce4-session >/dev/null
+}
+
+cdp_active() {
+  curl --fail --silent http://127.0.0.1:9222/json/version >/dev/null
+}
+
+wait_until() {
+  local description="$1"
+  shift
+
+  for _attempt in $(seq 1 60); do
+    if "$@" >/dev/null 2>&1; then
+      return 0
+    fi
+
+    sleep 1
+  done
+
+  echo "Timed out waiting for ${description}" >&2
+  return 1
+}
+
+wait_until "LightDM" systemctl is-active --quiet lightdm.service
+wait_until "the XFCE session" xfce_active
+wait_until "x11vnc" systemctl is-active --quiet newspaper-x11vnc.service
+wait_until "the Chrome user service" user_service_active
+wait_until "Chrome CDP" cdp_active
+
 echo "== Packages =="
 dpkg-query -W -f='${binary:Package} ${Version}\n' \
   lightdm \
@@ -37,10 +74,8 @@ systemctl is-active lightdm.service newspaper-x11vnc.service
 
 echo
 echo "== Browser service =="
-sudo -u "${browser_user}" \
-  XDG_RUNTIME_DIR="${user_runtime}" \
-  DBUS_SESSION_BUS_ADDRESS="${user_bus}" \
-  systemctl --user is-active newspaper-chrome.service
+user_service_active
+echo "active"
 
 echo
 echo "== Display =="
