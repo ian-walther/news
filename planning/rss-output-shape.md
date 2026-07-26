@@ -128,7 +128,10 @@ Extracted body behavior:
 - `extracted_content` uses the sanitized HTML from the current successful article extraction.
 - When extraction is unavailable, the item is not extraction-ready; the selected publication policy decides whether it waits or temporarily renders original content.
 
-An enabled extraction pipeline step is the only output-level switch that requests extraction. It automatically schedules future generated feed items. Existing items require an explicit bulk extraction action, preserving future-only configuration semantics.
+Outlet and Input Feed enrichment policy requests shared Article extraction.
+Output Feed rendering consumes the selected available artifact and does not
+schedule a competing extraction. Existing Articles require an explicit scoped
+backfill, preserving future-only configuration semantics.
 
 Digest body behavior:
 

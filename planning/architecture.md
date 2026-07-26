@@ -6,7 +6,9 @@ The system should be a Phoenix application named Newspaper, with LiveView for th
 
 Phoenix and LiveView are intentional choices. They match the user's work stack and another active side project, so the app should lean into that ecosystem rather than treating the UI framework as an open question.
 
-The Phoenix control plane owns configuration, orchestration, durable data, workflow state, generated RSS endpoints, local article pages, and later PDF/email/print outputs.
+The Phoenix control plane owns configuration, orchestration, durable data,
+workflow state, generated RSS endpoints, hosted Article pages, hosted
+Newspaper Editions, delivery email, and later PDF or print outputs.
 
 Job scheduling/orchestration should use ordinary supervised Elixir processes, such as GenServers, rather than introducing Oban. This matches the user's existing experience and keeps the system familiar. A Postgres-backed job system can be reconsidered later if the job surface grows enough to justify it.
 
@@ -23,6 +25,7 @@ news/
   newspaper/      Phoenix application
   workers/        external pipeline step implementations
   planning/       forward-looking planning docs
+  docs/           immutable source material and durable reference docs
   scripts/        repo-level operational helpers
   Dockerfile
   docker-compose.dev.yml
@@ -55,13 +58,17 @@ Avoid both of these failure modes:
 
 - Source and feed configuration.
 - Feed collection.
-- Canonicalization and deduplication.
+- Outlet-scoped canonicalization and deduplication.
+- Shared Article extraction and classification.
 - Generated RSS feed publishing.
+- Event clustering, weighted admission, evidence analysis, and Edition
+  generation.
+- Hosted Edition publication and delivery.
 - Workflow state and failure visibility.
 - Operator/admin UI.
 - Retry and audit history.
 - Local article pages once extraction exists.
-- Later paper planning, delivery, and Home Assistant integration.
+- Later PDF/print rendering and Home Assistant integration.
 
 Operator-facing views should lead with domain state and meaningful parent operations. Processing is the authoritative operational window: it combines currently running attempts, stage-specific queues, prerequisite and site-policy delays, completed attempt history, parent batches, and non-pipeline operations. Output-feed and article views remain useful scoped projections and should link into Processing with their context preserved. Low-level execution runs, snapshots, and raw metadata remain available as expandable debug evidence instead of dominating routine workflows. Time values should be stored in UTC and rendered in the operator's browser-local timezone.
 
@@ -72,8 +79,16 @@ Workers should receive explicit structured input and return explicit structured 
 - `news-extract-simple`: direct HTML fetch and extraction evidence.
 - `news-extract-headless`: isolated headless browser rendering and extraction evidence.
 - `news-extract-headed`: headed host Chrome extraction evidence.
-- `news-classify`: semantic labels, confidence, routing/filter decision, rationale.
-- `news-render-paper`: PDF rendering from a complete layout model.
+- `news-classify`: app-owned Article labels, section/Topic candidates,
+  geography, confidence, and rationale.
+
+Cross-source clustering, Claim extraction, synthesis, and Citation validation
+may begin as internal modules or bounded model calls behind registered
+implementations. Add worker executables only when isolation, language/library
+requirements, or resource control justify the boundary.
+
+`news-render-paper` is a deferred PDF renderer consuming a complete immutable
+Edition layout. It is not part of the hosted-first Newspaper path.
 
 Workers should write logs to stderr, return machine-readable output on stdout or an output file, and avoid mutating durable app state directly.
 
@@ -98,7 +113,12 @@ The registry should provide:
 
 The admin UI should use registry metadata to render configurable pipeline step forms. The database should store selected implementation keys and config, while code controls which implementations are available.
 
-Extraction has two distinct registry roles. An output feed selects the `extraction.site_policy` pipeline coordinator to participate in extraction; it does not select an extractor. The host-keyed site policy selects the starting extractor and owns escalation, pacing, timeout, and content-quality thresholds.
+Extraction has two distinct registry roles. An Outlet or Input Feed enrichment
+policy requests the `extraction.site_policy` coordinator for shared Article
+extraction; it does not select a concrete extractor. The host-keyed site policy
+selects the starting extractor and owns escalation, pacing, timeout, and
+content-quality thresholds. Existing Output Feed extraction definitions remain
+historical compatibility records during migration.
 
 The extraction registry should include at least:
 
@@ -113,6 +133,20 @@ The digestion registry should initially include only:
 - `digestion.ollama.article_digest`
 
 The initial implementation uses the globally selected Ollama model. Each generated feed item step snapshots that model with code-owned prompt and output-schema revisions so queued work remains deterministic without creating a general database-defined prompt system. Per-step model selection should wait for a demonstrated need.
+
+The expansion should add registered implementations for:
+
+- shared Article classification
+- Event candidate generation and clustering
+- Claim and evidence extraction
+- cross-source synthesis
+- Citation validation
+- hosted Edition rendering
+- email delivery
+
+Every persisted artifact should identify its implementation, model where
+applicable, prompt/schema revision, input fingerprint, and exact upstream
+artifact references.
 
 ## Browser And Auth Strategy
 
@@ -195,4 +229,7 @@ is suitable for public hosting without that work.
 
 Home Assistant and MQTT belong in the project, but not in the immediate pipeline/extraction work.
 
-The user already runs an MQTT server and has another side project that publishes Home Assistant entities. This integration should be treated as a normal later system integration, not an exotic add-on. It becomes relevant when the morning newspaper, email, print controls, and run-status sensors are underway.
+The user already runs an MQTT server and has another side project that
+publishes Home Assistant entities. This integration should be treated as a
+normal later system integration. It becomes relevant after hosted Editions and
+delivery are reliable enough for useful controls and run-status sensors.

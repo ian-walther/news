@@ -2,14 +2,20 @@
 
 ## Core Abstraction
 
-The system is a pipeline with two separate feed concepts:
+The system has three distinct source and feed concepts:
 
-- Input feeds enter the system either independently or through optional intake groups.
-- Output feeds are published to FreshRSS after selection, categorization, filtering, and rendering.
+- Outlets are real-world editorial identities, Article dedupe boundaries, and
+  Newspaper source-vote units.
+- Input Feeds are RSS or Atom discovery endpoints owned by an Outlet.
+- Output Feeds are user-configured generated RSS products published to
+  FreshRSS after selection, filtering, and rendering.
 
-Intake groups and output feeds should not be collapsed into one abstraction.
+These concepts must not collapse into one generic grouping abstraction.
 
-The pipeline should use eager durable intake, not lazy mirroring of current upstream feed contents. Input feeds are discovery sources. Once discovered, raw items, canonical articles, source appearances, and generated feed items become app-owned durable records.
+The pipeline should use eager durable intake, not lazy mirroring of current
+upstream feed contents. Input Feeds are discovery endpoints. Once discovered,
+Raw Items, canonical Articles, Article Appearances, extraction artifacts,
+classifications, and generated feed items become app-owned durable records.
 
 The app should store enough raw parsed feed data and later rendered metadata that it does not need to consult the original upstream feed entry after ingestion.
 
@@ -17,7 +23,7 @@ The app should store enough raw parsed feed data and later rendered metadata tha
 
 ### Input Feed
 
-An input feed is a raw RSS or Atom URL from an upstream source.
+An Input Feed is a raw RSS or Atom URL owned by one Outlet.
 
 Examples:
 
@@ -26,27 +32,38 @@ Examples:
 - Ars Technica
 - Local news feed
 
-### Intake Group
+### Outlet
 
-An intake group is an optional aggregation and deduplication unit for related input feeds.
+An Outlet is the required real-world editorial identity behind one or more
+Input Feeds.
 
-An intake group commonly represents one outlet or one logical source family. For example, a WSJ intake group may contain several WSJ sub-feeds. The intake group preserves every raw source appearance while resolving repeated entries to one canonical article record.
+For example, one Wall Street Journal Outlet may own Technology, Markets, and
+general-news Input Feeds. Repeated appearances across those feeds resolve to
+one Outlet-specific canonical Article while preserving every Raw Item and
+Article Appearance.
 
-Use an intake group only when more than one feed should share a deduplication boundary. An ungrouped input feed forms its own boundary. Existing feeds do not need artificial per-site groups merely to participate in intake or output feeds.
+Deduplication belongs at the Outlet boundary. Each current ungrouped Input Feed
+receives an Outlet during the semantic migration. Outlet is also the
+Newspaper's source-vote and base-policy scope.
 
-Deduplication belongs at the intake boundary: the intake group when present, otherwise the individual input feed.
+Related feeds are grouped for consumption by Output Feed membership. That use
+case does not require a second Intake Group abstraction.
 
 ### Article Pool
 
-The article pool is the durable set of canonical articles produced by intake groups.
+The Article pool is the durable set of Outlet-specific canonical Articles.
 
-Article records preserve source appearances, source metadata, stable app-generated article identity, extraction state, classification state, and later digest/newspaper metadata.
+Article records preserve Article Appearances, Outlet identity, stable
+app-generated Article identity, extraction state, classification state, and
+later digest and Newspaper relationships.
 
 ### Output Feed
 
 An output feed is a generated RSS feed consumed by FreshRSS.
 
-Output feeds select from the article pool. They are commonly category feeds, but the mechanism should be generic enough to support review feeds, source bundles, and later policy-filtered feeds.
+Output Feeds select from the Article pool. They are commonly category feeds,
+but the mechanism should remain generic enough to support review feeds, Outlet
+bundles, and policy-filtered feeds.
 
 Categorization, filtering, and routing belong primarily at the output-feed layer.
 
@@ -58,7 +75,8 @@ Output feeds should have stable app-generated identities for feed URLs and feed-
 
 A policy controls output-feed eligibility, filtering, routing, body mode, or review behavior.
 
-Current policies can be deterministic source/intake/category rules. Later policies can use extracted article content and local LLM classification.
+Current policies can be deterministic Outlet, Input Feed, and category rules.
+Later policies can evaluate app-owned Article classifications.
 
 Output feed rules should remain additive until explicit excludes are introduced through later policy work.
 
@@ -85,36 +103,51 @@ Examples:
 
 Implementations should be registered in code with metadata for labels, config schema, validation, and runtime behavior. The database should store selected implementation keys and config, not arbitrary executable behavior.
 
-The output-scoped extraction implementation is `extraction.site_policy`. Simple HTML, headless browser, and headed browser are extractor strategies selected by host policy rather than independent output-feed pipeline choices.
+`extraction.site_policy` remains the coordinator implementation. Its target
+scope is upstream Article enrichment policy rather than an Output Feed. Simple
+HTML, headless browser, and headed browser remain strategies selected by host
+policy rather than competing consumer choices. Existing output-scoped rows
+remain compatibility history during migration.
 
 ## Pipeline Shape
 
 ```text
-input feeds
-  -> intake boundary
+Outlets and Input Feeds
+  -> Outlet intake boundary
        fetch feeds
        store raw feed entries and raw parsed metadata
-       dedupe within an optional group or one ungrouped feed
-       preserve source appearances
-  -> article pool
+       dedupe within one Outlet
+       preserve Article Appearances
+  -> shared Article pool
        canonical article records
-       extraction state
-       classification state
-       digest/newspaper state
-  -> output feeds
-       select articles from included intake groups and input feeds
+       shared extraction artifacts
+       app-owned classification artifacts
+  -> Reading Feed path
+       select Articles from included Outlets and Input Feeds
        apply category/source rules
-       apply optional future semantic policies
+       evaluate optional semantic policies
+       optionally digest for feed presentation
        render RSS
-  -> FreshRSS
-  -> Reeder
+       publish to FreshRSS and Reeder
+  -> Newspaper path
+       cluster cross-Outlet Events
+       apply weighted admission and placement
+       extract Claims and evidence
+       synthesize and cite
+       publish immutable hosted Editions
 ```
 
 ## Evaluation Model
 
 Use eager evaluation and cached app-owned content.
 
-When an input feed is fetched, the app should persist discovered raw items, resolve canonical articles, preserve source appearances, and create or update generated feed item records for eligible output feeds. Output feeds should render from generated feed item snapshots rather than directly from whatever is currently present in upstream source feeds or current article state.
+When an Input Feed is fetched, the app should persist discovered Raw Items,
+resolve Outlet-specific canonical Articles, preserve Article Appearances, and
+create or update generated feed item records for eligible Output Feeds.
+Upstream enrichment should then produce reusable extraction and classification
+artifacts independent of Output Feed membership. Output Feeds should render
+from generated feed item snapshots rather than directly from mutable upstream
+or Article state.
 
 This keeps output behavior stable when:
 
@@ -131,27 +164,44 @@ Retention and autopurge can be added later. Purging old content should be an exp
 The feed foundation is:
 
 ```text
-input feed configured
-  -> optional intake group configured for cross-feed dedupe
+Outlet and Input Feed configured
   -> feed fetched
   -> raw item stored
-  -> canonical article resolved within its intake boundary
-  -> source appearance recorded
-  -> output feed eligibility determined by deterministic rules
+  -> canonical Article resolved within its Outlet boundary
+  -> Article Appearance recorded
+  -> shared extraction and classification requested by upstream policy
+  -> Output Feed and Newspaper eligibility evaluated independently
   -> generated feed item record created or updated
   -> rendered RSS snapshot stored
   -> generated RSS published
 ```
 
-Extraction, classification, article digestion, and semantic filtering should be added as explicit pipeline steps on top of this foundation.
+Extraction and Article classification are shared upstream steps. Article
+digestion, output-specific filtering, and rendering remain downstream
+consumer steps. Newspaper clustering, evidence analysis, synthesis, and
+Edition rendering form a second downstream path over the same enriched corpus.
 
 ## Configurable Processing Pipeline
 
-Future processing capabilities should extend the output-feed pipeline rather than adding one-off execution paths.
+Processing capabilities should use one code-owned registry and durable attempt
+model while allowing the correct domain scope for each operation.
 
-The initial scope remains the output feed. This allows different generated feeds to enable extraction and choose filtering, digestion, and rendering behavior without changing source intake. Extractor selection itself remains host-scoped so one article is fetched consistently and its extraction artifact can be reused across outputs.
+- Outlet and Input Feed policies request shared Article extraction and
+  classification.
+- Host policy selects the extraction starting strategy and escalation path.
+- Output Feeds configure output-specific filtering, digestion, and rendering.
+- Newspaper configs schedule clustering, admission, evidence analysis,
+  synthesis, Edition rendering, and delivery.
 
-An enabled output-feed extraction step is the sole scheduling switch for extraction. New generated feed items automatically request extraction through that step. Enabling a step remains future-only; existing items require an explicit bulk extraction action. Link-to-hosted and extracted-body settings consume an available extraction artifact but do not independently schedule work.
+Existing output-scoped extraction history must remain valid during migration,
+but new extraction demand should move upstream. A shared Article extraction is
+produced once and reused by every Output Feed and Newspaper run that references
+it.
+
+Enabling upstream enrichment remains future-only by default. Existing Articles
+require an explicit scoped backfill. Output link, title, body, and hosted-page
+settings consume available artifacts but do not independently create competing
+extractions.
 
 Pipeline steps should have:
 
@@ -173,9 +223,17 @@ Pipeline step attempts should record:
 - error
 - started and finished timestamps
 
-Each generated feed item should snapshot its enabled step definitions, ordered state, exact artifact references, and latest attempt. This separates a feed's current configuration from the work previously requested for an item. Deleting a current definition must preserve item snapshots and attempt history.
+Each generated feed item should snapshot its enabled output-specific step
+definitions, ordered state, exact shared artifact references, and latest
+attempt. Edition manifests provide the equivalent immutable snapshot for the
+Newspaper. Deleting a current definition must preserve historical snapshots
+and attempt history.
 
-Domain tables hold durable results. Attempt records explain how those results were produced. Extraction artifacts are article-level reusable state; digest artifacts are versioned and item steps reference the exact selected result. The output-feed step records why processing was requested, while site extraction policy and worker attempts record how extraction was performed.
+Domain tables hold durable results. Attempt records explain how those results
+were produced. Extraction and classification artifacts are Article-level
+reusable state; digest and synthesis artifacts are versioned and consumers
+reference the exact selected result. Demand policy records why processing was
+requested, while site policy and worker attempts record how extraction ran.
 
 Bulk processing should create a durable run before attempts are queued. The run owns aggregate progress and completion state; individual attempts remain the deterministic work history, and each execution run points back to its attempt. Enrollment belongs to an application-supervised dispatcher rather than the requesting LiveView or HTTP process. An unfinished parent batch must resume enrollment from its durable feed and step context after an application restart.
 
@@ -183,23 +241,37 @@ Queued pipeline attempts must also survive application restarts. Each step dispa
 
 Normal work created as new articles arrive should take priority over queued bulk processing. A running attempt should finish normally, then each dispatcher should select foreground work before older batch attempts. This priority is derivable from durable attempt ownership: attempts without a parent batch are foreground, while attempts attached to a bulk run are backfill work. Restart recovery must preserve the same ordering without requiring a separate in-memory-only priority flag.
 
-## Extraction, Digestion, And Filtering
+## Extraction, Classification, Digestion, And Filtering
 
-Content extraction comes before semantic filtering and article digestion. When both filtering and digestion are enabled, filtering should normally run first so excluded articles do not consume digest work. The first digest implementation produces a replacement title and summary together from the same extracted article and model call.
+Content extraction precedes app-owned Article classification. Downstream
+consumers evaluate their policies against the shared classification. The
+Reading Feed may then produce a single-Article digest for eligible items; the
+Newspaper clusters Articles before Claim extraction and cross-source
+synthesis.
 
 ```text
 article in pool
-  -> extraction step attempted when enabled
+  -> upstream extraction requested when enabled
   -> extracted article content stored
-  -> filtering step attempted when enabled
-  -> digestion step attempted for eligible articles when enabled
-  -> structured digest title and summary stored
-  -> output policies decide inclusion, exclusion, rendering, or review routing
+  -> Article classification stored
+  -> Reading Feed policies decide inclusion, exclusion, or review
+       -> optional Article digest
+       -> RSS rendering
+  -> Newspaper policy admits and clusters Events
+       -> Claim and evidence analysis
+       -> synthesized Edition Story
 ```
 
-Feed metadata can provide cheap hints, but content-aware filtering should rely on extracted article content when possible.
+Feed metadata can provide cheap hints, but content-aware classification should
+rely on extracted Article content when possible. Output-specific filtering
+should normally reuse classification rather than issuing another unconstrained
+classification call.
 
-The digest implementation is `digestion.ollama.article_digest`. It calls a configured Ollama server directly, snapshots the globally selected discovered model for queued work, and stores versioned article artifacts referenced by generated feed item state. This is intentionally a Newspaper-specific article transform, not a general LLM workflow layer.
+The digest implementation is `digestion.ollama.article_digest`. It calls a
+configured Ollama server directly, snapshots the globally selected discovered
+model for queued work, and stores versioned Article artifacts referenced by
+generated feed item state. This is a bounded Reading Feed transform, not the
+cross-source Newspaper synthesizer or a general LLM workflow layer.
 
 Extraction should use an app-owned escalation chain. The extractor implementations are separate executables with a shared contract, but the Elixir app decides which implementation to try, when to escalate, and what to remember for a site.
 
@@ -221,11 +293,15 @@ An article URL can become stale while a publisher keeps the underlying post avai
 
 ## Deduplication Boundary
 
-Deduplication should focus on duplicates within an intake boundary. A grouped boundary catches repeated articles published to multiple related feeds; an ungrouped feed deduplicates only against its own history.
+Article deduplication occurs within one Outlet. It catches repeated publication
+of the same Article through several Input Feeds owned by that Outlet while
+preserving every Article Appearance.
 
 Current dedupe should use normalized URL and feed-provided stable ID as its initial signals. The dedupe engine should be extensible, but title/date similarity, canonical link metadata from extracted pages, redirects, and semantic clustering should wait until real feed behavior shows they are needed.
 
-Cross-outlet semantic clustering is a later capability. It may matter for the morning newspaper or World Radar, but it should not block feed-level dedupe.
+Cross-Outlet similarity is Event clustering, not Article deduplication.
+Syndication and common-origin relationships remain explicit so the Newspaper
+can distinguish coverage breadth from evidentiary independence.
 
 When original pass-through rendering is selected, dedupe should select one representative raw entry for the generated feed item snapshot. The app does not need to merge duplicate item bodies.
 
@@ -267,11 +343,16 @@ Output feed membership should be represented natively rather than as an opaque J
 
 Supported inclusion rules:
 
-- include an intake group
-- include an individual input feed
+- include an Outlet
+- include an individual Input Feed
 
 Current rules are additive only. Explicit excludes should wait for later policy work.
 
-Including an intake group means all enabled input feeds currently in that intake group, plus enabled input feeds added to that intake group later. Individual input feed inclusion exists both for ungrouped feeds and for precision when an output feed should include only selected feeds from an intake group.
+Including an Outlet means all enabled Input Feeds currently owned by that
+Outlet, plus enabled Input Feeds added to it later. Individual Input Feed
+inclusion provides precision when an Output Feed should include only selected
+feeds from an Outlet.
 
-If a canonical article is eligible for an output feed through multiple included input feeds or intake groups, it should still create only one generated feed item for that output feed.
+If a canonical Article is eligible for an Output Feed through several
+memberships or Article Appearances, it still creates only one generated feed
+item for that Output Feed.

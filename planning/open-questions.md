@@ -1,71 +1,115 @@
 # Open Questions
 
-## Deferred Product Expansion
+These are unresolved decisions that remain relevant to future implementation.
+Settled Newspaper decisions belong in
+[`planning/newspaper/`](newspaper/README.md), not in this list.
 
-- What does the first satisfying morning newspaper look like?
-- Which future modes belong in this app versus a separate project?
-- Which Trilium expansion decisions supersede the current high-level
-  newspaper and semantic-filtering sketches when that planning is imported?
+## Before Claims and Evidence
 
-## Intake And Output Feed Semantics
+- What is the smallest useful Claim-type vocabulary?
+- Which evidence relationships are required initially: support,
+  contradiction, qualification, attribution, or another bounded set?
+- How should observation, allegation, denial, estimate, prediction, opinion,
+  and primary-record fact map onto Claim or source-role fields?
+- How should interested-party status and evidentiary independence be
+  represented?
+- How should partial support from a primary document affect one Claim without
+  becoming a generic Event-level vote?
+- What source-location data must a Citation preserve for durable audit?
 
-- How much source metadata should be visible in the generated feed body?
-- When should explicit output-feed excludes be introduced?
+## Before Event Clustering
 
-## RSS Output Shape
+- Which deterministic similarity and named-entity signals should generate the
+  first candidate clusters?
+- When do embeddings materially improve on TF-IDF/n-grams for the configured
+  corpus?
+- How should likely syndication, citation chains, and common reporting origins
+  be detected and represented?
+- What initial inactivity duration moves a Story Thread from Active to
+  Dormant?
+- What is the smallest safe merge/split correction workflow and audit record?
+- Which deterministic rule chooses a primary Section when several apply?
 
-- Are there source-specific metadata fields that should be preserved specially during raw capture?
-- Should source attribution be added to generated feed bodies?
+## Before Hosted Editions
 
-## Retention
+- What default timezone, content cutoff, and delivery deadline should the first
+  Newspaper configuration present?
+- What stable LAN route shape should Edition archives use?
+- What exact operator workflow creates a correction, clarification, or
+  retraction after publication?
+- Which email delivery mechanism should the first implementation use?
 
-- How long should raw items, articles, and generated feed items be retained by default?
-- Should retention be based on age, item count, output feed membership, or a mix?
-- What should be protected from autopurge once extraction, digests, or newspaper history exist?
-- How long should verbose run/debug history be retained?
+## Source and Policy UI
 
-## Rebuild
+- What numeric range and increments should the weight controls permit?
+- Should configured Sections beyond Local eventually have distinct admission
+  thresholds?
+- What compact UI best explains Outlet defaults, Input Feed overrides, Topic
+  rules, Local rules, inheritance, exclusions, and effective weights?
+- How should multiple localities and locality-specific source policies appear
+  in the UI?
 
-- Should full rebuild be deferred as an admin-danger-zone action?
-- If full rebuild is added later, should it operate by output feed, intake group, date range, item count, or a mix?
+## Reading Feed Semantics
+
+- How much source metadata should be visible in a generated feed body?
+- When should explicit Output Feed excludes be introduced?
+- Are there source-specific metadata fields that deserve dedicated storage
+  beyond the complete Raw Item snapshot?
+- What summary length and paragraph shape work best in Reeder?
+- What prompt and validation bounds reliably produce a factual one-sentence
+  digest title without clickbait?
+- Which connection, model, and structured-output failures should retry
+  automatically?
 
 ## Deduplication
 
-- What URL parameters should always be stripped?
-- When should title/date/source similarity override different URLs within an intake group?
-- Should any dedupe happen across intake groups, or should that wait for semantic clustering?
-- How should ambiguous dedupe matches be reviewed?
-- What feed-provided ID patterns are reliable enough to use across feeds from the same publisher?
+- Which URL parameters should always be stripped?
+- When should title/date similarity override different URLs within one Outlet?
+- Which feed-provided ID patterns are reliable across Input Feeds from one
+  Outlet?
+- How should ambiguous same-Outlet dedupe matches be reviewed?
 
-## Workflow
+Cross-Outlet similarity is Event clustering rather than Article
+deduplication.
 
-- What failure types need a first-class queue?
-- What failure lifecycle states are needed after real usage?
-- When, if ever, does the job surface justify moving from supervised GenServers to Oban or another job system?
+## Retention and Rebuild
 
-## Hosting
+- How long should Raw Items, Articles, generated feed items, and verbose run
+  history be retained by default?
+- Should ordinary retention use age, item count, output membership, or a mix?
+- Which extraction and classification revisions may be removed when nothing
+  references them?
+- How should immutable Editions, Citations, corrections, stable RSS identity,
+  and their referenced artifacts be protected from autopurge?
+- Should full rebuild remain a danger-zone action?
+- If added, should rebuild scope by Output Feed, Outlet, Input Feed, Newspaper,
+  date range, item count, or a mix?
 
-- What persistent volumes are needed outside Postgres?
+## Workflow and Operations
 
-## Production Architecture
+- Which failure types eventually justify a first-class queue beyond the
+  existing visible failure records?
+- Which failure lifecycle states are justified by observed use?
+- When, if ever, does the job surface justify moving from supervised processes
+  to Oban or another Postgres-backed job system?
+- How much implementation config should be typed fields versus validated raw
+  JSON?
+- How long should pipeline attempts be retained?
 
-- Which future services should run in Docker and which should stay on the host alongside the Chrome/desktop stack?
-- How should deploy, backup, restore, logs, and upgrades work?
+## Hosting and Production
 
-## Pipeline Configuration
+- Which future services should run in Docker and which should stay on the host
+  beside the persistent Chrome stack?
+- Which persistent volumes will be needed outside Postgres?
+- How should backup, restore, logs, and upgrades evolve as immutable Edition
+  history grows?
 
-- When is there enough real demand to add global, intake-group, or input-feed pipeline scope?
-- How much implementation config should be editable as typed fields versus raw JSON?
-- Should pipeline attempts be retained forever until retention policies exist?
+## Deferred Product Expansion
 
-## Article Digestion
-
-- What summary length and paragraph shape work best in Reeder?
-- What prompt and validation bounds reliably produce a factual one-sentence title without clickbait framing?
-- Which connection, model, and structured-output failures should retry automatically?
-
-## Home Assistant
-
-- Which MQTT entities should exist first?
-- Should HA controls be read live, snapshotted at run start, or both?
-- Which status sensors are useful once the morning newspaper is underway?
+- Should extraordinary late-breaking events ever create supplemental Editions?
+- How should curated official-source discovery be bounded and verified?
+- Which Twitter, newsletter, or mailbox ingestion path should be attempted
+  first?
+- When is PDF useful enough to add as a secondary Edition format?
+- Which MQTT entities and Home Assistant controls become useful after hosted
+  Editions and delivery are reliable?

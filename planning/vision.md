@@ -1,94 +1,123 @@
-# Personal News Intake
+# Personal News System
 
 ## Purpose
 
-Build a local-first personal news intake system that improves the existing FreshRSS and Reeder workflow by adding an upstream layer for feed aggregation, deduplication, generated feed publishing, content extraction, semantic filtering, article digestion, and morning newspaper generation.
+Build a local-first personal news system that owns source intake, durable
+Article state, extraction, classification, generated RSS, cross-source Event
+understanding, and scheduled Newspaper publishing.
 
-The morning newspaper is the long-term product goal. The intermediate feed features are intentionally useful on their own, and each one should move the system closer to that final newspaper workflow.
+The application should reverse the usual incentives of online news: remove
+clickbait, rhetorical inflation, repetition, and avoidable editorial framing
+while preserving useful facts, uncertainty, disagreement, and provenance.
 
-## Feed Product
+## Product Architecture
 
-The feed foundation is generated RSS feeds.
+One configured source universe feeds a shared enriched Article corpus and two
+complementary products:
 
-The app should keep input feeds, intake groups, canonical articles, and generated output feeds as separate concepts. Reeder Classic remains the primary reading client through FreshRSS for the bulk of news consumption.
+```text
+Outlets and Input Feeds
+  -> fetch, canonicalize, extract, and classify
+  -> shared Article corpus
+       -> Reading Feed
+       -> Newspaper
+```
 
-The feed product should stand on its own as a dependable personal reading
-system: aggregate and deduplicate source feeds, publish stable output feeds,
-extract readable articles, and optionally replace feed titles or bodies with a
-durable local-LLM digest. Output feeds should independently control RSS
-presentation and whether hosted article pages include the selected digest.
+### Reading Feed
 
-Reliable extraction across static, JavaScript-rendered, and authenticated
-sources is the foundation for later filtering and newspaper work. Direct and
-isolated-browser extraction cover ordinary sources; authenticated headed
-Chrome covers sources that depend on a persistent signed-in session.
+The Reading Feed is continuously updating and Article-centric. Generated
+Output Feeds remain useful through FreshRSS and Reeder for scanning singleton
+reporting, niche pieces, essays, analysis, reviews, blogs, and other worthwhile
+Articles that do not need cross-source synthesis.
 
-## Product Modes
+Output Feeds select from app-owned Article records and render stable RSS
+snapshots. They independently control membership, filtering, title source,
+body source, and original versus hosted links.
 
-### Generated Feed Curation
+### Newspaper
 
-Generated feed curation is the initial product mode.
+The Newspaper is scheduled and Event-centric. It identifies important Events
+through configurable weighted coverage across eligible Outlets, then creates
+neutral synthesized prose with claim-level citations, visible uncertainty,
+and optional backstory.
 
-- Subscribe to multiple source feeds and sub-feeds.
-- Optionally group related input feeds when they should share one dedupe boundary.
-- Deduplicate repeated articles within a group or within one ungrouped feed.
-- Preserve where each article appeared.
-- Publish output feeds from the post-intake article pool.
-- Use output feeds primarily for categories while keeping the mechanism generic.
-- Leave room for future filtering and routing policies.
-- Publish generated RSS feeds for FreshRSS.
-- Keep generated feeds useful without LLM processing.
+Each daily Edition is an immutable hosted artifact. A lightweight email
+delivers the Edition link by a hard deadline. PDF and print output are later
+formats, not prerequisites.
 
-### Content Extraction
+See [`planning/newspaper/`](newspaper/README.md) for the complete product,
+source, editorial, and domain contracts.
 
-Browser extraction expands coverage beyond sources that work through direct HTML fetches.
+## Core Domain Boundaries
 
-- Reuse authenticated browser sessions where needed.
-- Render JavaScript-dependent pages in isolated browser contexts.
-- Surface auth expiration and browser failures clearly.
-- Learn the cheapest useful extractor for each site without treating transient failures as capability failures.
+- **Outlet:** the real-world editorial identity, Article dedupe boundary,
+  Newspaper vote unit, and base policy scope.
+- **Input Feed:** an RSS or Atom discovery endpoint owned by an Outlet.
+- **Article Appearance:** the record that one Article appeared in one Input
+  Feed through one Raw Item.
+- **Output Feed:** a user-defined generated RSS destination; it groups reading
+  material rather than defining source identity.
+- **Article:** one Outlet-specific canonical publication.
+- **Event:** a cross-Outlet cluster about one occurrence or development.
+- **Story Thread:** continuity across related Events and Editions.
+- **Edition:** a sealed scheduled publication artifact.
 
-### Semantic Filtering And Enrichment
+The previous optional Intake Group abstraction should migrate to the required
+Outlet domain concept. Related Input Feeds are grouped for consumption through
+Output Feed membership, while Outlet membership provides source identity and
+deduplication.
 
-Semantic filtering and enrichment come after the feed pipeline and extraction path are reliable.
+## Processing Direction
 
-- Classify articles into durable labels and categories.
-- Filter unwanted coverage based on meaning, topic, and framing, not brittle keywords.
-- Support source-specific content policies, such as excluding political-topic coverage from otherwise useful sources whose political coverage is not trusted.
-- Store confidence, rationale, model identity, prompt/config metadata, and review state.
-- Make bad decisions auditable and correctable.
+Fetching, canonicalization, extraction, and app-owned Article classification
+belong upstream of both products. Output Feed membership must not be required
+to extract or classify an Article.
 
-### Article Digestion
+Feed categories and sub-feed membership are useful metadata hints, but the
+application owns durable topic, section, geographic, and policy
+classifications.
 
-Article digestion is a discrete generated-feed feature built on successful durable extraction.
+Conventional processing should narrow the problem before expensive model work:
 
-- Produce one factual replacement title and reading summary from each selected article.
-- Let each output feed independently choose original or digest titles and original, extracted, or digest bodies.
-- Discover installed models from a configurable local Ollama server and use one global article-digestion model until real usage justifies per-step configuration.
-- Keep this single-article transform separate from future cross-source synthesis and World Radar behavior.
+```text
+normalize and extract
+  -> deterministic metadata and information-retrieval signals
+  -> classify and cluster
+  -> extract Claims and evidence relationships
+  -> synthesize with provenance
+```
 
-### Morning Newspaper
-
-The morning newspaper is the end goal, built on the same article pipeline after the feed, extraction, and enrichment pieces are reliable.
-
-- Generate an iPad-friendly PDF.
-- Email the PDF when enabled.
-- Include sections such as tech, science, finance, cars, local, culture, and longform.
-- Use clickable links to original articles and local article pages.
-- Consider printing only after the PDF workflow proves useful.
-
-### World Radar
-
-World Radar is a future mode that summarizes broad world events from a larger source pool. It should cluster coverage across sources and identify consensus, disagreement, and story movement. It should not replace the curated personal reading pipeline.
+LLMs are bounded transforms and editors, not the owner of durable state or the
+entire pipeline.
 
 ## Guiding Principles
 
-- Keep FreshRSS and Reeder as the downstream reading workflow.
-- Make generated RSS feeds valuable before adding AI-dependent behavior.
-- Keep intake grouping/dedupe separate from output feed categorization/filtering.
-- Make processing steps configurable in the UI from the beginning.
-- Treat each intermediate feature as a useful standalone capability and as progress toward the morning newspaper.
-- Use the app as the owner of durable state, orchestration, and operator visibility.
-- Treat worker tools as replaceable transforms with explicit contracts when a separate executable boundary is justified.
-- Prefer observable failures over silent omissions.
-- Keep planning docs implementation-agent-agnostic.
+- Keep the Reading Feed valuable independently from the Newspaper.
+- Keep source identity, discovery endpoints, and output membership separate.
+- Preserve stable Article, Output Feed, feed-item, Event, and Edition
+  identities.
+- Use eager durable processing rather than live recomputation during RSS or
+  Edition requests.
+- Make weights, policies, classifications, failures, and generated artifacts
+  explainable.
+- Separate story prominence from factual confidence.
+- Preserve immutable Editions and publish later corrections instead of silent
+  rewrites.
+- Make configuration explicit rather than inferring preferences from reading
+  history.
+- Prefer conventional compute before model calls when it can reliably narrow
+  or structure the work.
+- Keep the Phoenix application as the owner of orchestration and durable state;
+  workers remain replaceable transforms with explicit contracts.
+- Prefer observable partial failure over silent omission.
+- Keep planning implementation-agent-agnostic.
+
+## Initial Expansion Boundary
+
+The first Newspaper expansion uses configured RSS and Atom feeds plus existing
+extraction capabilities. It begins with the Outlet migration and moving
+extraction/classification upstream.
+
+Twitter-specific ingestion, newsletter ingestion, unrestricted official-source
+discovery, PDF, print, supplemental Editions, and Home Assistant delivery
+controls remain later work.

@@ -1,375 +1,600 @@
-# Data Model
+# Target Data Model
 
 ## Direction
 
-Use Postgres from the start. Feed history, intake groups, source appearances, generated feed state, extraction content, run history, and later classification results are durable application state.
+Use Postgres as the only supported durable store. The application owns feed
+history, source identity, Article state, appearances, extraction and
+classification artifacts, generated RSS publication, Event clustering,
+evidence relationships, immutable Editions, run history, and failures.
 
-SQLite is not a supported backend. The app should be configured with a database URL so development, initial production, and later shared-network production can all use Postgres without changing application architecture.
+This is a forward-looking schema contract rather than a final migration file.
+The model should support eager durable processing and deterministic
+reproduction without consulting upstream feeds or mutable model configuration
+at read time.
 
-This is a planning sketch, not a final schema.
+See [`planning/newspaper/domain-model.md`](newspaper/domain-model.md) for the
+semantic definitions behind these tables.
 
-The data model should support eager durable intake. Source feeds are discovery inputs; generated output feeds render from app-owned records.
+## Source and Article Tables
 
-## Core Tables
+### `outlets`
 
-### sources
+Required real-world editorial identities and Article dedupe boundaries.
 
-Configured upstream input feeds.
-
-- feed URL
+- stable application identifier
 - display name
-- outlet/source name
-- optional intake group ID
-- optional default category/source metadata
-- enabled flag
-- fetch cadence
-- last fetch status
-- HTTP cache validators such as ETag and Last-Modified
-
-### intake_groups
-
-Aggregation and deduplication units for related input feeds.
-
-- name
-- optional outlet/logical source name
-- enabled flag
+- enabled state
+- base Newspaper participation policy and base weight, initially `1.0`
+- source-role metadata
+- default section, Topic, and Local policy references where configured
 - dedupe strategy/configuration
 - notes
+- timestamps
 
-### raw_items
+One Outlet can own many Input Feeds. One Outlet contributes at most one source
+vote to one Event regardless of how many of its feeds carried the Article.
 
-Items discovered from source feeds.
+### `input_feeds`
 
-- source ID
-- optional intake group ID copied from the source at discovery time
+RSS or Atom discovery endpoints owned by an Outlet.
+
+- stable application identifier
+- required Outlet ID
+- feed URL and display name
+- enabled state
+- fetch cadence or inherited fetch policy
+- last fetch status and timestamps
+- HTTP cache validators such as ETag and Last-Modified
+- upstream category/source metadata hints
+- optional Newspaper policy overrides
+- timestamps
+
+### `raw_items`
+
+Immutable or revision-addressable upstream feed observations.
+
+- Input Feed ID
+- Outlet ID snapshot
 - raw feed GUID
-- discovered URL
-- title
-- author
-- publication timestamp
-- updated timestamp
-- raw feed body
-- raw summary/excerpt
-- source URL
-- source name
-- categories/tags
-- media/enclosure metadata
-- raw metadata
-- raw parsed metadata snapshot
+- discovered and normalized URLs
+- title, author, publication timestamp, and updated timestamp
+- raw feed body and summary
+- source URL and source-name snapshots
+- categories, tags, media, and enclosure metadata
+- complete parsed metadata snapshot
 - discovered timestamp
 
-### articles
+### `articles`
 
-Canonical article identity.
+Outlet-specific canonical publications.
 
-- dedupe scope identifying either an intake group or an individual input feed
-- stable app-generated article identifier
-- canonical URL
-- resolved URL
-- title
-- author
-- outlet
-- publication timestamp
+- stable application identifier
+- required Outlet ID
+- canonical and resolved URLs
+- title, author, and publication timestamp
 - primary dedupe key
-- extraction status
-- current extraction outcome metadata; extracted content itself belongs only to the extraction artifact
+- current extraction and classification outcome metadata
+- first and last discovery timestamps
+- timestamps
 
-### article_dedupe_keys
+Articles from different Outlets remain separate even when syndicated or
+substantially similar.
 
-All stable aliases that resolve to one canonical article within its intake boundary.
+### `article_dedupe_keys`
 
-- article ID
-- dedupe scope
+All stable aliases that resolve to one Article inside one Outlet boundary.
+
+- Article ID
+- Outlet ID
 - normalized URL or feed-provided stable-ID key
-- unique constraint over scope and key
+- key type
+- unique constraint over Outlet and key
 
-Keeping every observed key allows an article first matched by URL to be found later by a stable ID, and vice versa, without changing its canonical identity.
+Preserving every observed key allows an Article first matched by URL to be
+found later by a stable ID, and vice versa, without changing its stable
+identity.
 
-### article_sources
+### `article_appearances`
 
-Mapping between canonical articles and every feed/source where they appeared.
+Every discovery of an Article through an Input Feed and Raw Item.
 
-- article ID
-- source ID
-- raw item ID
-- first seen timestamp
-- source-provided tags/categories
+- Article ID
+- Input Feed ID
+- Raw Item ID
+- first-seen timestamp
+- source-provided tags, categories, and other hints
 
-### generated_feeds
+This replaces the misleading `article_sources` name. The Outlet is the source;
+this row is an appearance.
 
-Definitions for output feeds published to FreshRSS.
+### `article_extractions`
 
-- stable app-generated feed identifier
-- title
-- description
-- item limit, default `500`
-- enabled flag
-- inclusion rules over intake groups, sources, categories, or later policies
-- optional future filtering/routing policy reference
-- boolean controlling whether links point to hosted article pages
-- boolean controlling whether feed-contextual hosted pages show the selected digest
-- title source selector: original or digest
-- body source selector: original feed, extracted content, or digest summary
-- configurable processing pipeline reference or scoped pipeline steps
+Versioned or revision-addressable extraction artifacts reusable across all
+consumers.
 
-### generated_feed_intake_groups
-
-Additive membership rules that include all enabled input feeds in an intake group.
-
-- generated feed ID
-- intake group ID
-- created timestamp
-
-Including an intake group applies to enabled input feeds currently in the group and enabled input feeds added later.
-
-### generated_feed_input_feeds
-
-Additive membership rules that include individual input feeds.
-
-- generated feed ID
-- source ID
-- created timestamp
-
-### generated_feed_items
-
-Durable article entries selected from the article pool for each generated output feed.
-
-- generated feed ID
-- article ID
-- stable app-generated feed item identifier
-- RSS GUID using the feed item identifier
-- published timestamp
-- item title
-- item URL
-- body mode
-- selection/filter decision fields for future policy use
-- rendered GUID
-- rendered title snapshot
-- rendered link URL snapshot
-- rendered author/byline snapshot
-- rendered publication timestamp snapshot
-- rendered updated timestamp snapshot
-- rendered summary/excerpt snapshot
-- rendered body snapshot or reference
-- rendered source name snapshot
-- rendered source URL snapshot
-- rendered categories/tags snapshot
-- rendered media/enclosure snapshot
-- rendered timestamp
-- render source metadata
-- render status/error
-- publication status
-- first eligible timestamp
-- last rendered timestamp
-
-### runs
-
-Durable execution records for fetch, publish, extraction, classification, and bulk pipeline work. A bulk pipeline run is the parent operator-visible batch for its individual step attempts. A per-attempt execution run references its pipeline step attempt directly. One attempt may have multiple execution runs when interrupted work is recovered and executed again.
-
-- run type
-- trigger: `manual`, `scheduled`, `system`, `pipeline`, or `settings_change`
-- status
-- started timestamp
-- finished timestamp
-- summary counts
-- related record references
-- pipeline step attempt ID for per-attempt execution
-- error summary
-- debug metadata
-
-### app_settings
-
-Application-level settings.
-
-- global fetch interval minutes, default `5`
-- Ollama base URL, initially `http://desktop.home:11434`
-- globally selected Ollama article-digestion model
-
-### failures
-
-Visible failure queue.
-
-- failure type
-- related source, raw item, article, feed, or run
-- message
-- retryable flag
-- retry count
-- last attempted timestamp
-- related record/run references
-
-## Processing Pipeline Tables
-
-### pipeline_steps
-
-Configured processing steps.
-
-- scope type, initially output feed
-- scope ID
-- step type
+- Article ID
+- source URL and final resolved URL
 - implementation key
-- position
-- enabled flag
-- config
-- created/updated timestamps
-
-Step implementations are registered in code. Database rows select and configure those implementations.
-
-An output-feed extraction row selects the site-policy coordinator. It does not store a concrete extractor choice or extractor-specific configuration.
-
-The enabled state of that row is the sole output-level extraction scheduling switch. Enabled steps schedule future generated feed items; existing items are only scheduled through an explicit bulk action. Output rendering selectors consume available artifacts but do not request processing.
-
-### generated_feed_item_steps
-
-The durable step definition and state snapshotted for one generated feed item.
-
-- generated feed item ID
-- current pipeline step ID when the definition still exists
-- step type, implementation key, and position
-- config snapshot and definition fingerprint
-- status and latest attempt ID
-- exact extraction or digest artifact reference
-- reused-artifact flag
-- error and execution timestamps
-
-These rows distinguish the output feed's current definition from the work requested and completed for an existing item. Deleting a current pipeline definition must not erase item state or execution history.
-
-### pipeline_step_attempts
-
-Execution history for pipeline steps.
-
-- pipeline step ID when the definition still exists
-- generated feed item step ID when applicable
-- article ID when applicable
-- generated feed item ID when applicable
-- parent batch run ID when the attempt belongs to a bulk operation
-- one-to-many execution runs for start, restart recovery, and diagnostic history
-- status
-- input snapshot
-- output snapshot
-- error type/message/debug data
-- started timestamp
-- finished timestamp
-
-Attempts are the durable work ledger for queued, running, and completed pipeline work. Bulk operations associate attempts with a durable parent run so aggregate progress remains reconstructable. Execution runs retain lower-level timing and debug evidence and reference their attempt directly. Durable current outputs should be stored in domain tables.
-
-### article_extractions
-
-Durable current extraction artifact for an article. Extracted content is article-level reusable state even when an output-feed pipeline step caused the work.
-
-- article ID
-- implementation key
-- final URL
-- extracted title
-- extracted byline
-- extracted publication timestamp
-- sanitized extracted HTML
-- normalized extracted text
+- extracted title, byline, and publication timestamp
+- sanitized HTML and normalized text
 - excerpt and site name
-- quality/debug metadata
-- created/updated timestamps
+- quality and boilerplate-removal evidence
+- deterministic input fingerprint
+- implementation version
+- created timestamp
 
-Attempt snapshots preserve execution history. Future revision history can become first-class if correction or comparison workflows need more than the current artifact plus attempts.
+The application may retain one current pointer while preserving the exact
+artifact references used by generated feed items and Edition manifests.
 
-### site_extraction_policies
+### `article_classifications`
 
-Per-site extraction escalation memory.
+App-owned classification artifacts derived from extraction and metadata.
+
+- Article ID and extraction revision
+- taxonomy version
+- primary-section candidate
+- Topic/tag assignments
+- political-content tag
+- geographic and locality relationships
+- entities and other clustering hints
+- confidence and rationale
+- implementation, model, prompt, and schema versions
+- deterministic input fingerprint
+- correction/review state where needed
+- created timestamp
+
+Feed categories and sub-feed membership are evidence for this artifact, not
+authoritative labels.
+
+## Reading Feed Tables
+
+The current `generated_feeds` vocabulary may remain in storage while the UI
+and planning use **Output Feed** consistently.
+
+### `generated_feeds`
+
+- stable Output Feed identifier
+- title and description
+- item limit, default `500`
+- enabled state
+- additive membership and later filtering policy references
+- original or hosted link selection
+- original or digest title selection
+- original feed, extracted content, or digest body selection
+- hosted-page digest visibility
+- timestamps
+
+### `generated_feed_outlets`
+
+Additive membership selecting every enabled Input Feed currently owned by an
+Outlet.
+
+- generated feed ID
+- Outlet ID
+- created timestamp
+
+### `generated_feed_input_feeds`
+
+Additive membership selecting one Input Feed.
+
+- generated feed ID
+- Input Feed ID
+- created timestamp
+
+An Article selected through several memberships still produces one generated
+feed item for that Output Feed.
+
+### `generated_feed_items`
+
+Durable Output Feed publication records.
+
+- generated feed ID and Article ID
+- stable generated feed item identifier used as RSS GUID
+- publication and eligibility timestamps
+- exact extraction and digest artifact references used
+- selection/filter decision metadata
+- rendered GUID, title, link, byline, timestamps, body, source, categories,
+  media, and enclosure snapshots
+- render source metadata and implementation version
+- render and publication status/error
+- first eligible and last rendered timestamps
+
+Rendering changes do not change RSS GUIDs.
+
+### `article_digests`
+
+Versioned single-Article Reading Feed digest artifacts.
+
+- Article and extraction IDs
+- pipeline step attempt ID
+- implementation key, initially `digestion.ollama.article_digest`
+- model, prompt, and schema versions
+- deterministic input fingerprint
+- generated title and summary
+- input/output metadata
+- created timestamp
+
+Explicit re-digestion creates a new artifact. Model chain of thought is never
+requested or stored.
+
+### `article_filter_decisions`
+
+Output-specific policy decisions over shared Article classifications.
+
+- Article ID
+- Output Feed or policy scope
+- implementation key and policy revision
+- include, exclude, or review decision
+- labels, confidence, and rationale
+- exact Article Classification reference
+- created timestamp
+
+## Upstream Processing Tables
+
+### `article_processing_policies`
+
+Defines which shared upstream artifacts an Article should receive without
+requiring Output Feed membership.
+
+- Outlet or Input Feed scope
+- extraction enabled/inherited state
+- classification enabled/inherited state
+- implementation/config references
+- timestamps
+
+Output Feed consumers and Newspaper participation may create demand for an
+artifact, but they must converge on one reusable Article-level result rather
+than scheduling competing output-specific extractions.
+
+### `site_extraction_policies`
+
+Per-host extraction escalation memory.
 
 - site host
-- minimum implementation key
-- last successful implementation key
+- minimum implementation and last successful implementation
 - last failure kind
-- escalation enabled flag
-- minimum request interval and adaptive backoff state
-- extraction timeout
-- strict minimum acceptable text length after article cleanup
-- notes
-- created/updated timestamps
+- escalation enabled state
+- request pacing and adaptive backoff
+- timeout
+- strict minimum usable text length after cleanup
+- notes and timestamps
 
-The Elixir app owns this policy. Extractor executables should report normalized results and failure kinds, but they should not persist or decide long-term site policy.
-
-Initial implementation keys:
+Initial extractor implementations:
 
 - `extraction.simple_html`
 - `extraction.headless_browser`
 - `extraction.headed_browser`
 
-New sites should start with `extraction.simple_html` unless an operator policy says otherwise. If lower-cost extractors fail in escalation-worthy ways and a higher extractor succeeds, the app can record the higher extractor as the site's minimum implementation.
+### `pipeline_steps`
 
-### article_digests
+Configured code-registered processing definitions.
 
-Versioned article-digest artifacts produced from successful extraction content.
+- scope type and scope ID
+- step type and implementation key
+- position and enabled state
+- validated config
+- timestamps
 
-- article ID
-- extraction ID
-- pipeline step attempt ID
-- implementation key, initially `digestion.ollama.article_digest`
-- Ollama model name
-- prompt/schema version
-- deterministic input fingerprint
-- generated title
-- generated summary
-- input/output metadata
-- generated timestamp
+The expansion should add Outlet, Input Feed, and shared-Article scopes where
+they express upstream enrichment. Output Feed scope remains appropriate for
+output-specific filtering, digestion, and rendering.
 
-Explicit re-digestion creates another artifact rather than mutating prior output. Generated feed item step rows reference the exact artifact selected for that item, while pipeline attempts retain execution history. The model's chain-of-thought should not be requested or stored.
+### `pipeline_step_attempts`
 
-### article_filter_decisions
+Durable queued and completed work history.
 
-Future filtering outputs.
+- pipeline definition reference when it still exists
+- Article and generated feed item references where applicable
+- parent batch run
+- status and attempt number
+- input and output snapshots
+- exact artifact references
+- normalized error/debug data
+- retry timing
+- started and finished timestamps
 
-- article ID
-- output feed or policy scope
-- implementation key
-- decision
-- labels
-- confidence
-- rationale
-- model/prompt/config metadata
-- created timestamp
+### `generated_feed_item_steps`
 
-### retention_policies
+The exact output-specific processing definition and result selected for one
+generated feed item.
 
-Future explicit retention/autopurge policies.
+- generated feed item ID
+- current pipeline definition when it still exists
+- step type, implementation key, order, and config snapshot
+- definition fingerprint
+- state and latest attempt
+- exact artifact reference
+- reused-artifact flag
+- error and timestamps
 
-- scope
-- max age or max item count
-- enabled flag
-- last run timestamp
+Moving extraction upstream must preserve existing item-step and attempt
+history. Compatibility rows may continue pointing to a shared extraction
+artifact even after new extraction demand is scheduled upstream.
 
-## Later Tables Or Extensions
+## Newspaper Policy and Taxonomy Tables
 
-### classifications
+### `newspaper_configs`
 
-- article ID
-- model identity
-- labels
-- confidence
-- filter decision
-- policy that produced the decision
-- rationale
-- created timestamp
+Supports one initial Newspaper while allowing later multiple configurations.
 
-### feed_policies
+- stable identifier and display name
+- enabled state
+- timezone
+- content cutoff and delivery deadline
+- normal admission threshold, initially `2.0`
+- Local singleton threshold
+- delivery destination/configuration reference
+- stable hosted path identity
+- timestamps
 
-Future configurable policies for generated feed selection, filtering, and routing.
+### `newspaper_outlet_policies`
 
-- generated feed ID or reusable policy scope
-- policy name
-- source/intake/topic/filter rules
-- LLM prompt/schema revision references when semantic filtering exists
-- enabled flag
+- Newspaper config and Outlet IDs
+- enabled state
+- base effective weight override when different from Outlet default
+- Local-only participation flag
+- default inclusion/exclusion and role metadata
+- timestamps
+
+### `newspaper_policy_overrides`
+
+Absolute, non-compounding overrides.
+
+- Newspaper config ID
+- Outlet ID
+- optional Input Feed ID
+- override kind: Topic, section, Local, or locality
+- taxonomy term or locality reference
+- effective weight
+- include/exclude state
+- timestamps
+
+The most specific applicable rule wins. The UI should be able to explain the
+inheritance path.
+
+### `taxonomy_terms`
+
+Stable configurable Sections and Tags.
+
+- stable internal identifier
+- term kind: primary section or secondary tag
+- label
+- enabled/visible state
+- display order
+- alias or successor metadata for future taxonomy changes
+- timestamps
+
+### `localities`
+
+- stable identifier and display name
+- locality type such as municipality, county, metro, state, or custom
+- parent locality where applicable
+- canonical geographic identifiers and geometry/bounds when useful
+- enabled state
+- timestamps
+
+## Event and Evidence Tables
+
+### `events`
+
+Cross-Outlet clusters representing one occurrence or development.
+
+- stable identifier
+- status and clustering implementation revision
+- candidate headline or normalized descriptor
+- earliest/latest occurrence, publication, and discovery times
+- primary-section, Topic, entity, and locality candidates
+- clustering evidence and confidence
 - created/updated timestamps
 
-### paper_runs
+### `event_articles`
 
-- run date
+- Event ID and Article ID
+- relationship status and clustering evidence
+- added-by implementation or operator
+- created timestamp
+
+### `article_dependencies`
+
+Known syndication, citation, or common-origin relationships.
+
+- dependent Article ID
+- origin Article, document, or external-source reference
+- relationship kind and confidence
+- evidence metadata
+- created timestamp
+
+These relationships affect evidentiary independence without erasing the
+dependent Article or its Outlet's contribution to coverage breadth.
+
+### `event_cluster_actions`
+
+Auditable merge, split, attach, and detach operations.
+
+- action type
+- source and target Event references
+- affected Article IDs
+- operator or implementation actor
+- reason and evidence snapshot
+- created timestamp
+
+Actions should be explicit and reversible before publication. Published
+Edition manifests remain unchanged.
+
+### `story_threads`
+
+- stable identifier
+- display descriptor
+- `active` or `dormant` state
+- inactivity threshold/config used
+- last qualifying Event timestamp
+- created/updated timestamps
+
+### `story_thread_events`
+
+- Story Thread and Event IDs
+- ordering or occurrence timestamp
+- relationship evidence
+- created timestamp
+
+### `claims`
+
+- Event ID
+- normalized or rendered proposition
+- Claim type
+- uncertainty/status metadata
+- extraction implementation and input revision
+- created timestamp
+
+### `claim_evidence`
+
+- Claim ID
+- Article, primary document, statement, or other evidence reference
+- exact source location or excerpt locator
+- relationship such as support, contradiction, qualification, or attribution
+- origin-chain and independence metadata
+- interested-party role
+- confidence/rationale metadata
+- created timestamp
+
+The exact minimal vocabulary is finalized before these tables are implemented.
+Do not store model chain of thought.
+
+## Edition Tables
+
+### `editions`
+
+Immutable scheduled publication records.
+
+- Newspaper config ID
+- stable identifier and edition date
+- timezone, cutoff, and delivery deadline
 - status
-- selected article IDs
-- generated PDF path or blob reference
-- delivery status
+- sealed manifest and manifest fingerprint
+- taxonomy, policy, weight, model, prompt, schema, and implementation versions
+- phase metrics and aggregate counts
+- published timestamp
+- stable hosted path
+- created timestamp
 
-### ha_state_snapshots
+The manifest identifies exact Article, extraction, classification, Event,
+evidence, and configuration revisions.
 
-- run ID
-- MQTT/Home Assistant control values
-- captured timestamp
+### `edition_stories`
+
+Immutable rendered stories within an Edition.
+
+- Edition, Event, and optional Story Thread IDs
+- stable identifier and ordering
+- primary section and secondary-tag snapshots
+- headline and compact-summary snapshots
+- full prose snapshot
+- Story So Far snapshot
+- coverage-source snapshot
+- citation/provenance snapshot or exact child references
+- synthesis implementation metadata
+- validation status
+
+### `edition_story_citations`
+
+- Edition Story and Claim IDs
+- citation number
+- exact Claim Evidence reference
+- rendered source-label and link snapshots
+- source-location snapshot
+
+### `corrections`
+
+- correction type: correction, clarification, or retraction
+- affected Edition Story and optional Claim
+- later Edition and Corrections-section story reference
+- explanation and corrected understanding
+- evidence references
+- created timestamp
+
+### `delivery_attempts`
+
+- Edition ID
+- channel, initially email
+- destination snapshot
+- status and provider response metadata
+- attempted timestamp
+- retry relationship
+
+Delivery retry does not regenerate the Edition.
+
+## Operations and Settings
+
+### `runs`
+
+Durable execution records for fetch, canonicalization, extraction,
+classification, clustering, synthesis, edition generation, delivery, and bulk
+pipeline work.
+
+- run type and trigger
+- parent run and related domain references
+- pipeline attempt ID where applicable
+- status, timestamps, and phase
+- summary counts and metrics
+- error summary and debug metadata
+
+### `failures`
+
+Visible retryable or terminal failures.
+
+- failure type
+- related Outlet, Input Feed, Article, Event, Edition, delivery, or run
+- message and normalized failure kind
+- retryable state, retry count, and next retry time
+- last attempted timestamp
+- related record and run references
+
+### `app_settings`
+
+Application-wide operational defaults, including:
+
+- global feed fetch interval
+- Ollama base URL and selected Article-digestion model
+- later default classification and synthesis implementations
+
+Edition-specific scheduling belongs in `newspaper_configs`.
+
+### `retention_policies`
+
+Deferred explicit retention rules.
+
+- scope
+- maximum age or item count
+- protection rules for published or cited artifacts
+- enabled state
+- last run timestamp
+
+Published Edition snapshots, Citation evidence, stable generated-feed identity,
+and artifacts referenced by immutable manifests must not disappear through
+ordinary autopurge.
+
+## Required Migration Invariants
+
+The `IntakeGroup` to `Outlet` and `ArticleSource` to `ArticleAppearance`
+migration must preserve:
+
+- every Input Feed and fetch setting
+- stable Article, Output Feed, and generated feed item identifiers
+- every Raw Item, dedupe key, and Article Appearance
+- every generated RSS GUID and rendered snapshot
+- extraction, digest, pipeline attempt, run, and failure history
+- current Output Feed memberships
+
+Each currently ungrouped Input Feed receives an Outlet during migration. The
+migration should infer only obvious one-feed Outlets and require operator
+confirmation where several feeds may represent one editorial identity.
+
+Target relationship changes:
+
+```text
+intake_groups                    -> outlets
+input_feeds.intake_group_id      -> input_feeds.outlet_id (required)
+article_sources                  -> article_appearances
+generated_feed_intake_groups     -> generated_feed_outlets
+output-scoped extraction demand  -> upstream Article enrichment demand
+```

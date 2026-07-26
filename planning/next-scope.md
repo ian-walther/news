@@ -2,43 +2,62 @@
 
 ## Goal
 
-Validate the feed product as a dependable standalone baseline, then deliberately
-reconcile the personalized-newspaper expansion into this repository.
+Begin the Newspaper expansion by establishing the real-world source model and
+shared upstream enrichment boundary without disrupting the dependable Reading
+Feed.
 
-## In Scope
+## First Implementation Scope
 
-- Normal reading through FreshRSS and Reeder, including selected authenticated
-  sources.
-- Operator maintenance of paid-site sessions through the persistent desktop.
-- Extraction or digestion refinements only when sustained use exposes a
-  concrete failure or reading-quality problem.
-- Import and reconcile the dedicated Trilium expansion plans before starting
-  personalized-newspaper implementation.
+Implement Phase 1 from
+[`implementation-roadmap.md`](implementation-roadmap.md):
 
-Do not add speculative feed-product machinery merely to delay the expansion.
-Once normal use exposes no blocker, replace this closeout scope with the
-reconciled personalized-newspaper roadmap.
+- migrate Intake Groups to required Outlets
+- give every Input Feed one Outlet
+- migrate Article Sources to Article Appearances
+- migrate whole-group Output Feed memberships to Outlet memberships
+- preserve all stable Article, Output Feed, generated feed item, and RSS GUID
+  identities
+- update operator vocabulary, routes, forms, associations, and tests
 
-## Designed-In But Later
+Design the migration against real current data before changing schemas. Ambiguous
+multi-feed Outlet assignments should remain reviewable rather than being
+guessed from a similar hostname alone.
 
-- Personalized newspaper generation and delivery.
-- LLM filtering step types.
-- Review/correction workflows for model output.
-- Reusable prompt/policy management.
-- Provider-neutral LLM abstractions and model lifecycle management.
-- Cross-source synthesis, clustering, and World Radar digestion.
-- Global/intake/input-feed pipeline inheritance.
-- Automatic digestion retries beyond explicit operator retry.
-- Full rebuild/danger-zone operations.
+## Immediately Following
 
-## Non-Goals
+Move extraction and app-owned Article classification upstream:
 
-- Do not replace the feed-only output path.
-- Do not process articles live during RSS requests.
-- Do not allow arbitrary database-defined code execution.
-- Do not build a general workflow engine.
-- Do not require every output feed to use extraction.
-- Do not use raw RSS bodies as a silent fallback input for digestion.
-- Do not turn article-digest tuning into a general LLM platform.
-- Do not import or partially implement the larger expansion until its Trilium
-  plans are deliberately reconciled into the repository.
+- configure demand at Outlet or Input Feed scope
+- allow Newspaper-only feeds to enrich the shared corpus
+- reuse one Article Extraction across all consumers
+- preserve existing output-scoped attempt and artifact history
+- add explicit backfill rather than silently reprocessing old Articles
+
+## Required Planning Closure Before Later Phases
+
+Before Claim and evidence tables land, finalize:
+
+- minimal Claim types
+- evidence relationship types
+- source and interested-party roles
+- independence and common-origin representation
+- Citation source-location requirements
+
+Before hosted Edition publication lands, finalize:
+
+- stable archive route shape
+- default timezone, cutoff, and delivery values
+- deterministic post-publication correction workflow
+
+These decisions do not block the Outlet migration or shared enrichment work.
+
+## Non-Goals for the First Scope
+
+- Do not create a second ingestion stack for the Newspaper.
+- Do not require Newspaper sources to join an Output Feed.
+- Do not deduplicate Articles across Outlets.
+- Do not combine migration with Event clustering or synthesis.
+- Do not silently recompute existing extraction or digest artifacts.
+- Do not add a general workflow or prompt-management platform.
+- Do not add Twitter, newsletter, automatic official-source, PDF, print, or
+  public-access features.

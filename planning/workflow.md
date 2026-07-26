@@ -6,7 +6,11 @@ Use explicit workflow state, but keep the implementation lightweight.
 
 The system should not need a full workflow engine. It should have enough durable state to explain what happened to a feed item, why it did or did not appear downstream, and what failed.
 
-Use eager durable evaluation. Fetching and processing input feeds should create durable raw item, article, source appearance, generated feed item records, and rendered RSS snapshots. Output feeds should render from app-owned snapshots rather than lazily mirroring current upstream feed contents or live-rendering current article state.
+Use eager durable evaluation. Fetching and processing Input Feeds should create
+durable Raw Items, Outlet-specific Articles, Article Appearances, shared
+extraction and classification artifacts, generated feed items, and rendered
+RSS snapshots. Output Feeds and Newspaper Editions should render from
+app-owned snapshots rather than mutable live state.
 
 ## Feed Flow
 
@@ -14,27 +18,34 @@ Use eager durable evaluation. Fetching and processing input feeds should create 
 input feed enabled
   -> feed fetched
   -> raw item discovered
-  -> intake boundary resolved (optional group, otherwise the input feed)
-  -> URL and feed stable ID canonicalized within that boundary
+  -> required Outlet boundary resolved
+  -> URL and feed stable ID canonicalized within that Outlet
   -> article identity resolved into article pool
-  -> source appearance recorded
+  -> Article Appearance recorded
+  -> upstream extraction and classification requested by policy
   -> output feed eligibility determined
   -> generated feed item record created or updated
   -> rendered RSS snapshot stored
   -> generated RSS published
 ```
 
-## Extraction Flow
+## Shared Enrichment Flow
 
 ```text
-generated feed item available
-  -> enabled extraction step requests article extraction
+Article available
+  -> upstream enrichment policy requests extraction
   -> step attempt recorded
   -> extraction implementation runs
-  -> article content stored
-  -> generated feed item re-rendered when configured
+  -> reusable Article Extraction stored
+  -> classification implementation runs
+  -> reusable Article Classification stored
+  -> waiting Reading Feed and Newspaper work advances
   -> failure recorded when needed
 ```
+
+Output Feed membership is not required. Existing output-scoped extraction
+history remains valid through migration, but new demand converges on one shared
+Article artifact.
 
 ## Digestion Flow
 
@@ -50,6 +61,25 @@ generated feed item available
 
 Articles without a successful extraction are not eligible for digestion. The digest step should wait on that prerequisite rather than silently using a raw feed body.
 
+## Newspaper Flow
+
+```text
+content cutoff reached
+  -> eligible Article and configuration revisions sealed in a manifest
+  -> cross-Outlet Articles clustered into Events
+  -> weighted admission and section placement evaluated
+  -> Claims, evidence relationships, and uncertainty analyzed
+  -> valid Edition Stories synthesized and citation-checked
+  -> at delivery deadline, complete valid stories sealed
+  -> hosted Edition published
+  -> delivery email sent
+```
+
+One or more valid Edition Stories publishes a possibly thin Edition. Zero
+valid stories records a failed Edition run and sends a failure notification.
+Late or incomplete work moves to the next Edition rather than mutating the
+sealed artifact.
+
 ## State Strategy
 
 Prefer simple, explicit state fields and failure records over a general-purpose workflow framework.
@@ -57,9 +87,10 @@ Prefer simple, explicit state fields and failure records over a general-purpose 
 Useful state concepts should remain bounded to:
 
 - Source fetch status.
-- Intake group processing status.
+- Outlet canonicalization and enrichment status.
 - Raw item discovery state.
 - Canonical article status.
+- Article Appearance state.
 - Generated feed publication state.
 - Generated feed item eligibility/publication state.
 - Generated feed item render snapshot state.
@@ -67,6 +98,9 @@ Useful state concepts should remain bounded to:
 - Generated feed item step snapshot and status.
 - Pipeline step attempt status.
 - Extraction status.
+- Classification status.
+- Event clustering and admission status.
+- Edition phase, publication, and delivery status.
 - Failure type, message, retry count, and last attempt timestamp.
 
 ## Event Framing
@@ -86,11 +120,20 @@ Processing steps should be user-configurable in the admin UI.
 
 Each step should have a type, implementation key, enabled flag, position, and config. The available implementations should come from a code-owned registry so the UI can be configurable without allowing arbitrary executable behavior from the database.
 
-The first configurable scope should be output feeds. Additional scope inheritance should wait until output-feed pipelines are useful.
+Scope should follow the artifact being produced:
 
-For extraction, the output-feed step only enables the site-policy coordinator. The article host owns the starting extractor, escalation, pacing, timeout, and extraction-quality thresholds. Output feeds must not select competing extraction methods for the same article.
+- Outlet and Input Feed policy scopes request shared extraction and Article
+  classification.
+- Host policy controls extraction strategy, escalation, pacing, timeout, and
+  quality thresholds.
+- Output Feed scope controls filtering, digestion, and rendering.
+- Newspaper config scope controls clustering, admission, synthesis, Edition
+  rendering, and delivery.
 
-The extraction step's enabled state is the output-level scheduling control. It automatically requests extraction for future generated feed items. Enabling it is not retroactive; the operator must explicitly request extraction of existing items. Output title, body, link, and hosted-page settings only decide how available extraction and digest artifacts are presented.
+Output Feeds must not select competing extraction methods for the same Article.
+Enabling upstream enrichment applies to future Articles; existing Articles
+require an explicit backfill. Output title, body, link, and hosted-page
+settings only decide how available artifacts are presented.
 
 ## Failure Handling
 
@@ -102,13 +145,17 @@ Examples:
 
 - Source feed fetch failed.
 - Feed parsing failed.
-- Intake-group canonicalization produced ambiguous matches.
+- Outlet canonicalization produced ambiguous matches.
 - Generated feed render failed.
 - Extraction auth expired.
 - Extraction failed.
 - Digest output failed schema validation.
 - The configured Ollama server or selected model is unavailable.
 - Classifier output failed schema validation.
+- Event clustering created an invalid or ambiguous merge.
+- Claim or Citation validation failed.
+- Edition generation missed the delivery deadline.
+- Edition delivery failed after successful publication.
 
 The model should support feed, extraction, digestion, filtering, rendering, and worker contract failures.
 
@@ -127,10 +174,11 @@ Changing output feed membership or source settings should not automatically rewr
 Keep enabled/disabled behavior simple.
 
 - Disabled input feeds are not fetched.
-- Disabled intake groups make their child input feeds inactive for fetching.
+- Disabled Outlets make their Input Feeds inactive for fetching.
 - Disabled output feeds do not create new generated feed items.
 - Disabled pipeline steps do not schedule future attempts of that step type.
-- Disabling anything should not delete raw items, articles, source appearances, or existing generated feed items.
+- Disabling anything should not delete Raw Items, Articles, Article
+  Appearances, artifacts, Editions, or existing generated feed items.
 - Re-enabling resumes future processing only unless the user explicitly runs a manual backfill or rebuild action. Rendering-policy saves may re-render existing snapshots but must not request new extraction or digestion work.
 - A disabled output feed endpoint should return `404`.
 
@@ -156,9 +204,12 @@ Run types to preserve or extend:
 
 - `fetch_all`
 - `fetch_input_feed`
-- `process_intake_group`
+- `process_outlet`
 - `backfill_output_feed`
 - `rerender_output_feed`
+- `backfill_article_enrichment`
+- `generate_edition`
+- `deliver_edition`
 
 Run triggers describe why work began:
 
@@ -172,7 +223,8 @@ New trigger values should be added deliberately with matching Processing visibil
 
 ### Dedupe / Canonicalize
 
-Dedupe/canonicalize resolves raw items into canonical article records and source appearances within an intake boundary: a related-feed group when configured, otherwise one input feed.
+Dedupe/canonicalize resolves Raw Items into Outlet-specific canonical Articles
+and Article Appearances.
 
 ### Backfill
 
@@ -192,23 +244,40 @@ Saving output title, body, or link rendering policy should automatically start t
 
 Extract fetches and parses article pages, then stores extracted article content and extraction metadata.
 
-Extraction is a pipeline step type whose output-scoped coordinator delegates to a host policy. Simple HTML extraction, headless browser extraction, and headed browser extraction are separate extractor strategies behind a shared contract.
+Extraction is a shared Article pipeline step whose upstream enrichment policy
+delegates to host policy. Simple HTML, headless browser, and headed browser are
+separate strategies behind one contract.
 
 The Elixir app owns escalation. It should decide whether to try the next extractor in the chain and should persist site-level minimum extractor policy when a site is known to require a more capable implementation.
 
 Extraction is separate from re-rendering. A later re-render may use extracted content if it exists.
 
+### Classify
+
+Classify produces a versioned app-owned Article Classification from extracted
+content and metadata hints. Output Feed filters and Newspaper policy reuse that
+artifact instead of treating sub-feed categories as authoritative.
+
 ### Filter
 
 Filter decides whether an article should remain eligible for an output feed, be excluded, or route to review.
 
-Filtering is a pipeline step type. Source-policy filtering and local-LLM topic filtering are separate implementations of that type.
+Filtering is an Output Feed pipeline step. Deterministic policy evaluation and
+model-assisted review are separate implementations, but both should consume
+the shared Article Classification when possible.
 
 ### Digest
 
 Digest produces one durable factual replacement title and reading summary from a successful article extraction.
 
 Digestion is a pipeline step type. The `digestion.ollama.article_digest` implementation snapshots the global model and bounded config for each generated feed item. Existing eligible articles are processed through an explicit bulk action; explicit re-digestion creates a new artifact while preserving earlier artifacts and attempts.
+
+### Generate Edition
+
+Generate Edition freezes a manifest at cutoff, clusters Events, applies
+weighted admission, analyzes Claims and evidence, synthesizes and validates
+Edition Stories, then seals complete work at the delivery deadline. Reruns use
+the same manifest and never become manual prose-editing sessions.
 
 ### Rebuild
 
@@ -218,4 +287,8 @@ Rebuild may delete, archive, replace, or mark stale existing generated feed item
 
 ## Retention
 
-Old raw items, articles, and generated feed items can be autopurged later if needed. Retention should be an explicit policy, not a side effect of source feeds dropping old entries or input feeds being disabled.
+Old Raw Items, Articles, and generated feed items can be autopurged later if
+needed. Retention should be explicit, not a side effect of source feeds
+dropping old entries or Input Feeds being disabled. Immutable Editions,
+Citations, corrections, stable RSS identity, and every referenced artifact
+must be protected.
