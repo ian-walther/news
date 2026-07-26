@@ -155,8 +155,9 @@ Setting:
 
 - `show_digest_in_hosted_article`
 
-The default is true to preserve the established hosted-page behavior. This
-setting is independent of `body_source`: an output feed may use
+The default is false so digest text remains an RSS presentation choice unless
+the operator explicitly enables it on hosted article pages. This setting is
+independent of `body_source`: an output feed may use
 `digest_summary` as its RSS body while hiding the digest block on the hosted
 full-article page.
 

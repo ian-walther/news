@@ -27,7 +27,7 @@ defmodule NewspaperWeb.AdminLive.OutputFeedTest do
     {:ok, view, _html} = live(conn, ~p"/output-feeds/#{feed.id}")
 
     assert has_element?(view, "#output-feed-settings-form")
-    assert has_element?(view, "#output-feed-hosted-digest[checked]")
+    assert has_element?(view, "#output-feed-hosted-digest:not([checked])")
     assert has_element?(view, "#toggle-extraction-processing:not([checked])")
     assert has_element?(view, "#toggle-digestion-processing[disabled]")
     refute has_element?(view, "select[name='pipeline_step[implementation_key]']")

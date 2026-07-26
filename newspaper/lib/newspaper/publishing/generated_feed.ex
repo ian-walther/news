@@ -9,7 +9,7 @@ defmodule Newspaper.Publishing.GeneratedFeed do
     field :item_limit, :integer, default: 500
     field :enabled, :boolean, default: true
     field :link_to_hosted_article, :boolean, default: false
-    field :show_digest_in_hosted_article, :boolean, default: true
+    field :show_digest_in_hosted_article, :boolean, default: false
     field :title_source, :string, default: "original"
     field :body_source, :string, default: "original_feed"
     field :policy_config, :map, default: %{}
