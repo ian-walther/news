@@ -46,12 +46,20 @@ wait_until() {
 wait_until "LightDM" systemctl is-active --quiet lightdm.service
 wait_until "the XFCE session" xfce_active
 wait_until "x11vnc" systemctl is-active --quiet newspaper-x11vnc.service
+wait_until "the Chrome CDP bridge" systemctl is-active --quiet newspaper-chrome-cdp-bridge.service
 wait_until "the Chrome user service" user_service_active
 wait_until "Chrome CDP" cdp_active
+
+source /etc/newspaper-browser/browser-desktop.env
+bridge_gateway="$(
+  docker network inspect "${CDP_DOCKER_NETWORK}" \
+    --format '{{(index .IPAM.Config 0).Gateway}}'
+)"
 
 echo "== Packages =="
 dpkg-query -W -f='${binary:Package} ${Version}\n' \
   lightdm \
+  socat \
   xfce4 \
   x11vnc \
   xserver-xorg-video-dummy \
@@ -69,8 +77,14 @@ loginctl user-status "${browser_user}" --no-pager | sed -n '1,35p'
 
 echo
 echo "== System services =="
-systemctl is-enabled lightdm.service newspaper-x11vnc.service
-systemctl is-active lightdm.service newspaper-x11vnc.service
+systemctl is-enabled \
+  lightdm.service \
+  newspaper-chrome-cdp-bridge.service \
+  newspaper-x11vnc.service
+systemctl is-active \
+  lightdm.service \
+  newspaper-chrome-cdp-bridge.service \
+  newspaper-x11vnc.service
 
 echo
 echo "== Browser service =="
@@ -108,10 +122,11 @@ echo
 echo
 echo "== Listeners =="
 listeners="$(ss -lntp)"
-awk 'NR == 1 || /:5900|:9222/' <<<"${listeners}"
+awk 'NR == 1 || /:5900|:9222|:9223/' <<<"${listeners}"
 
 vnc_listeners="$(awk '$4 ~ /:5900$/ {print $4}' <<<"${listeners}")"
 cdp_listeners="$(awk '$4 ~ /:9222$/ {print $4}' <<<"${listeners}")"
+cdp_bridge_listeners="$(awk '$4 ~ /:9223$/ {print $4}' <<<"${listeners}")"
 
 if [[ "${vnc_listeners}" != "192.168.1.234:5900" ]]; then
   echo "VNC must listen only on 192.168.1.234:5900; found:" >&2
@@ -124,6 +139,32 @@ if [[ "${cdp_listeners}" != "127.0.0.1:9222" ]]; then
   printf '%s\n' "${cdp_listeners}" >&2
   exit 1
 fi
+
+if [[ "${cdp_bridge_listeners}" != "${bridge_gateway}:${CDP_BRIDGE_PORT}" ]]; then
+  echo "CDP bridge must listen only on ${bridge_gateway}:${CDP_BRIDGE_PORT}; found:" >&2
+  printf '%s\n' "${cdp_bridge_listeners}" >&2
+  exit 1
+fi
+
+echo
+echo "== Container CDP path =="
+app_container="$(
+  docker ps \
+    --filter label=com.docker.compose.project=news \
+    --filter label=com.docker.compose.service=app \
+    --format '{{.ID}}' |
+    head -1
+)"
+
+if [[ -z "${app_container}" ]]; then
+  echo "The Newspaper app container is not running" >&2
+  exit 1
+fi
+
+docker exec "${app_container}" \
+  curl --fail --silent --show-error \
+  "http://${bridge_gateway}:${CDP_BRIDGE_PORT}/json/version"
+echo
 
 echo
 echo "== VNC credential =="

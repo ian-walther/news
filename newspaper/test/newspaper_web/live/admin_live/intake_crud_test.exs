@@ -71,11 +71,6 @@ defmodule NewspaperWeb.AdminLive.IntakeCrudTest do
     |> element("#edit-feed-#{feed.id}")
     |> render_click()
 
-    assert has_element?(
-             view,
-             "#edit-input-feed-auth-required-#{feed.id}[disabled]"
-           )
-
     view
     |> form("#edit-input-feed-form-#{feed.id}", %{
       "input_feed" => %{

@@ -15,8 +15,12 @@ services:
       SECRET_KEY_BASE: ${SECRET_KEY_BASE:?SECRET_KEY_BASE is required}
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
       POOL_SIZE: ${POOL_SIZE:-10}
+      NEWSPAPER_HEADED_BROWSER_CDP_URL: ${NEWSPAPER_HEADED_BROWSER_CDP_URL:-http://172.31.254.1:9223}
     ports:
       - "${PORT:-4000}:${PORT:-4000}"
+    networks:
+      - default
+      - browser_control
     healthcheck:
       test: ["CMD-SHELL", "curl --fail --silent --show-error http://localhost:$${PORT}/ >/dev/null"]
       interval: 10s
@@ -42,3 +46,8 @@ services:
 
 volumes:
   newspaper_prod_postgres:
+
+networks:
+  browser_control:
+    external: true
+    name: newspaper_browser_control

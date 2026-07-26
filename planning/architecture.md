@@ -126,7 +126,8 @@ Preferred extraction approach:
 - Keep Chrome always running via systemd.
 - Use a dedicated Linux user and dedicated Chrome profile for this project.
 - Share the existing X display with `x11vnc` for occasional maintenance from macOS.
-- Let the app or extraction worker connect to host Chrome over a secured local CDP endpoint.
+- Let the headed worker connect to host Chrome through the dedicated internal
+  Docker CDP bridge.
 - Keep Chrome remote debugging narrowly bound and firewall protected.
 - Mark auth and extraction failures in app-owned state.
 

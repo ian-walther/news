@@ -14,7 +14,9 @@ config :newspaper,
 config :newspaper, :extractors,
   simple_html_command: Path.expand("../../workers/extraction-simple-html/bin/extract", __DIR__),
   headless_browser_command:
-    Path.expand("../../workers/extraction-headless-browser/bin/extract", __DIR__)
+    Path.expand("../../workers/extraction-headless-browser/bin/extract", __DIR__),
+  headed_browser_command:
+    Path.expand("../../workers/extraction-headed-browser/bin/extract", __DIR__)
 
 config :newspaper, :processing_dispatcher_enabled, true
 config :newspaper, :pipeline_scheduler_enabled, true

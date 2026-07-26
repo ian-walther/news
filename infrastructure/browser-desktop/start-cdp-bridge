@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+gateway="$(
+  docker network inspect "${CDP_DOCKER_NETWORK}" \
+    --format '{{(index .IPAM.Config 0).Gateway}}'
+)"
+
+if [[ -z "${gateway}" ]]; then
+  echo "Docker network ${CDP_DOCKER_NETWORK} has no IPv4 gateway" >&2
+  exit 1
+fi
+
+exec /usr/bin/socat \
+  "TCP4-LISTEN:${CDP_BRIDGE_PORT},bind=${gateway},reuseaddr,fork" \
+  "TCP4:${CDP_UPSTREAM_ADDRESS}:${CDP_UPSTREAM_PORT}"

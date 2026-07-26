@@ -20,6 +20,7 @@ N150 Ubuntu Server
     Phoenix app image
       direct HTML worker
       isolated headless Chromium worker
+      headed worker connected to host Chrome
     Postgres, initially
 ```
 
@@ -54,7 +55,7 @@ The host should run a persistent real desktop session. Remote access should view
 
 The desktop session should exist because the host starts it, not because a human connected remotely.
 
-See `planning/persistent-browser-desktop.md` for the complete host,
+See `infrastructure/browser-desktop/README.md` for the complete host,
 service-lifecycle, networking, credential, and acceptance contract.
 
 ## Remote Desktop Access
@@ -111,7 +112,8 @@ Security requirements:
 - Use a dedicated Linux user for the browser session.
 - Use a dedicated Chrome profile for news extraction.
 - Bind CDP narrowly, ideally to localhost.
-- Expose CDP to containers only through an intentionally restricted path.
+- Forward CDP to the app through the dedicated internal
+  `newspaper_browser_control` Docker network.
 - Do not expose CDP broadly on the LAN.
 - Restrict VNC to trusted LAN or VPN access.
 
@@ -123,7 +125,10 @@ Initial production should use a production Docker Compose file with the Phoenix 
 
 Local development should not require running the app in Docker. The local development Compose file should only spin up Postgres; the Phoenix app runs natively on the Mac against the configured database URL.
 
-The app image should contain direct-HTML extraction and an isolated headless Chromium runtime. These workers are disposable and carry no durable browser state.
+The app image should contain direct-HTML, isolated-headless, and
+authenticated-headed worker executables. The headed worker carries no browser
+state of its own; it attaches temporarily to host Chrome through the private
+CDP bridge.
 
 The host Chrome/desktop stack should live outside Docker. The app should treat that headed Chrome as an external host capability used only when extraction requires persistent authentication or operator-visible browser state.
 

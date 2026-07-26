@@ -174,7 +174,6 @@ feeds_by_url =
         url: feed.url,
         outlet_name: feed.outlet,
         enabled: true,
-        auth_required: false,
         default_metadata: %{"seed_source" => "freshrss_opml"}
       })
       |> Repo.insert_or_update!()

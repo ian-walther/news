@@ -52,13 +52,6 @@
 - Which future services should run in Docker and which should stay on the host alongside the Chrome/desktop stack?
 - How should deploy, backup, restore, logs, and upgrades work?
 
-## Extraction
-
-- What config fields should `extraction.headed_browser` expose in the first UI?
-- How should paid-site auth expiration be detected and surfaced?
-- How should the Dockerized app reach host Chrome/CDP securely when CDP is bound narrowly?
-- What failure kinds and thresholds should teach a site-level minimum extractor?
-
 ## Pipeline Configuration
 
 - When is there enough real demand to add global, intake-group, or input-feed pipeline scope?

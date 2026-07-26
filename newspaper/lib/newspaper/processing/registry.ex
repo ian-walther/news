@@ -37,6 +37,12 @@ defmodule Newspaper.Processing.Registry do
       step_type: "extraction",
       label: "Headless browser extraction",
       runtime: Newspaper.Extraction.HeadlessBrowserWorker
+    },
+    "extraction.headed_browser" => %{
+      key: "extraction.headed_browser",
+      step_type: "extraction",
+      label: "Authenticated headed browser",
+      runtime: Newspaper.Extraction.HeadedBrowserWorker
     }
   }
 

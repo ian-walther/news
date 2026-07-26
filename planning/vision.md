@@ -20,9 +20,8 @@ presentation and whether hosted article pages include the selected digest.
 
 Reliable extraction across static, JavaScript-rendered, and authenticated
 sources is the foundation for later filtering and newspaper work. Direct and
-isolated-browser extraction cover ordinary sources; the authenticated headed
-browser is the remaining extraction tier for sources that depend on a
-persistent signed-in session.
+isolated-browser extraction cover ordinary sources; authenticated headed
+Chrome covers sources that depend on a persistent signed-in session.
 
 ## Product Modes
 

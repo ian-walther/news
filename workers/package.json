@@ -5,7 +5,8 @@
   "workspaces": [
     "extraction-core",
     "extraction-simple-html",
-    "extraction-headless-browser"
+    "extraction-headless-browser",
+    "extraction-headed-browser"
   ],
   "scripts": {
     "test": "npm test --workspaces --if-present"

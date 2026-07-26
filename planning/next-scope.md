@@ -2,22 +2,22 @@
 
 ## Goal
 
-Close the current feed product as a dependable standalone baseline before
-starting the personalized-newspaper expansion.
+Validate the feed product as a dependable standalone baseline, then deliberately
+reconcile the personalized-newspaper expansion into this repository.
 
 ## In Scope
 
-- Headed browser extraction through the persistent host Chrome session.
-- Auth-expiration and unavailable-browser visibility for headed extraction.
-- A real authenticated-source smoke test covering automatic escalation and
-  learned site policy.
+- Normal reading through FreshRSS and Reeder, including selected authenticated
+  sources.
+- Operator maintenance of paid-site sessions through the persistent desktop.
 - Extraction or digestion refinements only when sustained use exposes a
   concrete failure or reading-quality problem.
+- Import and reconcile the dedicated Trilium expansion plans before starting
+  personalized-newspaper implementation.
 
-The feed product is ready to close when its known aggregation, deduplication,
-publishing, extraction, digestion, retry, and visibility workflows have no
-open blockers and the authenticated headed-browser tier is available for
-sources that require it.
+Do not add speculative feed-product machinery merely to delay the expansion.
+Once normal use exposes no blocker, replace this closeout scope with the
+reconciled personalized-newspaper roadmap.
 
 ## Designed-In But Later
 

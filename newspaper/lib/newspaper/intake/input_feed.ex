@@ -8,7 +8,6 @@ defmodule Newspaper.Intake.InputFeed do
     field :outlet_name, :string
     field :default_metadata, :map, default: %{}
     field :enabled, :boolean, default: true
-    field :auth_required, :boolean, default: false
     field :last_fetch_status, :string
     field :last_fetched_at, :utc_datetime
     field :etag, :string
@@ -27,8 +26,7 @@ defmodule Newspaper.Intake.InputFeed do
       :name,
       :url,
       :outlet_name,
-      :enabled,
-      :auth_required
+      :enabled
     ])
     |> validate_required([:name, :url])
     |> validate_format(:url, ~r/^https?:\/\//)

@@ -522,6 +522,98 @@ defmodule Newspaper.ExtractionTest do
     assert policy.last_successful_implementation == "extraction.headless_browser"
   end
 
+  test "escalates blocked headless extraction to authenticated headed Chrome and learns it" do
+    article = create_article!("https://example.com/subscriber-story")
+
+    headless_worker =
+      worker_script!("headless-blocked", %{
+        schema_version: 1,
+        implementation: "extraction.headless_browser",
+        status: "failed",
+        final_url: article.canonical_url,
+        failure_kind: "blocked",
+        retryable: false,
+        message: "HTTP 403",
+        debug_metadata: %{"status_code" => 403}
+      })
+
+    headed_worker =
+      worker_script!(
+        "headed-authenticated-success",
+        success_payload()
+        |> Map.put(:implementation, "extraction.headed_browser")
+        |> Map.put(:final_url, article.canonical_url)
+      )
+
+    Application.put_env(:newspaper, :extractors,
+      headless_browser_command: headless_worker,
+      headed_browser_command: headed_worker
+    )
+
+    configure_extraction!(article, "feed_headed_escalation_test")
+    {:ok, policy} = Content.get_site_extraction_policy_for_url(article.canonical_url)
+
+    assert {:ok, _policy} =
+             Content.update_site_extraction_policy(policy, %{
+               minimum_implementation: "extraction.headless_browser"
+             })
+
+    pipeline_attempt = Repo.one!(PipelineStepAttempt)
+    assert {:ok, pipeline_attempt} = Extraction.execute_attempt(pipeline_attempt.id)
+    assert pipeline_attempt.status == "succeeded"
+
+    attempts =
+      ArticleExtractionAttempt
+      |> Repo.all()
+      |> Enum.sort_by(& &1.id)
+
+    assert Enum.map(attempts, &{&1.implementation, &1.status}) == [
+             {"extraction.headless_browser", "failed"},
+             {"extraction.headed_browser", "ok"}
+           ]
+
+    policy = Repo.one!(SiteExtractionPolicy)
+    assert policy.minimum_implementation == "extraction.headed_browser"
+    assert policy.last_successful_implementation == "extraction.headed_browser"
+  end
+
+  test "expired headed-browser authentication is visible and manually retryable" do
+    article = create_article!("https://example.com/expired-subscriber-session")
+
+    worker =
+      worker_script!("headed-auth-required", %{
+        schema_version: 1,
+        implementation: "extraction.headed_browser",
+        status: "failed",
+        final_url: "https://accounts.example.com/signin",
+        failure_kind: "auth_required",
+        retryable: true,
+        message: "The signed-in browser session must be refreshed",
+        debug_metadata: %{"access_barrier_signal" => "sign in to continue reading"}
+      })
+
+    Application.put_env(:newspaper, :extractors, headed_browser_command: worker)
+    configure_extraction!(article, "feed_headed_auth_failure_test")
+    {:ok, policy} = Content.get_site_extraction_policy_for_url(article.canonical_url)
+
+    assert {:ok, _policy} =
+             Content.update_site_extraction_policy(policy, %{
+               minimum_implementation: "extraction.headed_browser"
+             })
+
+    attempt = Repo.one!(PipelineStepAttempt)
+    assert {:ok, attempt} = Extraction.execute_attempt(attempt.id)
+    assert attempt.status == "failed"
+    assert attempt.failure_kind == "auth_required"
+    assert attempt.retryable
+
+    failure = Repo.one!(Failure)
+    assert failure.failure_type == "pipeline_step_auth_required"
+    assert failure.retryable
+    assert {:ok, retry_attempt} = Pipeline.retry_failure(failure.id, "test_retry")
+    assert retry_attempt.status == "queued"
+  end
+
   test "terminal no-content extraction is skipped without creating a failure" do
     article = create_article!("https://example.com/video-without-article-copy")
 
@@ -872,25 +964,39 @@ defmodule Newspaper.ExtractionTest do
     assert Repo.aggregate(PipelineStepAttempt, :count) == 0
   end
 
-  test "an unavailable configured extractor fails terminally instead of retrying forever" do
+  test "a site can start directly with authenticated headed browser extraction" do
     article = create_article!("https://example.com/requires-headed-browser")
     _output_feed = configure_extraction!(article, "feed_requires_headed_browser")
     attempt = Repo.one!(PipelineStepAttempt)
 
+    worker =
+      worker_script!(
+        "headed-success",
+        success_payload()
+        |> Map.put(:implementation, "extraction.headed_browser")
+        |> Map.put(:final_url, article.canonical_url)
+      )
+
+    Application.put_env(:newspaper, :extractors, headed_browser_command: worker)
+
     {:ok, policy} = Content.get_site_extraction_policy_for_url(article.canonical_url)
 
-    policy
-    |> Ecto.Changeset.change(minimum_implementation: "extraction.headed_browser")
-    |> Repo.update!()
+    assert {:ok, _policy} =
+             Content.update_site_extraction_policy(policy, %{
+               minimum_implementation: "extraction.headed_browser"
+             })
 
     assert {:ok, attempt} = Extraction.execute_attempt(attempt.id)
-    assert attempt.status == "failed"
-    assert attempt.failure_kind == "extractor_unavailable"
-    refute attempt.retryable
+    assert attempt.status == "succeeded"
 
-    failure = Repo.one!(Failure)
-    assert failure.failure_type == "pipeline_step_extractor_unavailable"
-    refute failure.retryable
+    worker_attempt = Repo.one!(ArticleExtractionAttempt)
+    assert worker_attempt.implementation == "extraction.headed_browser"
+    assert worker_attempt.status == "ok"
+
+    policy = Repo.one!(SiteExtractionPolicy)
+    assert policy.minimum_implementation == "extraction.headed_browser"
+    assert policy.last_successful_implementation == "extraction.headed_browser"
+    refute Repo.exists?(Failure)
   end
 
   defp create_article!(url, opts \\ []) do

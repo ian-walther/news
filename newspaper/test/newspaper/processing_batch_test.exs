@@ -97,21 +97,29 @@ defmodule Newspaper.ProcessingBatchTest do
   test "no-content extraction attempts count as skipped without failing the batch" do
     feed = extraction_feed_with_articles!()
 
-    worker =
-      worker_script!(%{
-        schema_version: 1,
-        implementation: "extraction.simple_html",
-        status: "no_content",
-        final_url: "https://www.theautopian.com/video-only-post/",
-        reason: "boilerplate_only",
-        message: "boilerplate_only",
-        quality: %{"score" => 0, "reason" => "boilerplate_only", "content_length" => 0},
-        debug_metadata: %{"content_length" => 0}
-      })
+    no_content_payload = %{
+      schema_version: 1,
+      status: "no_content",
+      final_url: "https://www.theautopian.com/video-only-post/",
+      reason: "boilerplate_only",
+      message: "boilerplate_only",
+      quality: %{"score" => 0, "reason" => "boilerplate_only", "content_length" => 0},
+      debug_metadata: %{"content_length" => 0}
+    }
+
+    simple_worker =
+      worker_script!(Map.put(no_content_payload, :implementation, "extraction.simple_html"))
+
+    headless_worker =
+      worker_script!(Map.put(no_content_payload, :implementation, "extraction.headless_browser"))
+
+    headed_worker =
+      worker_script!(Map.put(no_content_payload, :implementation, "extraction.headed_browser"))
 
     Application.put_env(:newspaper, :extractors,
-      simple_html_command: worker,
-      headless_browser_command: worker
+      simple_html_command: simple_worker,
+      headless_browser_command: headless_worker,
+      headed_browser_command: headed_worker
     )
 
     batch = start_feed_batch_and_wait!(feed)

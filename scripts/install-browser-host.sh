@@ -17,9 +17,11 @@ required_files=(
   "20-newspaper-dummy.conf"
   "50-newspaper-browser.conf"
   "browser-desktop.env"
+  "newspaper-chrome-cdp-bridge.service"
   "newspaper-chrome.service"
   "newspaper-chrome.desktop"
   "newspaper-x11vnc.service"
+  "start-cdp-bridge"
   "start-chrome-service"
   "wait-for-x"
 )
@@ -43,6 +45,7 @@ apt-get install -y --no-install-recommends \
   lightdm \
   lightdm-gtk-greeter \
   openssl \
+  socat \
   xfce4 \
   xfce4-terminal \
   x11-utils \
@@ -110,11 +113,17 @@ install -m 0600 \
   "${SOURCE_DIR}/browser-desktop.env" \
   /etc/newspaper-browser/browser-desktop.env
 install -m 0755 \
+  "${SOURCE_DIR}/start-cdp-bridge" \
+  /usr/local/libexec/newspaper-browser/start-cdp-bridge
+install -m 0755 \
   "${SOURCE_DIR}/start-chrome-service" \
   /usr/local/libexec/newspaper-browser/start-chrome-service
 install -m 0755 \
   "${SOURCE_DIR}/wait-for-x" \
   /usr/local/libexec/newspaper-browser/wait-for-x
+install -m 0644 \
+  "${SOURCE_DIR}/newspaper-chrome-cdp-bridge.service" \
+  /etc/systemd/system/newspaper-chrome-cdp-bridge.service
 install -m 0644 \
   "${SOURCE_DIR}/newspaper-x11vnc.service" \
   /etc/systemd/system/newspaper-x11vnc.service
@@ -146,11 +155,14 @@ chmod 0600 "${VNC_AUTH_FILE}"
 
 chown -R "${BROWSER_USER}:${BROWSER_USER}" "${BROWSER_HOME}/.config"
 
+"${REPO_ROOT}/scripts/ensure-browser-control-network.sh"
+
 systemctl daemon-reload
 systemctl set-default graphical.target
-systemctl enable newspaper-x11vnc.service
+systemctl enable newspaper-chrome-cdp-bridge.service newspaper-x11vnc.service
 systemctl restart lightdm.service
 systemctl restart newspaper-x11vnc.service
+systemctl restart newspaper-chrome-cdp-bridge.service
 
 echo
 echo "Persistent browser desktop configuration installed."

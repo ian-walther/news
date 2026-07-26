@@ -1,0 +1,14 @@
+[Unit]
+Description=Newspaper Chrome CDP container bridge
+After=docker.service network-online.target
+Wants=docker.service network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/newspaper-browser/browser-desktop.env
+ExecStart=/usr/local/libexec/newspaper-browser/start-cdp-bridge
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

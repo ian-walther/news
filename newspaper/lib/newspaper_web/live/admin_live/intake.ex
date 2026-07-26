@@ -465,13 +465,6 @@ defmodule NewspaperWeb.AdminLive.Intake do
           label="Enabled"
           type="checkbox"
         />
-        <.input
-          id={"edit-input-feed-auth-required-#{@feed.id}"}
-          field={@feed_edit_form[:auth_required]}
-          label="Signed-in headed browser required (reserved)"
-          type="checkbox"
-          disabled
-        />
         <p class="text-xs text-base-content/55 md:col-span-2">
           Reserved for the headed-browser extraction tier; it does not affect fetching yet.
         </p>

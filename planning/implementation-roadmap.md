@@ -1,16 +1,15 @@
 # Implementation Roadmap
 
-## Feed Product Closure
+## Feed Product Validation
 
-- Add the persistent headed browser implementation through host Chrome/CDP.
-- Preserve the existing extraction worker contract and app-owned escalation
-  chain.
-- Surface unavailable Chrome sessions and expired authentication as visible,
-  manually retryable outcomes.
-- Exercise headless-to-headed escalation and learned site policy against a
-  representative authenticated source.
-- Limit further extraction and digestion tuning to concrete problems observed
-  in normal reading.
+- Add authenticated sources through the existing intake and site-policy UI and
+  validate them through normal FreshRSS and Reeder use.
+- Treat publisher login expiration as an operator maintenance event: refresh
+  the persistent Chrome profile over VNC, then retry the visible failure.
+- Limit further feed, extraction, and digestion changes to concrete problems
+  observed in normal reading.
+- Keep operational browser documentation beside the checked-in host
+  infrastructure.
 
 ## Expansion Boundary
 

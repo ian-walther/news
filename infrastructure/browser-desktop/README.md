@@ -8,9 +8,8 @@ The browser must continue running when no remote desktop client is connected,
 and a human must be able to attach to the same desktop and browser from macOS
 for authentication, debugging, and maintenance.
 
-This document specifies the host capability. The headed extraction worker and
-its application integration are separate concerns that consume this capability
-through Chrome DevTools Protocol (CDP).
+This document specifies the host capability consumed by the headed extraction
+worker through Chrome DevTools Protocol (CDP).
 
 ## Required Invariants
 
@@ -184,19 +183,22 @@ The browser desktop follows Newspaper's trusted-LAN security posture.
 - VNC still requires a password even on the trusted LAN.
 - Off-network access goes through the existing VPN.
 - Port `9222` remains bound to `127.0.0.1`.
-- The future headed worker must reach CDP through an explicit, narrowly scoped
-  host/container bridge. It must not make CDP generally reachable from the LAN
-  or unrelated containers.
+- The host proxy listens on `172.31.254.1:9223`, the gateway of the dedicated
+  internal `newspaper_browser_control` Docker network.
+- The app container is the only Compose service attached to that network.
+- `socat` forwards the bridge listener to Chrome at `127.0.0.1:9222`.
+- The bridge is not routed to the LAN and does not expose the authenticated
+  browser to ordinary application containers.
 
 CDP access is equivalent to control of the authenticated browser and must be
 treated as a privileged local capability.
 
 ## Repository-Owned Configuration
 
-The checked-in host configuration is the source of truth. A root-level helper
-script should install packages, create the dedicated user and directories,
-install the Xorg, LightDM, systemd, and XFCE autostart files, generate the VNC
-secret when absent, enable services, and start the graphical stack.
+The checked-in host configuration is the source of truth. The root-level
+helper installs packages, creates the dedicated user and directories, installs
+the Xorg, LightDM, systemd, CDP bridge, and XFCE autostart files, generates the
+VNC secret when absent, enables services, and starts the graphical stack.
 
 The setup must be idempotent:
 
@@ -219,6 +221,8 @@ The normal boot state, without a connected VNC client, is:
 - `newspaper-chrome.service` active.
 - A visible Google Chrome process using the Newspaper profile.
 - CDP answering on `127.0.0.1:9222`.
+- `newspaper-chrome-cdp-bridge.service` forwarding the private Docker endpoint
+  at `172.31.254.1:9223`.
 - `newspaper-x11vnc.service` active on `192.168.1.234:5900`.
 
 The expected maintenance actions are:
@@ -243,22 +247,23 @@ available.
 
 ## Acceptance Contract
 
-The host capability is ready for headed-worker development when all of the
-following are true:
+The host capability is healthy when all of the following are true:
 
 1. Booting `news` with no VNC client produces an active LightDM/Xorg/XFCE
    session and headed Chrome process.
 2. Xorg reports `1920x1080` at 24-bit depth on display `:0`.
 3. `http://127.0.0.1:9222/json/version` returns Chrome CDP metadata.
-4. VNC listens on `192.168.1.234:5900` and does not listen on wildcard IPv4 or
+4. The app container can read Chrome CDP metadata through
+   `http://172.31.254.1:9223/json/version`.
+5. VNC listens on `192.168.1.234:5900` and does not listen on wildcard IPv4 or
    IPv6.
-5. macOS can attach, interact with Chrome, disconnect, and later recover the
+6. macOS can attach, interact with Chrome, disconnect, and later recover the
    same browser and desktop state.
-6. Closing Chrome causes systemd to restart it against the same profile.
-7. Restarting the VNC service does not restart Chrome or the desktop.
-8. Restarting the host recreates the graphical session and Chrome while
+7. Closing Chrome causes systemd to restart it against the same profile.
+8. Restarting the VNC service does not restart Chrome or the desktop.
+9. Restarting the host recreates the graphical session and Chrome while
    retaining the profile.
-9. The VNC and Chrome-profile secrets are absent from Git.
+10. The VNC and Chrome-profile secrets are absent from Git.
 
 The server-side checks can be automated immediately. The macOS attachment and
 manual authenticated-site login remain operator acceptance checks.
@@ -270,5 +275,3 @@ manual authenticated-site login remain operator acceptance checks.
 - This setup does not add application-level authentication.
 - The persistent Chrome profile is not mounted into Docker.
 - Isolated headless workers do not reuse authenticated cookies.
-- The infrastructure setup does not implement the headed extraction worker,
-  escalation behavior, or application UI.

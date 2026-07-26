@@ -118,9 +118,11 @@ ssh news 'sudo cat /etc/newspaper-browser/vnc-password'
 ```
 
 Connect to the shared persistent desktop at `vnc://news.home:5900`. Chrome CDP
-remains host-local at `127.0.0.1:9222`.
+remains host-local at `127.0.0.1:9222`; the app reaches it through a dedicated
+internal Docker network that is created and validated by the deployment
+helpers.
 
-See `planning/persistent-browser-desktop.md` for the topology, lifecycle,
+See `infrastructure/browser-desktop/README.md` for the topology, lifecycle,
 security boundary, and acceptance contract.
 
 ## Current Surface
@@ -129,7 +131,8 @@ security boundary, and acceptance contract.
 - Manual and scheduled conditional feed collection with eager raw item capture
 - URL and feed-stable-ID dedupe within grouped or independent intake boundaries
 - Durable generated feed item snapshots and GUID-based RSS endpoints
-- Site-scoped simple/headless extraction with escalation, pacing, and retry history
+- Site-scoped simple, headless, and authenticated-headed extraction with
+  escalation, pacing, and retry history
 - Ollama-backed article title and summary digestion
 - Per-output-feed RSS and hosted-article presentation controls
 - Live processing, article, failure, and operation visibility

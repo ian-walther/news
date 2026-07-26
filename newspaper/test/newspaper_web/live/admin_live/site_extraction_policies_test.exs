@@ -17,6 +17,11 @@ defmodule NewspaperWeb.AdminLive.SiteExtractionPoliciesTest do
              "#new-site-policy-form option[value='extraction.headless_browser']"
            )
 
+    assert has_element?(
+             view,
+             "#new-site-policy-form option[value='extraction.headed_browser']"
+           )
+
     view
     |> form("#new-site-policy-form",
       site_extraction_policy: %{

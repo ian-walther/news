@@ -98,6 +98,7 @@ COPY --chown=nobody:root workers/package*.json ./workers/
 COPY --chown=nobody:root workers/extraction-core/package.json ./workers/extraction-core/package.json
 COPY --chown=nobody:root workers/extraction-simple-html/package.json ./workers/extraction-simple-html/package.json
 COPY --chown=nobody:root workers/extraction-headless-browser/package.json ./workers/extraction-headless-browser/package.json
+COPY --chown=nobody:root workers/extraction-headed-browser/package.json ./workers/extraction-headed-browser/package.json
 RUN cd /app/workers \
   && npm ci --omit=dev \
   && npx playwright install --with-deps --only-shell chromium \
