@@ -6,6 +6,7 @@ defmodule Newspaper.Operations.AppSettings do
     field :fetch_interval_minutes, :integer, default: 5
     field :ollama_base_url, :string, default: "http://desktop.home:11434"
     field :ollama_model, :string
+    field :digestion_paused, :boolean, default: false
 
     timestamps(type: :utc_datetime)
   end
@@ -15,7 +16,8 @@ defmodule Newspaper.Operations.AppSettings do
     |> cast(attrs, [
       :fetch_interval_minutes,
       :ollama_base_url,
-      :ollama_model
+      :ollama_model,
+      :digestion_paused
     ])
     |> update_change(:ollama_base_url, &String.trim/1)
     |> update_change(:ollama_model, &normalize_optional_string/1)

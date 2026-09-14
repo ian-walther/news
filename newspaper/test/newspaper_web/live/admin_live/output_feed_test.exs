@@ -238,6 +238,26 @@ defmodule NewspaperWeb.AdminLive.OutputFeedTest do
            )
   end
 
+  test "shows globally paused digestion and prevents starting a bulk batch", %{conn: conn} do
+    feed = output_feed_with_article!()
+    assert {:ok, _step} = Processing.create_extraction_step(feed)
+
+    settings = Newspaper.Operations.get_settings()
+
+    assert {:ok, _settings} =
+             Newspaper.Operations.update_settings(settings, %{
+               ollama_model: "qwen3.6:27b",
+               digestion_paused: true
+             })
+
+    assert {:ok, _digestion_step} = Processing.create_digest_step(feed)
+
+    {:ok, view, _html} = live(conn, ~p"/output-feeds/#{feed.id}")
+
+    assert has_element?(view, "#processing-digestion", "Globally paused")
+    assert has_element?(view, "#process-existing-digestion[disabled]", "Digestion paused")
+  end
+
   test "coalesces bursts of processing events before refreshing feed state", %{conn: conn} do
     feed = output_feed_with_article!()
     assert {:ok, _step} = Processing.create_extraction_step(feed)

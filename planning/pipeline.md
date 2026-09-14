@@ -273,6 +273,13 @@ model for queued work, and stores versioned Article artifacts referenced by
 generated feed item state. This is a bounded Reading Feed transform, not the
 cross-source Newspaper synthesizer or a general LLM workflow layer.
 
+Article digestion has an application-wide operational pause independent of
+pipeline-step enablement and model selection. While paused, queued and newly
+requested digest attempts remain durable but no new Ollama request starts. An
+attempt already running may finish. Resuming immediately continues the retained
+queue, including after an application restart, without rebuilding feed items or
+changing their snapshotted model configuration.
+
 Extraction should use an app-owned escalation chain. The extractor implementations are separate executables with a shared contract, but the Elixir app decides which implementation to try, when to escalate, and what to remember for a site.
 
 Extractor chain:

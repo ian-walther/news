@@ -70,6 +70,24 @@ defmodule NewspaperWeb.AdminLive.ProcessingTest do
     assert has_element?(view, "#processing-summary", "Queued next")
   end
 
+  test "shows the global digestion pause and updates when it resumes", %{conn: conn} do
+    processing_fixture!()
+    settings = Operations.get_settings()
+    assert {:ok, _settings} = Operations.update_settings(settings, %{digestion_paused: true})
+
+    {:ok, view, _html} = live(conn, ~p"/processing?stage=digestion")
+
+    assert has_element?(view, "#digestion-paused-notice")
+    assert has_element?(view, "#digestion-queue-state", "Paused")
+
+    settings = Operations.get_settings()
+    assert {:ok, _settings} = Operations.update_settings(settings, %{digestion_paused: false})
+    _ = :sys.get_state(view.pid)
+
+    refute has_element?(view, "#digestion-paused-notice")
+    refute has_element?(view, "#digestion-queue-state", "Paused")
+  end
+
   test "renders completed recovered attempts without a start timestamp", %{conn: conn} do
     %{digestion: digestion} = processing_fixture!()
 

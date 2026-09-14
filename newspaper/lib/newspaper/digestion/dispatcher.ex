@@ -2,6 +2,7 @@ defmodule Newspaper.Digestion.Dispatcher do
   use GenServer
 
   alias Newspaper.Digestion
+  alias Newspaper.Operations
   alias Newspaper.Processing
   alias Newspaper.Processing.PriorityQueue
 
@@ -14,6 +15,7 @@ defmodule Newspaper.Digestion.Dispatcher do
   @impl true
   def init(_state) do
     if Application.get_env(:newspaper, :processing_dispatcher_enabled, true) do
+      Newspaper.Events.subscribe()
       send(self(), :recover)
     end
 
@@ -52,6 +54,12 @@ defmodule Newspaper.Digestion.Dispatcher do
 
   def handle_info({:DOWN, _ref, :process, _pid, _reason}, state), do: {:noreply, state}
 
+  def handle_info({:newspaper_data_changed, :settings_changed}, state) do
+    {:noreply, start_next(state)}
+  end
+
+  def handle_info({:newspaper_data_changed, _event}, state), do: {:noreply, state}
+
   @impl true
   def handle_cast({:enqueue, attempt_id, priority}, state) do
     state = state |> enqueue_attempt(attempt_id, priority) |> start_next()
@@ -72,6 +80,10 @@ defmodule Newspaper.Digestion.Dispatcher do
   defp start_next(%{running?: true} = state), do: state
 
   defp start_next(state) do
+    if Operations.digestion_paused?(), do: state, else: do_start_next(state)
+  end
+
+  defp do_start_next(state) do
     case PriorityQueue.pop(state.queue) do
       {{:value, attempt_id}, queue} ->
         state = %{state | queue: queue, running?: true}

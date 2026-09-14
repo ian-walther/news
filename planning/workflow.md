@@ -177,6 +177,9 @@ Keep enabled/disabled behavior simple.
 - Disabled Outlets make their Input Feeds inactive for fetching.
 - Disabled output feeds do not create new generated feed items.
 - Disabled pipeline steps do not schedule future attempts of that step type.
+- A global Article-digestion pause prevents new Ollama work from starting while
+  retaining queued and newly requested attempts for automatic resume. A digest
+  already running may finish cleanly.
 - Disabling anything should not delete Raw Items, Articles, Article
   Appearances, artifacts, Editions, or existing generated feed items.
 - Re-enabling resumes future processing only unless the user explicitly runs a manual backfill or rebuild action. Rendering-policy saves may re-render existing snapshots but must not request new extraction or digestion work.

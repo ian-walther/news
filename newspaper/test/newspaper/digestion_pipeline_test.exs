@@ -82,6 +82,85 @@ defmodule Newspaper.DigestionPipelineTest do
     assert run.error_summary == "Application restarted while run was in progress"
   end
 
+  test "digestion dispatcher retains queued work while globally paused" do
+    article = extracted_article!()
+    settings = Operations.get_settings()
+
+    assert {:ok, _settings} =
+             Operations.update_settings(settings, %{
+               ollama_model: "qwen3.6:27b",
+               digestion_paused: true
+             })
+
+    {:ok, feed} =
+      Publishing.create_generated_feed(%{
+        "title" => "Paused digestion",
+        "guid" => "feed_digest_paused_test",
+        "input_feed_ids" => [article.representative_raw_item.input_feed_id]
+      })
+
+    assert {:ok, _step} = Processing.create_extraction_step(feed)
+    assert {:ok, _step} = Processing.create_digest_step(feed)
+    assert {:ok, _run} = Pipeline.backfill_output_feed(feed.id, "test")
+
+    attempt = Repo.one!(PipelineStepAttempt)
+    assert attempt.status == "queued"
+
+    state = %{
+      queue: PriorityQueue.new(),
+      running?: false,
+      task_pid: nil,
+      task_ref: nil,
+      attempt_id: nil
+    }
+
+    assert {:noreply, paused_state} =
+             Newspaper.Digestion.Dispatcher.handle_cast(
+               {:enqueue, attempt.id, :bulk},
+               state
+             )
+
+    refute paused_state.running?
+    assert PriorityQueue.to_list(paused_state.queue) == [attempt.id]
+    assert Repo.get!(PipelineStepAttempt, attempt.id).status == "queued"
+
+    Req.Test.set_req_test_to_shared()
+
+    summary =
+      1..100
+      |> Enum.chunk_every(25)
+      |> Enum.map_join("\n\n", &Enum.map_join(&1, " ", fn word -> "summary#{word}" end))
+
+    Req.Test.stub(Newspaper.Digestion.OllamaClient, fn conn ->
+      Req.Test.json(conn, %{
+        "model" => "qwen3.6:27b",
+        "done" => true,
+        "message" => %{
+          "content" =>
+            Jason.encode!(%{
+              "title" => "The retained article resumes digestion after the global pause ends.",
+              "summary" => summary
+            })
+        }
+      })
+    end)
+
+    settings = Operations.get_settings()
+    assert {:ok, _settings} = Operations.update_settings(settings, %{digestion_paused: false})
+
+    assert {:noreply, running_state} =
+             Newspaper.Digestion.Dispatcher.handle_info(
+               {:newspaper_data_changed, :settings_changed},
+               paused_state
+             )
+
+    assert running_state.running?
+    ref = Process.monitor(running_state.task_pid)
+    assert_receive {:DOWN, ^ref, :process, _pid, reason}, 2_000
+    assert reason in [:normal, :noproc]
+    assert Repo.get!(PipelineStepAttempt, attempt.id).status == "succeeded"
+  end
+
   test "digests an extracted article and publishes the selected title and summary" do
     article = extracted_article!()
 

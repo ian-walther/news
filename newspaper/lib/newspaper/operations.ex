@@ -23,6 +23,8 @@ defmodule Newspaper.Operations do
     AppSettings.changeset(settings, attrs)
   end
 
+  def digestion_paused?, do: get_settings().digestion_paused
+
   def list_runs(limit \\ 50) do
     Run
     |> order_by([r], desc: r.started_at)

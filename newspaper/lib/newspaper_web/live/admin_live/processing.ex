@@ -46,7 +46,12 @@ defmodule NewspaperWeb.AdminLive.Processing do
   end
 
   def handle_info({:newspaper_data_changed, event}, socket)
-      when event in [:operations_changed, :publishing_changed, :site_extraction_policies_changed] do
+      when event in [
+             :operations_changed,
+             :publishing_changed,
+             :settings_changed,
+             :site_extraction_policies_changed
+           ] do
     {:noreply, assign_data(socket, socket.assigns.filters)}
   end
 
@@ -75,6 +80,22 @@ defmodule NewspaperWeb.AdminLive.Processing do
           Live pipeline work, queue state, and execution history.
         </p>
       </header>
+
+      <section
+        :if={@settings.digestion_paused && @filters.stage != "operations"}
+        id="digestion-paused-notice"
+        class="mb-6 flex flex-col gap-3 border-y border-warning/40 bg-warning/5 py-4 sm:flex-row sm:items-center sm:justify-between"
+      >
+        <div>
+          <p class="font-medium">Article digestion is paused</p>
+          <p class="mt-1 text-sm text-base-content/60">
+            Queued work is retained and will continue automatically when digestion resumes.
+          </p>
+        </div>
+        <.link navigate={~p"/settings"} class="btn btn-sm shrink-0">
+          <.icon name="hero-cog-6-tooth" class="size-4" /> Digestion settings
+        </.link>
+      </section>
 
       <section class="border-y border-base-300 py-4">
         <div class="grid gap-4 lg:grid-cols-[minmax(0,1fr)_18rem] lg:items-end">
@@ -196,7 +217,16 @@ defmodule NewspaperWeb.AdminLive.Processing do
 
           <div class="min-w-0 xl:pl-8">
             <div class="mb-3 flex items-center justify-between gap-3">
-              <h3 class="font-medium">Digestion</h3>
+              <div class="flex items-center gap-2">
+                <h3 class="font-medium">Digestion</h3>
+                <span
+                  :if={@settings.digestion_paused}
+                  id="digestion-queue-state"
+                  class="badge badge-warning badge-soft badge-sm"
+                >
+                  Paused
+                </span>
+              </div>
               <span class="text-sm tabular-nums text-base-content/55">{@digestion_queue_count}</span>
             </div>
             <div
@@ -489,6 +519,7 @@ defmodule NewspaperWeb.AdminLive.Processing do
 
     socket
     |> assign(:filters, filters)
+    |> assign(:settings, Operations.get_settings())
     |> assign(:filter_form, filter_form(filters))
     |> assign(:output_options, output_options())
     |> assign(:running_count, length(running_work))

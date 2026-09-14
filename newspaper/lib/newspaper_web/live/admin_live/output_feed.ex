@@ -276,6 +276,7 @@ defmodule NewspaperWeb.AdminLive.OutputFeed do
               toggle_disabled={digestion_toggle_disabled?(assigns)}
               toggle_title={digestion_toggle_title(assigns)}
               model={@settings.ollama_model}
+              globally_paused={@settings.digestion_paused}
             />
           </div>
 
@@ -451,6 +452,7 @@ defmodule NewspaperWeb.AdminLive.OutputFeed do
   attr :toggle_disabled, :boolean, default: false
   attr :toggle_title, :string, default: nil
   attr :model, :string, default: nil
+  attr :globally_paused, :boolean, default: false
 
   defp processing_step(assigns) do
     ~H"""
@@ -461,6 +463,12 @@ defmodule NewspaperWeb.AdminLive.OutputFeed do
             <span class="font-medium">{step_label(@state.step_type)}</span>
             <span class={if(@state.enabled, do: "badge badge-success badge-soft", else: "badge")}>
               {if @state.enabled, do: "Enabled", else: "Disabled"}
+            </span>
+            <span
+              :if={@state.step_type == "digestion" && @globally_paused}
+              class="badge badge-warning badge-soft"
+            >
+              Globally paused
             </span>
           </div>
           <div class="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm text-base-content/65">
@@ -522,10 +530,10 @@ defmodule NewspaperWeb.AdminLive.OutputFeed do
             phx-click="process_existing"
             phx-value-step-type={@state.step_type}
             phx-disable-with="Queueing..."
-            disabled={process_existing_disabled?(@state, @active_batch)}
+            disabled={process_existing_disabled?(@state, @active_batch, @globally_paused)}
           >
             <.icon name="hero-play" class="size-4" />
-            {process_existing_label(@state, @active_batch)}
+            {process_existing_label(@state, @active_batch, @globally_paused)}
           </button>
         </div>
       </div>
@@ -701,11 +709,15 @@ defmodule NewspaperWeb.AdminLive.OutputFeed do
     end
   end
 
-  defp process_existing_disabled?(state, active_batch) do
+  defp process_existing_disabled?(%{step_type: "digestion"}, _active_batch, true), do: true
+
+  defp process_existing_disabled?(state, active_batch, _globally_paused) do
     not state.enabled or state.counts.not_requested == 0 or not is_nil(active_batch)
   end
 
-  defp process_existing_label(state, nil) do
+  defp process_existing_label(%{step_type: "digestion"}, nil, true), do: "Digestion paused"
+
+  defp process_existing_label(state, nil, _globally_paused) do
     if state.step_type == "digestion" and state.counts.not_requested == 0 and
          state.counts.blocked > 0 do
       "Waiting for extraction"
@@ -714,7 +726,7 @@ defmodule NewspaperWeb.AdminLive.OutputFeed do
     end
   end
 
-  defp process_existing_label(_state, batch) do
+  defp process_existing_label(_state, batch, _globally_paused) do
     if Map.has_key?(batch.summary_counts, "total") do
       "Processing #{batch_completed(batch)} of #{batch.summary_counts["total"]}"
     else

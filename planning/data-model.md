@@ -555,6 +555,7 @@ Application-wide operational defaults, including:
 
 - global feed fetch interval
 - Ollama base URL and selected Article-digestion model
+- durable global Article-digestion pause state
 - later default classification and synthesis implementations
 
 Edition-specific scheduling belongs in `newspaper_configs`.
