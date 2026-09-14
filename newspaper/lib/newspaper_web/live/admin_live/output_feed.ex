@@ -98,6 +98,21 @@ defmodule NewspaperWeb.AdminLive.OutputFeed do
     end
   end
 
+  def handle_event("retry_failed", %{"step-type" => "digestion"}, socket) do
+    case Processing.start_feed_batch(socket.assigns.feed.id, "manual", "digestion",
+           selection: :failed
+         ) do
+      {:ok, _batch} ->
+        {:noreply,
+         socket
+         |> put_flash(:info, "Failed digestion retry batch started")
+         |> assign_processing()}
+
+      {:error, reason} ->
+        {:noreply, put_flash(socket, :error, error_message(reason))}
+    end
+  end
+
   def handle_event("backfill_feed", _params, socket) do
     feed_id = socket.assigns.feed.id
 
@@ -535,6 +550,22 @@ defmodule NewspaperWeb.AdminLive.OutputFeed do
             <.icon name="hero-play" class="size-4" />
             {process_existing_label(@state, @active_batch, @globally_paused)}
           </button>
+          <button
+            :if={
+              @state.step_type == "digestion" &&
+                (@state.counts.failed > 0 || failed_retry_batch?(@active_batch))
+            }
+            id="retry-failed-digestion"
+            type="button"
+            class="btn btn-sm"
+            phx-click="retry_failed"
+            phx-value-step-type="digestion"
+            phx-disable-with="Queueing..."
+            disabled={retry_failed_disabled?(@state, @active_batch, @globally_paused)}
+          >
+            <.icon name="hero-arrow-path" class="size-4" />
+            {retry_failed_label(@state, @active_batch, @globally_paused)}
+          </button>
         </div>
       </div>
     </section>
@@ -727,12 +758,44 @@ defmodule NewspaperWeb.AdminLive.OutputFeed do
   end
 
   defp process_existing_label(_state, batch, _globally_paused) do
+    if failed_retry_batch?(batch) do
+      "Existing-item processing paused"
+    else
+      batch_progress_label(batch)
+    end
+  end
+
+  defp retry_failed_disabled?(%{enabled: enabled}, active_batch, globally_paused) do
+    not enabled or globally_paused or not is_nil(active_batch)
+  end
+
+  defp retry_failed_label(_state, nil, true), do: "Digestion paused"
+
+  defp retry_failed_label(state, nil, false) do
+    case state.counts.failed do
+      1 -> "Retry 1 failed digestion"
+      count -> "Retry #{count} failed digestions"
+    end
+  end
+
+  defp retry_failed_label(_state, batch, _globally_paused) do
+    if failed_retry_batch?(batch) do
+      batch_progress_label(batch)
+    else
+      "Failed-digestion retry paused"
+    end
+  end
+
+  defp batch_progress_label(batch) do
     if Map.has_key?(batch.summary_counts, "total") do
       "Processing #{batch_completed(batch)} of #{batch.summary_counts["total"]}"
     else
       "Starting batch..."
     end
   end
+
+  defp failed_retry_batch?(%{related: %{"selection" => "failed"}}), do: true
+  defp failed_retry_batch?(_batch), do: false
 
   defp process_available_label(_step_type, 0), do: "No existing work"
   defp process_available_label("extraction", 1), do: "Extract 1 existing article"

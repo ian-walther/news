@@ -790,12 +790,21 @@ defmodule NewspaperWeb.AdminLive.Processing do
       %{"retry_origin" => "manual"} ->
         "Manual retry"
 
+      %{"retry_origin" => "manual_batch"} ->
+        "Manual batch retry"
+
       _request ->
         nil
     end
   end
 
   defp retry_label(_attempt), do: nil
+
+  defp operation_label(%{
+         run_type: "pipeline_batch",
+         related: %{"selection" => "failed", "step_type" => step_type}
+       }),
+       do: "#{stage_label(step_type)} retry batch"
 
   defp operation_label(%{run_type: "pipeline_batch", related: %{"step_type" => step_type}}),
     do: "#{stage_label(step_type)} batch"

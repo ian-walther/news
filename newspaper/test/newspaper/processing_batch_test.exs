@@ -73,7 +73,7 @@ defmodule Newspaper.ProcessingBatchTest do
     assert batch.finished_at
   end
 
-  test "a later batch skips articles that already have successful extraction" do
+  test "a later batch excludes articles that already have successful extraction" do
     feed = extraction_feed_with_articles!()
     worker = worker_script!(success_payload())
     Application.put_env(:newspaper, :extractors, simple_html_command: worker)
@@ -88,9 +88,9 @@ defmodule Newspaper.ProcessingBatchTest do
 
     second_batch = start_feed_batch_and_wait!(feed)
     assert second_batch.status == "succeeded"
-    assert second_batch.summary_counts["items_considered"] == 2
+    assert second_batch.summary_counts["items_considered"] == 0
     assert second_batch.summary_counts["total"] == 0
-    assert second_batch.summary_counts["skipped"] == 2
+    assert second_batch.summary_counts["skipped"] == 0
     assert Processing.list_attempts_for_batch(second_batch.id) == []
   end
 
@@ -254,6 +254,41 @@ defmodule Newspaper.ProcessingBatchTest do
     assert batch.finished_at
   end
 
+  test "a failed-only digestion batch creates fresh attempts and preserves failure history" do
+    feed = digestion_feed_with_articles!()
+    initial_batch = start_feed_batch_and_wait!(feed, "digestion")
+    [failed_attempt, skipped_attempt] = Processing.list_attempts_for_batch(initial_batch.id)
+
+    assert {:ok, failed_attempt} =
+             Processing.finish_attempt(failed_attempt, "failed", %{
+               failure_kind: "configuration_error",
+               retryable: false,
+               error_message: "No Ollama model is configured"
+             })
+
+    assert {:ok, _skipped_attempt} =
+             Processing.finish_attempt(skipped_attempt, "skipped", %{
+               error_message: "No article content"
+             })
+
+    retry_batch =
+      start_feed_batch_and_wait!(feed, "digestion", selection: :failed)
+
+    assert retry_batch.related["selection"] == "failed"
+    assert retry_batch.summary_counts["items_considered"] == 1
+
+    [retry_attempt] = Processing.list_attempts_for_batch(retry_batch.id)
+    assert retry_attempt.article_id == failed_attempt.article_id
+    assert retry_attempt.id != failed_attempt.id
+    assert retry_attempt.status == "queued"
+    assert retry_attempt.input_snapshot["request"]["retry_origin"] == "manual_batch"
+
+    preserved_attempt = Repo.get!(PipelineStepAttempt, failed_attempt.id)
+    assert preserved_attempt.status == "failed"
+    assert preserved_attempt.failure_kind == "configuration_error"
+    assert preserved_attempt.error_message == "No Ollama model is configured"
+  end
+
   defp extraction_feed_with_articles! do
     {:ok, input_feed} =
       Intake.create_input_feed(%{
@@ -339,11 +374,30 @@ defmodule Newspaper.ProcessingBatchTest do
     output_feed
   end
 
-  defp start_feed_batch_and_wait!(feed, step_type \\ "extraction") do
+  defp digestion_feed_with_articles! do
+    feed = extraction_feed_with_articles!()
+    worker = worker_script!(success_payload())
+    Application.put_env(:newspaper, :extractors, simple_html_command: worker)
+
+    feed
+    |> start_feed_batch_and_wait!()
+    |> Map.fetch!(:id)
+    |> Processing.list_attempts_for_batch()
+    |> Enum.each(fn attempt ->
+      assert {:ok, _attempt} = Extraction.execute_attempt(attempt.id)
+    end)
+
+    settings = Operations.get_settings()
+    assert {:ok, _settings} = Operations.update_settings(settings, %{ollama_model: "qwen3.6:27b"})
+    assert {:ok, _step} = Processing.create_digest_step(feed)
+    feed
+  end
+
+  defp start_feed_batch_and_wait!(feed, step_type \\ "extraction", opts \\ []) do
     Newspaper.Events.subscribe()
     flush_operations_events()
 
-    assert {:ok, batch} = Processing.start_feed_batch(feed.id, "test", step_type)
+    assert {:ok, batch} = Processing.start_feed_batch(feed.id, "test", step_type, opts)
     assert :ok = BatchDispatcher.await(batch.id)
     assert_receive {:newspaper_data_changed, :operations_changed}
 

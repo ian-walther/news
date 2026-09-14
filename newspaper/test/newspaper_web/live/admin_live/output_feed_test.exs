@@ -5,8 +5,7 @@ defmodule NewspaperWeb.AdminLive.OutputFeedTest do
 
   alias Newspaper.Content.{Article, ArticleDigest, ArticleExtraction}
   alias Newspaper.Processing
-  alias Newspaper.Processing.BatchDispatcher
-  alias Newspaper.Processing.PipelineStepAttempt
+  alias Newspaper.Processing.{BatchDispatcher, PipelineStepAttempt}
   alias Newspaper.Publishing
   alias Newspaper.Publishing.GeneratedFeedItem
   alias Newspaper.Repo
@@ -256,6 +255,83 @@ defmodule NewspaperWeb.AdminLive.OutputFeedTest do
 
     assert has_element?(view, "#processing-digestion", "Globally paused")
     assert has_element?(view, "#process-existing-digestion[disabled]", "Digestion paused")
+  end
+
+  test "retries failed digestion as a durable feed batch", %{conn: conn} do
+    feed = output_feed_with_article!()
+    item = Repo.one!(GeneratedFeedItem) |> Repo.preload(:article)
+
+    %ArticleExtraction{}
+    |> ArticleExtraction.changeset(%{
+      article_id: item.article.id,
+      implementation_key: "extraction.simple_html",
+      final_url: item.article.canonical_url,
+      title: item.article.title,
+      site_name: "The Autopian",
+      content_html: "<p>Clean extracted article content.</p>",
+      content_text: "Clean extracted article content.",
+      extracted_at: ~U[2026-07-17 12:00:00Z]
+    })
+    |> Repo.insert!()
+
+    assert {:ok, _step} = Processing.create_extraction_step(feed)
+
+    settings = Newspaper.Operations.get_settings()
+
+    assert {:ok, _settings} =
+             Newspaper.Operations.update_settings(settings, %{ollama_model: "qwen3.6:27b"})
+
+    assert {:ok, _step} = Processing.create_digest_step(feed)
+    assert {:ok, [failed_attempt]} = Processing.request_item_step(item, "digestion")
+
+    assert {:ok, _attempt} =
+             Processing.finish_attempt(failed_attempt, "failed", %{
+               failure_kind: "configuration_error",
+               retryable: false,
+               error_message: "No Ollama model is configured"
+             })
+
+    {:ok, view, _html} = live(conn, ~p"/output-feeds/#{feed.id}")
+
+    assert has_element?(
+             view,
+             "#retry-failed-digestion:not([disabled])",
+             "Retry 1 failed digestion"
+           )
+
+    settings = Newspaper.Operations.get_settings()
+
+    assert {:ok, _settings} =
+             Newspaper.Operations.update_settings(settings, %{digestion_paused: true})
+
+    _ = :sys.get_state(view.pid)
+    assert has_element?(view, "#retry-failed-digestion[disabled]", "Digestion paused")
+
+    settings = Newspaper.Operations.get_settings()
+
+    assert {:ok, _settings} =
+             Newspaper.Operations.update_settings(settings, %{digestion_paused: false})
+
+    _ = :sys.get_state(view.pid)
+
+    view
+    |> element("#retry-failed-digestion")
+    |> render_click()
+
+    [retry_batch] =
+      feed.id
+      |> Processing.list_feed_batches()
+      |> Enum.filter(&(&1.related["selection"] == "failed"))
+
+    assert :ok = BatchDispatcher.await(retry_batch.id)
+    refresh_output_feed(view)
+
+    assert has_element?(view, "#retry-failed-digestion[disabled]", "Processing 0 of 1")
+
+    [retry_attempt] = Processing.list_attempts_for_batch(retry_batch.id)
+    assert retry_attempt.id != failed_attempt.id
+    assert retry_attempt.status == "queued"
+    assert Repo.get!(PipelineStepAttempt, failed_attempt.id).status == "failed"
   end
 
   test "coalesces bursts of processing events before refreshing feed state", %{conn: conn} do

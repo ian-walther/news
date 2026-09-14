@@ -139,7 +139,7 @@ settings only decide how available artifacts are presented.
 
 Failures should be visible and retryable where practical.
 
-Failure handling should stay minimal: show failures, link them to related records/runs where possible, and allow manual retry for retryable failures. Avoid manual resolved/ignored/dismissed lifecycle states until real usage clarifies what is needed.
+Failure handling should stay minimal: show failures, link them to related records/runs where possible, and allow manual retry. Feed-scoped bulk retries should select only currently failed item steps, create new attempts under a durable batch, and retain the earlier failures as audit history. Explicit manual retry may include failures classified as non-retryable after the operator has corrected the underlying configuration. Avoid manual resolved/ignored/dismissed lifecycle states until real usage clarifies what is needed.
 
 Examples:
 

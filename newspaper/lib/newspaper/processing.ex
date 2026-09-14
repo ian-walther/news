@@ -77,26 +77,32 @@ defmodule Newspaper.Processing do
     end
   end
 
-  def start_feed_batch(feed_id, trigger \\ "manual", step_type \\ "extraction")
+  def start_feed_batch(feed_id, trigger \\ "manual", step_type \\ "extraction", opts \\ [])
 
-  def start_feed_batch(feed_id, trigger, step_type)
-      when is_integer(feed_id) and is_binary(step_type) do
+  def start_feed_batch(feed_id, trigger, step_type, opts)
+      when is_integer(feed_id) and is_binary(step_type) and is_list(opts) do
     feed = Newspaper.Publishing.get_generated_feed!(feed_id)
     steps = list_enabled_steps(feed.id, step_type)
+    selection = Keyword.get(opts, :selection, :not_requested)
 
-    if steps == [] do
-      {:error, {:no_enabled_step, step_type}}
-    else
-      with {:ok, batch} <- create_feed_batch(feed, steps, trigger, step_type) do
-        case BatchDispatcher.enqueue(batch.id) do
-          :ok ->
-            {:ok, batch}
+    cond do
+      steps == [] ->
+        {:error, {:no_enabled_step, step_type}}
 
-          {:error, reason} ->
-            _ = fail_feed_batch(batch.id, reason)
-            {:error, reason}
+      selection not in [:not_requested, :failed] ->
+        {:error, {:invalid_batch_selection, selection}}
+
+      true ->
+        with {:ok, batch} <- create_feed_batch(feed, steps, trigger, step_type, selection) do
+          case BatchDispatcher.enqueue(batch.id) do
+            :ok ->
+              {:ok, batch}
+
+            {:error, reason} ->
+              _ = fail_feed_batch(batch.id, reason)
+              {:error, reason}
+          end
         end
-      end
     end
   end
 
@@ -111,10 +117,10 @@ defmodule Newspaper.Processing do
     batch = Operations.get_run!(batch_id)
 
     if batch.run_type == "pipeline_batch" and batch.status == "running" do
-      with {:ok, feed_id, step_type} <- feed_batch_context(batch),
+      with {:ok, feed_id, step_type, selection} <- feed_batch_context(batch),
            feed <- Newspaper.Publishing.get_generated_feed!(feed_id),
-           items <- Newspaper.Publishing.list_items_for_feed(feed),
-           :ok <- enqueue_batch_items(items, batch.id, step_type),
+           items <- batch_items(feed, step_type, selection),
+           :ok <- enqueue_batch_items(items, batch.id, step_type, selection),
            {:ok, batch} <- refresh_batch_run(batch.id, length(items)) do
         {:ok, batch}
       else
@@ -1042,24 +1048,29 @@ defmodule Newspaper.Processing do
 
   def change_step(%PipelineStep{} = step, attrs \\ %{}), do: PipelineStep.changeset(step, attrs)
 
-  defp enqueue_batch_items(items, batch_run_id, step_type) do
+  defp enqueue_batch_items(items, batch_run_id, step_type, selection) do
+    opts = batch_request_opts(batch_run_id, selection)
+
     Enum.reduce_while(items, :ok, fn item, :ok ->
-      case request_item_step(item, step_type, batch_run_id: batch_run_id) do
+      case request_item_step(item, step_type, opts) do
         {:ok, _attempts} -> {:cont, :ok}
         {:error, reason} -> {:halt, {:error, reason}}
       end
     end)
   end
 
-  defp create_feed_batch(feed, steps, trigger, step_type) do
+  defp create_feed_batch(feed, steps, trigger, step_type, selection) do
+    selection = Atom.to_string(selection)
+
     Operations.start_run(
       "pipeline_batch",
       trigger,
       %{
-        "batch_type" => "process_existing_#{step_type}",
+        "batch_type" => batch_type(step_type, selection),
         "generated_feed_id" => feed.id,
         "generated_feed_title" => feed.title,
-        "step_type" => step_type
+        "step_type" => step_type,
+        "selection" => selection
       },
       %{"pipeline_step_ids" => Enum.map(steps, & &1.id)}
     )
@@ -1068,12 +1079,45 @@ defmodule Newspaper.Processing do
   defp feed_batch_context(batch) do
     with feed_id when is_integer(feed_id) <- batch.related["generated_feed_id"],
          step_type when step_type in ["extraction", "digestion"] <-
-           batch.related["step_type"] do
-      {:ok, feed_id, step_type}
+           batch.related["step_type"],
+         selection when selection in ["all_existing", "not_requested", "failed"] <-
+           Map.get(batch.related, "selection", "all_existing") do
+      {:ok, feed_id, step_type, selection}
     else
       _ -> {:error, :invalid_batch_context}
     end
   end
+
+  defp batch_items(feed, _step_type, "all_existing") do
+    Newspaper.Publishing.list_items_for_feed(feed)
+  end
+
+  defp batch_items(feed, step_type, selection) do
+    GeneratedFeedItem
+    |> join(:inner, [item], item_step in GeneratedFeedItemStep,
+      on: item_step.generated_feed_item_id == item.id
+    )
+    |> where(
+      [item, item_step],
+      item.generated_feed_id == ^feed.id and item_step.step_type == ^step_type and
+        item_step.status == ^selection
+    )
+    |> order_by([item, _item_step], asc: item.id)
+    |> preload([:generated_feed, article: [:extraction, :digests]])
+    |> Repo.all()
+  end
+
+  defp batch_request_opts(batch_run_id, "failed") do
+    [
+      batch_run_id: batch_run_id,
+      request_metadata: %{"retry_origin" => "manual_batch"}
+    ]
+  end
+
+  defp batch_request_opts(batch_run_id, _selection), do: [batch_run_id: batch_run_id]
+
+  defp batch_type(step_type, "failed"), do: "retry_failed_#{step_type}"
+  defp batch_type(step_type, _selection), do: "process_existing_#{step_type}"
 
   defp format_batch_error(reason) when is_binary(reason), do: reason
   defp format_batch_error(reason), do: inspect(reason)
