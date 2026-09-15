@@ -127,6 +127,16 @@ defmodule NewspaperWeb.AdminLive.ArticlesDiscoveryTest do
              "#article-processing-#{headlights.id}-#{cars.id}-digestion[href*='/processing']"
            )
 
+    refute has_element?(processing_view, "#article-history-list-#{headlights.id}")
+    processing_view |> element("#article-history-#{headlights.id} summary") |> render_click()
+    assert has_element?(processing_view, "#article-history-list-#{headlights.id}", "Queued")
+
+    assert has_element?(
+             processing_view,
+             "#article-history-list-#{headlights.id}",
+             "Article digestion"
+           )
+
     refute has_element?(processing_view, "#article-#{spaceflight.id}")
 
     digestion_step =
@@ -255,7 +265,7 @@ defmodule NewspaperWeb.AdminLive.ArticlesDiscoveryTest do
     {:ok, view, _html} = live(conn, ~p"/articles")
 
     assert has_element?(view, "#read-article-#{headlights.id}", "Read")
-    assert has_element?(view, "#extract-article-#{headlights.id}", "Re-extract")
+    assert has_element?(view, "#extract-article-#{headlights.id}", "Re-run extraction")
 
     refute has_element?(view, "#extract-article-#{spaceflight.id}")
 

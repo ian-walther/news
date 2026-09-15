@@ -86,7 +86,7 @@ defmodule NewspaperWeb.AdminLive.ArticlesExtractionTest do
       live(conn, ~p"/articles?#{%{generated_feed_id: output_feed.id}}")
 
     assert has_element?(view, "#article-#{article.id}", "Digest: not requested")
-    assert has_element?(view, "#digest-article-#{article.id}", "Digest")
+    assert has_element?(view, "#digest-article-#{article.id}", "Run digestion")
 
     view
     |> element("#digest-article-#{article.id}")

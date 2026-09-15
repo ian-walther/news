@@ -43,8 +43,8 @@ defmodule Newspaper.ProcessingBatchTest do
     assert batch.status == "running"
 
     assert batch.summary_counts == %{
+             "cancelled" => 0,
              "failed" => 0,
-             "items_considered" => 2,
              "queued" => 2,
              "running" => 0,
              "skipped" => 0,
@@ -88,7 +88,7 @@ defmodule Newspaper.ProcessingBatchTest do
 
     second_batch = start_feed_batch_and_wait!(feed)
     assert second_batch.status == "succeeded"
-    assert second_batch.summary_counts["items_considered"] == 0
+    assert second_batch.summary_counts["total"] == 0
     assert second_batch.summary_counts["total"] == 0
     assert second_batch.summary_counts["skipped"] == 0
     assert Processing.list_attempts_for_batch(second_batch.id) == []
@@ -173,8 +173,7 @@ defmodule Newspaper.ProcessingBatchTest do
              not_requested: 0
            }
 
-    assert batch.summary_counts["items_considered"] == 2
-    assert batch.summary_counts["total"] == 1
+    assert batch.summary_counts["total"] == 2
     assert batch.summary_counts["skipped"] == 1
 
     [attempt] = Processing.list_attempts_for_batch(batch.id)
@@ -233,7 +232,7 @@ defmodule Newspaper.ProcessingBatchTest do
     assert_receive {:newspaper_data_changed, :operations_changed}
 
     batch = Repo.get!(Run, batch.id)
-    assert batch.summary_counts["items_considered"] == 2
+    assert batch.summary_counts["total"] == 2
     assert length(Processing.list_attempts_for_batch(batch.id)) == 2
   end
 
@@ -275,7 +274,7 @@ defmodule Newspaper.ProcessingBatchTest do
       start_feed_batch_and_wait!(feed, "digestion", selection: :failed)
 
     assert retry_batch.related["selection"] == "failed"
-    assert retry_batch.summary_counts["items_considered"] == 1
+    assert retry_batch.summary_counts["total"] == 1
 
     [retry_attempt] = Processing.list_attempts_for_batch(retry_batch.id)
     assert retry_attempt.article_id == failed_attempt.article_id

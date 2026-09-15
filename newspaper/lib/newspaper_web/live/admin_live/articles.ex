@@ -8,6 +8,7 @@ defmodule NewspaperWeb.AdminLive.Articles do
   @stages ~w(extraction digestion)
   @extraction_statuses ~w(all succeeded not_requested processing failed skipped)
   @digestion_statuses ~w(all succeeded waiting not_requested processing failed skipped not_enabled)
+  @sorts ~w(published recent)
 
   def mount(_params, _session, socket) do
     if connected?(socket), do: Newspaper.Events.subscribe()
@@ -36,6 +37,31 @@ defmodule NewspaperWeb.AdminLive.Articles do
     }
 
     {:noreply, push_patch(socket, to: ~p"/articles?#{filter_query(filters)}")}
+  end
+
+  def handle_event("load_history", %{"id" => article_id}, socket) do
+    article_id = String.to_integer(article_id)
+
+    case Map.fetch(socket.assigns.entries_by_id, article_id) do
+      {:ok, entry} ->
+        history =
+          Processing.list_processing_attempts(
+            ["running", "queued", "succeeded", "failed", "skipped"],
+            article_id: article_id,
+            limit: 25,
+            order: :desc
+          )
+
+        entry = %{entry | history: history, history_loaded?: true}
+
+        {:noreply,
+         socket
+         |> assign(:entries_by_id, Map.put(socket.assigns.entries_by_id, article_id, entry))
+         |> stream_insert(:articles, entry)}
+
+      :error ->
+        {:noreply, socket}
+    end
   end
 
   def handle_event("extract", %{"id" => article_id}, socket) do
@@ -170,7 +196,21 @@ defmodule NewspaperWeb.AdminLive.Articles do
         <p class="text-sm text-base-content/60">
           {@page.total_count} {if @page.total_count == 1, do: "article", else: "articles"}
         </p>
-        <p class="text-xs text-base-content/50">Newest first</p>
+        <nav class="flex gap-1" aria-label="Sort">
+          <.link
+            :for={{value, label} <- sort_options()}
+            id={"article-sort-#{value}"}
+            patch={~p"/articles?#{filter_query(@filters, %{sort: value, page: 1})}"}
+            data-active={to_string(@filters.sort == value)}
+            class={[
+              "btn btn-xs",
+              @filters.sort == value && "btn-active",
+              @filters.sort != value && "btn-ghost"
+            ]}
+          >
+            {label}
+          </.link>
+        </nav>
       </div>
 
       <section
@@ -234,7 +274,7 @@ defmodule NewspaperWeb.AdminLive.Articles do
                   :for={step <- row.steps}
                   id={"article-processing-#{entry.article.id}-#{row.feed_id}-#{step.step_type}"}
                   navigate={
-                    ~p"/processing?#{%{article_id: entry.article.id, generated_feed_id: row.feed_id, stage: step.step_type}}"
+                    ~p"/processing?#{%{tab: "history", article_id: entry.article.id, generated_feed_id: row.feed_id, stage: step.step_type}}"
                   }
                   class={pipeline_badge_class(step.status)}
                 >
@@ -242,6 +282,44 @@ defmodule NewspaperWeb.AdminLive.Articles do
                 </.link>
               </div>
             </div>
+            <details id={"article-history-#{entry.article.id}"} class="mt-2 text-xs">
+              <summary
+                class="cursor-pointer text-base-content/55 hover:text-base-content"
+                phx-click="load_history"
+                phx-value-id={entry.article.id}
+              >
+                History
+              </summary>
+              <div
+                :if={entry.history_loaded?}
+                id={"article-history-list-#{entry.article.id}"}
+                class="mt-2 divide-y divide-base-300 border-y border-base-300"
+              >
+                <p :if={entry.history == []} class="py-2 text-base-content/50">
+                  No executions yet.
+                </p>
+                <div
+                  :for={attempt <- entry.history}
+                  id={"article-history-#{entry.article.id}-#{attempt.id}"}
+                  class="flex flex-wrap items-center gap-2 py-2"
+                >
+                  <span class={Format.work_status_badge_class(attempt.status)}>
+                    {Format.work_status_label(attempt.status)}
+                  </span>
+                  <span class="font-medium">{pipeline_type_label(attempt.step_type)}</span>
+                  <span class="text-base-content/50">{Format.duration(attempt)}</span>
+                  <.local_time
+                    id={"article-history-time-#{attempt.id}"}
+                    value={attempt.finished_at || attempt.started_at || attempt.inserted_at}
+                    class="text-base-content/50"
+                  />
+                  <span :if={attempt.error_message} class="basis-full text-error">
+                    {attempt.error_message}
+                  </span>
+                </div>
+              </div>
+              <p :if={!entry.history_loaded?} class="mt-2 text-base-content/50">Loading…</p>
+            </details>
           </div>
 
           <div class="flex flex-wrap items-center gap-2 lg:justify-end">
@@ -352,11 +430,14 @@ defmodule NewspaperWeb.AdminLive.Articles do
           article: article,
           extraction_eligible?: MapSet.member?(extraction_eligible_ids, article.id),
           digestion_eligible?: MapSet.member?(digestion_eligible_ids, article.id),
-          pipeline_rows: pipeline_rows
+          pipeline_rows: pipeline_rows,
+          history: [],
+          history_loaded?: false
         }
       end)
 
     socket
+    |> assign(:entries_by_id, Map.new(entries, &{&1.id, &1}))
     |> assign(:filters, Map.put(filters, :page, page.page))
     |> assign(:page, page)
     |> assign(:article_stats, Content.article_filter_counts(filters))
@@ -388,17 +469,22 @@ defmodule NewspaperWeb.AdminLive.Articles do
       search: String.trim(params["search"] || ""),
       input_feed_id: Format.parse_id(params["input_feed_id"]),
       generated_feed_id: Format.parse_id(params["generated_feed_id"]),
+      sort: allowed_sort(params["sort"]),
       page: parse_page(params["page"])
     }
   end
 
+  defp allowed_sort(sort) when sort in @sorts, do: sort
+  defp allowed_sort(_sort), do: "published"
+
   defp filter_query(filters, overrides \\ %{}) do
     filters
     |> Map.merge(overrides)
-    |> Map.take([:stage, :status, :search, :input_feed_id, :generated_feed_id, :page])
+    |> Map.take([:stage, :status, :search, :input_feed_id, :generated_feed_id, :sort, :page])
     |> Enum.reject(fn
       {:stage, "extraction"} -> true
       {:status, "all"} -> true
+      {:sort, "published"} -> true
       {:search, ""} -> true
       {_key, nil} -> true
       {:page, 1} -> true
@@ -420,6 +506,7 @@ defmodule NewspaperWeb.AdminLive.Articles do
   defp parse_page(value), do: Format.parse_id(value) || 1
 
   defp stage_options, do: [{"extraction", "Extraction"}, {"digestion", "Digestion"}]
+  defp sort_options, do: [{"published", "Newest first"}, {"recent", "Recently processed"}]
 
   defp status_options(stats, "digestion") do
     [
@@ -445,9 +532,7 @@ defmodule NewspaperWeb.AdminLive.Articles do
     ]
   end
 
-  defp status_label("succeeded"), do: "Ready"
-  defp status_label("not_requested"), do: "Not requested"
-  defp status_label(value), do: Format.status_label(value)
+  defp status_label(value), do: Format.work_status_label(value)
 
   defp extract_action?(entry) do
     entry.extraction_eligible? && not processing?(entry.article)
@@ -467,17 +552,18 @@ defmodule NewspaperWeb.AdminLive.Articles do
   defp processing?(article), do: article.extraction_status in ["queued", "running"]
 
   defp extract_action_label(%{extraction: extraction}) when not is_nil(extraction),
-    do: "Re-extract"
+    do: "Re-run extraction"
 
-  defp extract_action_label(%{extraction_status: "failed"}), do: "Retry extraction"
-  defp extract_action_label(%{extraction_status: "skipped"}), do: "Try extraction again"
-  defp extract_action_label(_article), do: "Extract"
+  defp extract_action_label(%{extraction_status: status}) when status in ["failed", "skipped"],
+    do: "Re-run extraction"
+
+  defp extract_action_label(_article), do: "Run extraction"
 
   defp no_content_reason("boilerplate_only"), do: "No article content"
   defp no_content_reason(reason), do: Format.status_label(reason)
 
-  defp digest_action_label(%{digests: [_digest | _rest]}), do: "Regenerate digest"
-  defp digest_action_label(_article), do: "Digest"
+  defp digest_action_label(%{digests: [_digest | _rest]}), do: "Re-run digestion"
+  defp digest_action_label(_article), do: "Run digestion"
 
   defp pipeline_rows(article, selected_feed_id) do
     article.generated_feed_items
@@ -514,25 +600,18 @@ defmodule NewspaperWeb.AdminLive.Articles do
     |> Enum.reject(&(&1.steps == []))
   end
 
+  defp pipeline_type_label(step_type), do: Newspaper.Processing.Registry.step_label(step_type)
+
   defp pipeline_step_label(step) do
     label = if step.step_type == "extraction", do: "Extract", else: "Digest"
     suffix = if step.current?, do: pipeline_status_label(step.status), else: "historical"
     "#{label}: #{suffix}"
   end
 
-  defp pipeline_status_label("succeeded"), do: "ready"
-  defp pipeline_status_label("not_requested"), do: "not requested"
-  defp pipeline_status_label("blocked"), do: "waiting"
-  defp pipeline_status_label("pending"), do: "waiting"
-  defp pipeline_status_label(status), do: status
+  defp pipeline_status_label(status),
+    do: status |> Format.work_status_label() |> String.downcase()
 
-  defp pipeline_badge_class("succeeded"), do: "badge badge-success badge-soft ml-1"
-  defp pipeline_badge_class("failed"), do: "badge badge-error badge-soft ml-1"
-
-  defp pipeline_badge_class(status) when status in ["queued", "running"],
-    do: "badge badge-info badge-soft ml-1"
-
-  defp pipeline_badge_class(_status), do: "badge badge-ghost ml-1"
+  defp pipeline_badge_class(status), do: Format.work_status_badge_class(status) <> " ml-1"
 
   defp article_sources(article) do
     article.article_sources

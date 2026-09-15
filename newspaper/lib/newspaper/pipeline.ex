@@ -28,14 +28,25 @@ defmodule Newspaper.Pipeline do
     Operations.finish_run(run, status, %{summary_counts: summary})
   end
 
-  def fetch_input_feed(%InputFeed{} = feed, trigger \\ "manual") do
+  @doc """
+  Fetches one input feed. Pass `ignore_validators: true` to omit the stored
+  ETag/Last-Modified so the origin sends the full document again; this is how
+  an operator forces the pipeline to re-receive entries that previously
+  failed before reaching the pipeline.
+  """
+  def fetch_input_feed(%InputFeed{} = feed, trigger \\ "manual", opts \\ []) do
     {:ok, run} =
       Operations.start_run("fetch_input_feed", trigger, %{
         "input_feed_id" => feed.id,
         "url" => feed.url
       })
 
-    case Newspaper.Pipeline.FeedClient.get(feed) do
+    request_feed =
+      if Keyword.get(opts, :ignore_validators, false),
+        do: %{feed | etag: nil, last_modified: nil},
+        else: feed
+
+    case Newspaper.Pipeline.FeedClient.get(request_feed) do
       {:ok, %Req.Response{status: 304} = response} ->
         Intake.mark_input_feed_fetched(feed, "not_modified", cache_validator_attrs(response))
 
@@ -64,7 +75,8 @@ defmodule Newspaper.Pipeline do
       errors = ingestion_errors ++ processing_errors
       status = if errors == [], do: "ok", else: "failed"
 
-      Intake.mark_input_feed_fetched(feed, status, cache_validator_attrs(response))
+      validators = if errors == [], do: cache_validator_attrs(response), else: %{}
+      Intake.mark_input_feed_fetched(feed, status, validators)
 
       {:ok, finished_run} =
         Operations.finish_run(run, run_status(errors), %{
@@ -243,10 +255,85 @@ defmodule Newspaper.Pipeline do
   defp ensure_success(%Req.Response{status: status}) when status in 200..299, do: :ok
   defp ensure_success(%Req.Response{status: status}), do: {:error, {:http_status, status}}
 
+  @doc """
+  Retries a pre-pipeline failure record. Processing and publication failures
+  replay the stored raw item through the same path the fetch used, so a fix
+  (a schema change, a feed rule) takes effect without waiting for the origin.
+  Ingestion failures have no stored item to replay, so the feed is refetched
+  without cache validators. A failure that no longer has anything to replay
+  is resolved and reported as such.
+  """
+  def retry_entry_failure(failure_id) when is_integer(failure_id) do
+    failure = Operations.get_failure!(failure_id)
+
+    cond do
+      failure.resolved_at != nil ->
+        {:error, :already_resolved}
+
+      failure.failure_type in ["raw_item_processing_failed", "generated_feed_item_create_failed"] ->
+        replay_raw_item(failure)
+
+      failure.failure_type == "raw_item_ingestion_failed" ->
+        refetch_for_failure(failure)
+
+      true ->
+        {:error, :not_retryable}
+    end
+  end
+
+  defp replay_raw_item(failure) do
+    case failure.related["raw_item_id"] && Repo.get(RawItem, failure.related["raw_item_id"]) do
+      nil ->
+        Operations.resolve_failures([failure.failure_type], [{"id", failure.id}])
+        {:error, :raw_item_missing}
+
+      raw_item ->
+        {:ok, run} =
+          Operations.start_run("process_input_feed", "manual", %{
+            "input_feed_id" => raw_item.input_feed_id,
+            "raw_item_id" => raw_item.id,
+            "retry_of_failure_id" => failure.id
+          })
+
+        {articles, errors} = process_raw_items([raw_item], run)
+
+        Operations.finish_run(run, run_status(errors), %{
+          summary_counts: %{
+            "raw_items" => 1,
+            "articles_seen" => length(articles),
+            "item_failures" => length(errors)
+          },
+          error_summary: error_summary(errors)
+        })
+
+        if errors == [], do: {:ok, run}, else: {:error, {:item_failures, length(errors)}}
+    end
+  end
+
+  defp refetch_for_failure(failure) do
+    case failure.related["input_feed_id"] && Repo.get(InputFeed, failure.related["input_feed_id"]) do
+      nil ->
+        Operations.resolve_failures([failure.failure_type], [{"id", failure.id}])
+        {:error, :input_feed_missing}
+
+      feed ->
+        fetch_input_feed(feed, "manual", ignore_validators: true)
+    end
+  end
+
   defp persist_raw_items(feed, items, run) do
+    resolve? = Operations.unresolved_failures?(["raw_item_ingestion_failed"])
+
     Enum.reduce(items, {[], []}, fn item, {raw_items, errors} ->
       case Intake.upsert_raw_item(feed, item, broadcast: false) do
         {:ok, raw_item} ->
+          if resolve? do
+            Operations.resolve_failures(["raw_item_ingestion_failed"], [
+              {"input_feed_id", feed.id},
+              {"feed_guid", raw_item.feed_guid}
+            ])
+          end
+
           {[raw_item | raw_items], errors}
 
         {:error, reason} ->
@@ -270,16 +357,33 @@ defmodule Newspaper.Pipeline do
     |> then(fn {raw_items, errors} -> {Enum.reverse(raw_items), Enum.reverse(errors)} end)
   end
 
+  @entry_failure_types ~w(raw_item_processing_failed generated_feed_item_create_failed)
+
   defp process_raw_items(raw_items, run) do
+    resolve? = Operations.unresolved_failures?(@entry_failure_types)
+
     Enum.reduce(raw_items, {[], []}, fn raw_item, {articles, errors} ->
       try do
         article = Content.create_or_update_from_raw_item(raw_item, dedupe_keys(raw_item))
+
+        if resolve? do
+          Operations.resolve_failures(["raw_item_processing_failed"], [
+            {"raw_item_id", raw_item.id}
+          ])
+        end
 
         publishing_errors =
           article
           |> Publishing.publish_article_to_eligible_feeds()
           |> Enum.flat_map(fn
-            {_feed, {:ok, _item}} ->
+            {feed, {:ok, _item}} ->
+              if resolve? do
+                Operations.resolve_failures(["generated_feed_item_create_failed"], [
+                  {"generated_feed_id", feed.id},
+                  {"article_id", article.id}
+                ])
+              end
+
               []
 
             {feed, {:error, reason}} ->

@@ -12,11 +12,16 @@ defmodule Newspaper.Processing do
   alias Newspaper.Processing.{
     BatchDispatcher,
     GeneratedFeedItemStep,
+    PipelineBatchMember,
     PipelineStep,
     PipelineStepAttempt,
     PriorityQueue,
     Registry
   }
+
+  @batch_selections [:not_requested, :failed, :cancelled]
+  @terminal_item_statuses ["succeeded", "failed", "skipped", "cancelled"]
+  @cancellable_item_statuses ["not_requested", "pending", "blocked", "queued"]
 
   alias Newspaper.Publishing.{GeneratedFeed, GeneratedFeedItem}
   alias Newspaper.Repo
@@ -85,26 +90,89 @@ defmodule Newspaper.Processing do
     steps = list_enabled_steps(feed.id, step_type)
     selection = Keyword.get(opts, :selection, :not_requested)
 
-    cond do
-      steps == [] ->
-        {:error, {:no_enabled_step, step_type}}
+    with :ok <- ensure_batch_step_enabled(steps, step_type),
+         :ok <- ensure_batch_selection(selection),
+         :ok <- ensure_no_running_batch(feed.id, step_type),
+         :ok <- ensure_batch_runnable(step_type),
+         {:ok, item_step_ids} <- resolve_batch_members(feed, step_type, selection),
+         {:ok, batch} <- create_feed_batch(feed, steps, trigger, step_type, selection),
+         :ok <- snapshot_members(batch.id, item_step_ids) do
+      case BatchDispatcher.enqueue(batch.id) do
+        :ok ->
+          {:ok, batch}
 
-      selection not in [:not_requested, :failed] ->
-        {:error, {:invalid_batch_selection, selection}}
-
-      true ->
-        with {:ok, batch} <- create_feed_batch(feed, steps, trigger, step_type, selection) do
-          case BatchDispatcher.enqueue(batch.id) do
-            :ok ->
-              {:ok, batch}
-
-            {:error, reason} ->
-              _ = fail_feed_batch(batch.id, reason)
-              {:error, reason}
-          end
-        end
+        {:error, reason} ->
+          _ = fail_feed_batch(batch.id, reason)
+          {:error, reason}
+      end
     end
   end
+
+  defp ensure_batch_step_enabled([], step_type), do: {:error, {:no_enabled_step, step_type}}
+  defp ensure_batch_step_enabled(_steps, _step_type), do: :ok
+
+  defp ensure_batch_selection(selection) when selection in @batch_selections, do: :ok
+  defp ensure_batch_selection({:items, ids}) when is_list(ids), do: :ok
+  defp ensure_batch_selection(selection), do: {:error, {:invalid_batch_selection, selection}}
+
+  defp ensure_no_running_batch(feed_id, step_type) do
+    if Map.has_key?(active_batches_by_feed_step(), {feed_id, step_type}),
+      do: {:error, :batch_already_running},
+      else: :ok
+  end
+
+  defp ensure_batch_runnable("digestion") do
+    settings = Operations.get_settings()
+
+    cond do
+      settings.digestion_paused -> {:error, :digestion_paused}
+      true -> ensure_requirements("digestion")
+    end
+  end
+
+  defp ensure_batch_runnable(step_type), do: ensure_requirements(step_type)
+
+  # Explicit item selections are validated server-side against the feed, the
+  # step, and a retryable status; stale or foreign ids are dropped silently.
+  defp resolve_batch_members(feed, step_type, {:items, ids}) do
+    ids = ids |> Enum.map(&to_integer_id/1) |> Enum.reject(&is_nil/1)
+
+    item_step_ids =
+      GeneratedFeedItemStep
+      |> join(:inner, [item_step], item in GeneratedFeedItem,
+        on: item.id == item_step.generated_feed_item_id
+      )
+      |> where(
+        [item_step, item],
+        item_step.id in ^ids and item.generated_feed_id == ^feed.id and
+          item_step.step_type == ^step_type and
+          item_step.status in ["failed", "cancelled", "not_requested"]
+      )
+      |> select([item_step], item_step.id)
+      |> Repo.all()
+
+    if item_step_ids == [], do: {:error, :no_eligible_items}, else: {:ok, item_step_ids}
+  end
+
+  defp resolve_batch_members(_feed, _step_type, _selection), do: {:ok, nil}
+
+  defp snapshot_members(_batch_id, nil), do: :ok
+
+  defp snapshot_members(batch_id, item_step_ids) do
+    Enum.each(item_step_ids, &ensure_member(batch_id, &1))
+    :ok
+  end
+
+  defp to_integer_id(id) when is_integer(id), do: id
+
+  defp to_integer_id(id) when is_binary(id) do
+    case Integer.parse(id) do
+      {value, ""} -> value
+      _ -> nil
+    end
+  end
+
+  defp to_integer_id(_id), do: nil
 
   def list_running_feed_batches do
     Run
@@ -116,19 +184,188 @@ defmodule Newspaper.Processing do
   def resume_feed_batch(batch_id) when is_integer(batch_id) do
     batch = Operations.get_run!(batch_id)
 
-    if batch.run_type == "pipeline_batch" and batch.status == "running" do
-      with {:ok, feed_id, step_type, selection} <- feed_batch_context(batch),
-           feed <- Newspaper.Publishing.get_generated_feed!(feed_id),
-           items <- batch_items(feed, step_type, selection),
-           :ok <- enqueue_batch_items(items, batch.id, step_type, selection),
-           {:ok, batch} <- refresh_batch_run(batch.id, length(items)) do
+    cond do
+      batch.run_type != "pipeline_batch" or batch.status != "running" ->
         {:ok, batch}
-      else
-        {:error, reason} -> fail_feed_batch(batch.id, reason)
-      end
-    else
-      {:ok, batch}
+
+      batch_cancelled?(batch) ->
+        refresh_batch_run(batch.id)
+
+      true ->
+        with {:ok, feed_id, step_type, selection} <- feed_batch_context(batch),
+             feed <- Newspaper.Publishing.get_generated_feed!(feed_id),
+             items <- batch_enrollment_items(batch, feed, step_type, selection),
+             :ok <- enqueue_batch_items(items, batch.id, step_type, selection),
+             {:ok, batch} <- refresh_batch_run(batch.id) do
+          {:ok, batch}
+        else
+          {:error, reason} -> fail_feed_batch(batch.id, reason)
+        end
     end
+  end
+
+  @doc """
+  Cancels a batch: withdraws every not-yet-started member (and, cascading,
+  the not-yet-started downstream steps of the same items), skips attempts
+  that no longer have any demand, removes them from the dispatchers, and
+  closes the run once nothing is running. Running attempts finish normally.
+  Repeated cancellation is a no-op.
+  """
+  def cancel_feed_batch(batch_id) when is_integer(batch_id) do
+    batch = Operations.get_run!(batch_id)
+
+    cond do
+      batch.run_type != "pipeline_batch" ->
+        {:error, :not_a_batch}
+
+      batch_cancelled?(batch) ->
+        {:ok, %{batch: batch, cancelled: %{}, running: 0, attempt_ids: []}}
+
+      true ->
+        {:ok, result} = Repo.transaction(fn -> cancel_batch_members!(batch) end)
+        Newspaper.Processing.Dispatcher.remove(result.attempt_ids)
+        Newspaper.Digestion.Dispatcher.remove(result.attempt_ids)
+        {:ok, batch} = refresh_batch_run(batch.id)
+        Newspaper.Events.broadcast_data_changed(:processing_changed)
+        {:ok, %{result | batch: batch}}
+    end
+  end
+
+  def batch_cancelled?(%Run{related: related}), do: is_binary(related["cancelled_at"])
+
+  def batch_cancelled?(nil), do: false
+
+  def batch_cancelled?(batch_id) when is_integer(batch_id) do
+    case Repo.get(Run, batch_id) do
+      nil -> false
+      batch -> batch_cancelled?(batch)
+    end
+  end
+
+  defp cancel_batch_members!(batch) do
+    now = DateTime.utc_now(:second)
+
+    {:ok, _batch} =
+      Operations.update_run(batch, %{
+        related: Map.put(batch.related, "cancelled_at", DateTime.to_iso8601(now))
+      })
+
+    active_item_steps =
+      GeneratedFeedItemStep
+      |> join(:inner, [item_step], member in PipelineBatchMember,
+        on: member.generated_feed_item_step_id == item_step.id
+      )
+      |> where(
+        [item_step, member],
+        member.batch_run_id == ^batch.id and is_nil(member.outcome) and
+          item_step.status in ^@cancellable_item_statuses
+      )
+      |> Repo.all()
+
+    downstream_item_steps = downstream_cancellable_item_steps(active_item_steps)
+    all_item_steps = Enum.uniq_by(active_item_steps ++ downstream_item_steps, & &1.id)
+    item_step_ids = Enum.map(all_item_steps, & &1.id)
+
+    GeneratedFeedItemStep
+    |> where([item_step], item_step.id in ^item_step_ids)
+    |> Repo.update_all(
+      set: [
+        status: "cancelled",
+        error_message: "Cancelled by operator",
+        finished_at: now,
+        updated_at: now
+      ]
+    )
+
+    PipelineBatchMember
+    |> where(
+      [member],
+      member.generated_feed_item_step_id in ^item_step_ids and is_nil(member.outcome)
+    )
+    |> Repo.update_all(set: [outcome: "cancelled", outcome_at: now, updated_at: now])
+
+    attempt_ids = cancel_undemanded_attempts!(all_item_steps, now)
+
+    running =
+      PipelineBatchMember
+      |> join(:inner, [member], item_step in GeneratedFeedItemStep,
+        on: item_step.id == member.generated_feed_item_step_id
+      )
+      |> where(
+        [member, item_step],
+        member.batch_run_id == ^batch.id and is_nil(member.outcome) and
+          item_step.status == "running"
+      )
+      |> Repo.aggregate(:count, :id)
+
+    cancelled =
+      all_item_steps
+      |> Enum.group_by(& &1.step_type)
+      |> Map.new(fn {step_type, steps} -> {step_type, length(steps)} end)
+
+    %{batch: batch, cancelled: cancelled, running: running, attempt_ids: attempt_ids}
+  end
+
+  # Downstream steps of the same items that only exist because the cancelled
+  # step was expected (decided 2026-09-14: cancellation cascades).
+  defp downstream_cancellable_item_steps([]), do: []
+
+  defp downstream_cancellable_item_steps(item_steps) do
+    Enum.flat_map(item_steps, fn item_step ->
+      GeneratedFeedItemStep
+      |> where(
+        [other],
+        other.generated_feed_item_id == ^item_step.generated_feed_item_id and
+          other.position > ^item_step.position and
+          other.status in ^@cancellable_item_statuses
+      )
+      |> Repo.all()
+    end)
+  end
+
+  # An attempt is cancelled only when no item step still demands it.
+  defp cancel_undemanded_attempts!(item_steps, now) do
+    attempt_ids =
+      item_steps |> Enum.map(& &1.latest_attempt_id) |> Enum.reject(&is_nil/1) |> Enum.uniq()
+
+    still_demanded =
+      GeneratedFeedItemStep
+      |> where(
+        [item_step],
+        item_step.latest_attempt_id in ^attempt_ids and
+          item_step.status in ["pending", "blocked", "queued", "running"]
+      )
+      |> select([item_step], item_step.latest_attempt_id)
+      |> Repo.all()
+      |> MapSet.new()
+
+    cancellable = Enum.reject(attempt_ids, &MapSet.member?(still_demanded, &1))
+
+    PipelineStepAttempt
+    |> where([attempt], attempt.id in ^cancellable and attempt.status == "queued")
+    |> Repo.update_all(
+      set: [
+        status: "skipped",
+        failure_kind: "cancelled",
+        retryable: false,
+        error_message: "Cancelled by operator",
+        finished_at: now,
+        updated_at: now
+      ]
+    )
+
+    Article
+    |> join(:inner, [article], attempt in PipelineStepAttempt,
+      on: attempt.article_id == article.id
+    )
+    |> where(
+      [article, attempt],
+      attempt.id in ^cancellable and attempt.step_type == "extraction" and
+        attempt.failure_kind == "cancelled" and article.extraction_status == "queued"
+    )
+    |> Repo.update_all(set: [extraction_status: "not_requested", updated_at: now])
+
+    cancellable
   end
 
   def fail_feed_batch(batch_id, reason) when is_integer(batch_id) do
@@ -229,12 +466,40 @@ defmodule Newspaper.Processing do
     with [step] <- list_enabled_steps(item.generated_feed_id, step_type),
          :ok <- reconcile_prior_steps(item, step),
          {:ok, _item_step} <- ensure_item_step(item, step, mode),
+         :ok <- maybe_revive_downstream(item, step, opts),
          {:ok, attempts} <- advance_item(item.id, advance_opts) do
       {:ok, attempts}
     else
       [] -> {:ok, []}
       {:error, reason} -> {:error, reason}
     end
+  end
+
+  # "Run on cancelled items" re-creates the downstream demand that was
+  # cancelled with the requested step, so cancel/re-queue is reversible.
+  defp maybe_revive_downstream(item, step, opts) do
+    if Keyword.get(opts, :revive_downstream, false) do
+      item = Repo.preload(item, [article: [:extraction, :digests]], force: true)
+
+      GeneratedFeedItemStep
+      |> where(
+        [item_step],
+        item_step.generated_feed_item_id == ^item.id and item_step.position > ^step.position and
+          item_step.status == "cancelled"
+      )
+      |> Repo.all()
+      |> Enum.each(fn item_step ->
+        update_item_step!(item_step, %{
+          status: requested_status(item.article, item_step.step_type),
+          error_message: nil,
+          latest_attempt_id: nil,
+          started_at: nil,
+          finished_at: nil
+        })
+      end)
+    end
+
+    :ok
   end
 
   defp reconcile_prior_steps(item, requested_step) do
@@ -310,7 +575,7 @@ defmodule Newspaper.Processing do
         |> Repo.update()
 
       :missing when item_step.status == "succeeded" and mode == :requested ->
-        {:ok, item_step}
+        relink_definition(item_step, step)
 
       :missing when mode in [:requested, :force] ->
         status =
@@ -338,7 +603,19 @@ defmodule Newspaper.Processing do
         |> Repo.update()
 
       :missing ->
-        {:ok, item_step}
+        relink_definition(item_step, step)
+    end
+  end
+
+  # A surviving item-step row (its definition was removed and re-added) keeps
+  # its history but must point at the current definition and position.
+  defp relink_definition(%GeneratedFeedItemStep{} = item_step, %PipelineStep{} = step) do
+    if item_step.pipeline_step_id == step.id and item_step.position == step.position do
+      {:ok, item_step}
+    else
+      item_step
+      |> GeneratedFeedItemStep.changeset(%{pipeline_step_id: step.id, position: step.position})
+      |> Repo.update()
     end
   end
 
@@ -375,7 +652,7 @@ defmodule Newspaper.Processing do
   end
 
   defp advance_item_step(_item, %{status: status}, _opts)
-       when status in ["not_requested", "queued", "running", "failed"] do
+       when status in ["not_requested", "queued", "running", "failed", "cancelled"] do
     {:halt, nil}
   end
 
@@ -403,17 +680,31 @@ defmodule Newspaper.Processing do
     end
   end
 
-  def create_step(%GeneratedFeed{} = feed, attrs) do
+  @doc """
+  Adds a step to a feed's chain. Accepts a step type (`"digestion"`) or the
+  legacy attrs map with an `implementation_key`. Position is canonical
+  (`Registry.position_for/1`); prerequisites and global requirements are
+  validated here, not in the UI.
+  """
+  def create_step(%GeneratedFeed{} = feed, step_type) when is_binary(step_type) do
+    with {:ok, implementation} <- fetch_implementation_for_type(step_type) do
+      create_step(feed, %{"implementation_key" => implementation.key})
+    end
+  end
+
+  def create_step(%GeneratedFeed{} = feed, attrs) when is_map(attrs) do
     implementation_key = attr(attrs, "implementation_key")
 
     with {:ok, implementation} <- Registry.fetch_step(implementation_key),
+         :ok <- ensure_step_absent(feed.id, implementation.step_type),
+         :ok <- ensure_step_can_enable(feed.id, implementation.step_type),
          {:ok, config} <- Registry.normalize_step_config(implementation_key, config_attrs(attrs)) do
       %PipelineStep{}
       |> PipelineStep.changeset(%{
         generated_feed_id: feed.id,
         step_type: implementation.step_type,
         implementation_key: implementation.key,
-        position: next_position(feed.id),
+        position: Registry.position_for(implementation.step_type),
         enabled: boolean_attr(attrs, "enabled", true),
         config: config
       })
@@ -423,31 +714,25 @@ defmodule Newspaper.Processing do
     end
   end
 
-  def create_extraction_step(%GeneratedFeed{} = feed) do
-    create_step(feed, %{"implementation_key" => Registry.site_policy_step_key()})
-  end
+  def create_extraction_step(%GeneratedFeed{} = feed), do: create_step(feed, "extraction")
+  def create_digest_step(%GeneratedFeed{} = feed), do: create_step(feed, "digestion")
 
-  def create_digest_step(%GeneratedFeed{} = feed) do
-    with [_extraction_step] <- list_enabled_steps(feed.id, "extraction"),
-         model when is_binary(model) and model != "" <- Operations.get_settings().ollama_model do
-      create_step(feed, %{"implementation_key" => Registry.article_digest_step_key()})
-    else
-      [] -> {:error, :extraction_step_required}
-      _model -> {:error, :ollama_model_not_configured}
-    end
-  end
-
+  @doc """
+  Updates a step's enabled flag and config. Enabling checks prerequisites and
+  requirements; disabling refuses while a dependent step is enabled or the
+  feed's rendering settings depend on this step.
+  """
   def update_step(%PipelineStep{} = step, attrs) do
-    with {:ok, config} <-
+    enabled = boolean_attr(attrs, "enabled", step.enabled)
+
+    with :ok <- validate_enabled_change(step, enabled),
+         {:ok, config} <-
            Registry.normalize_step_config(
              step.implementation_key,
              config_attrs(attrs, step.config)
            ) do
       step
-      |> PipelineStep.changeset(%{
-        enabled: boolean_attr(attrs, "enabled", step.enabled),
-        config: config
-      })
+      |> PipelineStep.changeset(%{enabled: enabled, config: config})
       |> Repo.update()
       |> materialize_step_on_ok()
       |> broadcast_on_ok()
@@ -466,36 +751,202 @@ defmodule Newspaper.Processing do
     end)
   end
 
+  @doc """
+  Removes a step definition. Refused while a dependent step exists, the
+  feed's rendering depends on it, or it has queued/running work. Item-step
+  snapshot rows are left untouched (their `pipeline_step_id` nils out).
+  """
   def delete_step(%PipelineStep{} = step) do
-    step
-    |> Repo.delete()
-    |> broadcast_on_ok()
-  end
-
-  def move_step(%PipelineStep{} = step, direction) when direction in [:up, :down] do
-    steps = list_steps(step.generated_feed_id)
-    index = Enum.find_index(steps, &(&1.id == step.id))
-    other_index = if direction == :up, do: index - 1, else: index + 1
-
-    case Enum.at(steps, other_index) do
-      nil ->
-        {:ok, step}
-
-      other ->
-        Repo.transaction(fn ->
-          step
-          |> PipelineStep.changeset(%{position: other.position})
-          |> Repo.update!()
-
-          other
-          |> PipelineStep.changeset(%{position: step.position})
-          |> Repo.update!()
-
-          Repo.get!(PipelineStep, step.id)
-        end)
-        |> broadcast_on_ok()
+    with :ok <- ensure_no_dependents(step, :any),
+         :ok <- ensure_rendering_independent(step),
+         :ok <- ensure_no_active_work(step) do
+      step
+      |> Repo.delete()
+      |> broadcast_on_ok()
     end
   end
+
+  @doc """
+  Every feed's chain in canonical order with per-step coverage, the feed's
+  held (unpublished) item count, the step types that could still be added,
+  and any running batch per step. One entry per feed.
+  """
+  def pipeline_overview do
+    feeds = Newspaper.Publishing.list_generated_feeds()
+    held_counts = held_item_counts()
+    active_batches = active_batches_by_feed_step()
+
+    Enum.map(feeds, fn feed ->
+      steps = Registry.sort_steps(feed.pipeline_steps)
+      counts = feed_step_counts(feed.id)
+      item_count = Newspaper.Publishing.count_items_for_feed(feed)
+
+      %{
+        feed: feed,
+        item_count: item_count,
+        held: Map.get(held_counts, feed.id, 0),
+        steps:
+          Enum.map(steps, fn step ->
+            %{
+              step: step,
+              step_type: step.step_type,
+              label: Registry.step_label(step.step_type),
+              counts: Map.get(counts, step.id, empty_step_counts(item_count)),
+              active_batch: Map.get(active_batches, {feed.id, step.step_type})
+            }
+          end),
+        available_step_types: addable_step_types(steps)
+      }
+    end)
+  end
+
+  @doc "Step types not yet in `steps` whose prerequisites are enabled."
+  def addable_step_types(steps) do
+    present = MapSet.new(steps, & &1.step_type)
+    enabled = steps |> Enum.filter(& &1.enabled) |> MapSet.new(& &1.step_type)
+
+    Registry.step_types()
+    |> Enum.reject(&MapSet.member?(present, &1))
+    |> Enum.filter(fn step_type ->
+      Enum.all?(Registry.prerequisites(step_type), &MapSet.member?(enabled, &1))
+    end)
+  end
+
+  defp empty_step_counts(item_count) do
+    %{
+      total: item_count,
+      ready: 0,
+      not_requested: item_count,
+      blocked: 0,
+      queued: 0,
+      running: 0,
+      failed: 0,
+      skipped: 0
+    }
+  end
+
+  defp held_item_counts do
+    GeneratedFeedItem
+    |> where([item], item.publication_status == "processing")
+    |> group_by([item], item.generated_feed_id)
+    |> select([item], {item.generated_feed_id, count(item.id)})
+    |> Repo.all()
+    |> Map.new()
+  end
+
+  defp active_batches_by_feed_step do
+    list_running_feed_batches()
+    |> Enum.reduce(%{}, fn batch, acc ->
+      case {batch.related["generated_feed_id"], batch.related["step_type"]} do
+        {feed_id, step_type} when is_integer(feed_id) and is_binary(step_type) ->
+          Map.put_new(acc, {feed_id, step_type}, batch)
+
+        _ ->
+          acc
+      end
+    end)
+  end
+
+  defp fetch_implementation_for_type(step_type) do
+    case Registry.fetch_implementation_for_type(step_type) do
+      {:ok, implementation} -> {:ok, implementation}
+      :error -> {:error, {:unknown_step_type, step_type}}
+    end
+  end
+
+  defp ensure_step_absent(feed_id, step_type) do
+    if Repo.exists?(
+         from step in PipelineStep,
+           where: step.generated_feed_id == ^feed_id and step.step_type == ^step_type
+       ),
+       do: {:error, :step_exists},
+       else: :ok
+  end
+
+  defp ensure_step_can_enable(feed_id, step_type) do
+    enabled_types =
+      feed_id |> list_enabled_steps() |> MapSet.new(& &1.step_type)
+
+    missing =
+      step_type
+      |> Registry.prerequisites()
+      |> Enum.reject(&MapSet.member?(enabled_types, &1))
+
+    cond do
+      missing != [] -> {:error, prerequisite_error(hd(missing))}
+      true -> ensure_requirements(step_type)
+    end
+  end
+
+  defp ensure_requirements(step_type) do
+    step_type
+    |> Registry.requirements()
+    |> Enum.reduce_while(:ok, fn
+      :ollama_model, :ok ->
+        case Operations.get_settings().ollama_model do
+          model when is_binary(model) and model != "" -> {:cont, :ok}
+          _model -> {:halt, {:error, :ollama_model_not_configured}}
+        end
+
+      _requirement, :ok ->
+        {:cont, :ok}
+    end)
+  end
+
+  defp validate_enabled_change(%PipelineStep{enabled: enabled}, enabled), do: :ok
+
+  defp validate_enabled_change(%PipelineStep{} = step, true),
+    do: ensure_step_can_enable(step.generated_feed_id, step.step_type)
+
+  defp validate_enabled_change(%PipelineStep{} = step, false) do
+    with :ok <- ensure_no_dependents(step, :enabled) do
+      ensure_rendering_independent(step)
+    end
+  end
+
+  defp ensure_no_dependents(%PipelineStep{} = step, which) do
+    dependent_types = Registry.dependents(step.step_type)
+
+    query =
+      from other in PipelineStep,
+        where:
+          other.generated_feed_id == ^step.generated_feed_id and
+            other.step_type in ^dependent_types
+
+    query = if which == :enabled, do: where(query, [other], other.enabled == true), else: query
+
+    case Repo.all(query) do
+      [] -> :ok
+      [dependent | _rest] -> {:error, dependents_error(dependent.step_type)}
+    end
+  end
+
+  defp ensure_rendering_independent(%PipelineStep{} = step) do
+    feed = Newspaper.Publishing.get_generated_feed!(step.generated_feed_id)
+
+    if step.step_type in Newspaper.Publishing.rendering_step_dependencies(feed),
+      do: {:error, rendering_error(step.step_type)},
+      else: :ok
+  end
+
+  defp ensure_no_active_work(%PipelineStep{} = step) do
+    if Repo.exists?(
+         from attempt in PipelineStepAttempt,
+           where: attempt.pipeline_step_id == ^step.id and attempt.status in ["queued", "running"]
+       ),
+       do: {:error, :step_has_active_work},
+       else: :ok
+  end
+
+  defp prerequisite_error("extraction"), do: :extraction_step_required
+  defp prerequisite_error(step_type), do: {:prerequisite_required, step_type}
+
+  defp dependents_error("digestion"), do: :digestion_requires_extraction
+  defp dependents_error(step_type), do: {:dependent_step_enabled, step_type}
+
+  defp rendering_error("extraction"), do: :rendering_requires_extraction
+  defp rendering_error("digestion"), do: :digest_rendering_requires_digestion
+  defp rendering_error(step_type), do: {:rendering_depends_on_step, step_type}
 
   def list_attempts_for_article(article_id) do
     PipelineStepAttempt
@@ -681,10 +1132,116 @@ defmodule Newspaper.Processing do
     order_by(query, [attempt], asc: attempt.inserted_at, asc: attempt.id)
   end
 
-  def list_recent_batches(limit \\ 5) do
+  @throughput_window_minutes 60
+  @min_rate_samples 3
+
+  @doc """
+  Executions of `step_type` completed per minute over the trailing window.
+  The rate is nil until at least #{@min_rate_samples} completions exist.
+  """
+  def stage_throughput(step_type, opts \\ []) when is_binary(step_type) do
+    now = Keyword.get(opts, :now, DateTime.utc_now(:second))
+    window_start = DateTime.add(now, -@throughput_window_minutes * 60, :second)
+
+    completed =
+      PipelineStepAttempt
+      |> where([attempt], attempt.step_type == ^step_type)
+      |> completed_in_window(window_start, now)
+      |> Repo.aggregate(:count, :id)
+
+    %{
+      completed: completed,
+      window_minutes: @throughput_window_minutes,
+      per_minute: rate_per_minute(completed)
+    }
+  end
+
+  @doc """
+  Progress for a `pipeline_batch` run: done/total/remaining from the run's
+  summary, rate from its attempts completed in the trailing window, and an
+  estimate only when it is defensible. `eta_reason` explains an absent ETA.
+  """
+  def batch_progress(%Run{} = batch, opts \\ []) do
+    now = Keyword.get(opts, :now, DateTime.utc_now(:second))
+    counts = batch.summary_counts || %{}
+
+    total =
+      if is_nil(counts["total"]), do: nil, else: counts["total"] - count(counts, "cancelled")
+
+    done = count(counts, "succeeded") + count(counts, "failed") + count(counts, "skipped")
+    remaining = count(counts, "queued") + count(counts, "running")
+    step_type = batch.related["step_type"] || "extraction"
+    window_start = DateTime.add(now, -@throughput_window_minutes * 60, :second)
+
+    completed_recently =
+      PipelineStepAttempt
+      |> where([attempt], attempt.batch_run_id == ^batch.id)
+      |> completed_in_window(window_start, now)
+      |> Repo.aggregate(:count, :id)
+
+    per_minute = rate_per_minute(completed_recently)
+
+    eta_reason =
+      cond do
+        is_nil(total) -> :not_started
+        remaining == 0 -> :complete
+        step_type == "digestion" and Operations.get_settings().digestion_paused -> :paused
+        step_type == "extraction" and all_queued_hosts_in_backoff?(batch.id, now) -> :site_backoff
+        is_nil(per_minute) -> :insufficient_samples
+        true -> nil
+      end
+
+    eta_seconds =
+      if is_nil(eta_reason), do: round(remaining / per_minute * 60), else: nil
+
+    %{
+      done: done,
+      total: total,
+      remaining: remaining,
+      per_minute: per_minute,
+      eta_seconds: eta_seconds,
+      eta_reason: eta_reason
+    }
+  end
+
+  defp completed_in_window(query, window_start, now) do
+    query
+    |> where([attempt], attempt.status in ["succeeded", "failed", "skipped"])
+    |> where([attempt], attempt.failure_kind != "cancelled" or is_nil(attempt.failure_kind))
+    |> where([attempt], attempt.finished_at > ^window_start and attempt.finished_at <= ^now)
+  end
+
+  defp rate_per_minute(completed) when completed < @min_rate_samples, do: nil
+  defp rate_per_minute(completed), do: completed / @throughput_window_minutes
+
+  defp count(counts, key), do: Map.get(counts || %{}, key, 0)
+
+  defp all_queued_hosts_in_backoff?(batch_run_id, now) do
+    hosts =
+      PipelineStepAttempt
+      |> join(:inner, [attempt], article in Article, on: article.id == attempt.article_id)
+      |> where([attempt], attempt.batch_run_id == ^batch_run_id and attempt.status == "queued")
+      |> select([_attempt, article], coalesce(article.resolved_url, article.canonical_url))
+      |> Repo.all()
+      |> Enum.map(&Content.site_host/1)
+      |> Enum.reject(&is_nil/1)
+      |> MapSet.new()
+
+    backoff_hosts =
+      now |> Content.list_active_site_backoffs() |> Enum.map(& &1.site_host) |> MapSet.new()
+
+    MapSet.size(hosts) > 0 and MapSet.subset?(hosts, backoff_hosts)
+  end
+
+  @doc "Every pipeline batch across feeds, running first, then newest."
+  def list_batches(limit \\ 100) do
     Run
     |> where([run], run.run_type == "pipeline_batch")
-    |> order_by([run], desc: run.started_at, desc: run.id)
+    |> order_by([run],
+      asc: fragment("CASE WHEN ? = 'running' THEN 0 ELSE 1 END", run.status),
+      desc: run.started_at,
+      desc: run.id
+    )
     |> limit(^limit)
     |> Repo.all()
   end
@@ -738,6 +1295,38 @@ defmodule Newspaper.Processing do
           do: where(query, [attempt], attempt.step_type == ^step_type),
           else: query
       end)
+
+    cancelled_ids =
+      interrupted_query
+      |> join(:inner, [attempt], batch in Run, on: batch.id == attempt.batch_run_id)
+      |> where([_attempt, batch], fragment("? \\? 'cancelled_at'", batch.related))
+      |> select([attempt], attempt.id)
+      |> Repo.all()
+
+    if cancelled_ids != [] do
+      now = DateTime.utc_now(:second)
+
+      PipelineStepAttempt
+      |> where([attempt], attempt.id in ^cancelled_ids)
+      |> Repo.update_all(
+        set: [
+          status: "skipped",
+          failure_kind: "cancelled",
+          retryable: false,
+          finished_at: now,
+          error_message: "Cancelled by operator before the restart",
+          updated_at: now
+        ]
+      )
+
+      GeneratedFeedItemStep
+      |> where([item_step], item_step.latest_attempt_id in ^cancelled_ids)
+      |> Repo.update_all(set: [status: "cancelled", finished_at: now, updated_at: now])
+
+      close_interrupted_runs(cancelled_ids)
+    end
+
+    interrupted_query = where(interrupted_query, [attempt], attempt.id not in ^cancelled_ids)
 
     interrupted_ids =
       interrupted_query
@@ -812,6 +1401,7 @@ defmodule Newspaper.Processing do
     |> Enum.reduce_while({:ok, []}, fn item, {:ok, attempts} ->
       case request_item_step(item, attempt.step_type,
              force: true,
+             batch_run_id: attempt.batch_run_id,
              request_metadata: request_metadata
            ) do
         {:ok, item_attempts} -> {:cont, {:ok, item_attempts ++ attempts}}
@@ -833,7 +1423,7 @@ defmodule Newspaper.Processing do
   def schedule_automatic_retry(%PipelineStepAttempt{} = attempt) do
     attempt = Repo.get!(PipelineStepAttempt, attempt.id)
 
-    if automatic_rate_limit_retry?(attempt) do
+    if automatic_rate_limit_retry?(attempt) and not batch_cancelled?(attempt.batch_run_id) do
       retry_attempt(attempt.id,
         origin: "automatic_rate_limit",
         retry_number: rate_limit_failure_streak(attempt),
@@ -856,23 +1446,28 @@ defmodule Newspaper.Processing do
     end)
   end
 
+  @doc """
+  Claims a queued attempt for execution. Only a `queued` row can be claimed;
+  a cancelled or already-claimed attempt returns `{:error, :not_queued}`.
+  """
   def mark_attempt_running(%PipelineStepAttempt{} = attempt) do
     now = DateTime.utc_now(:second)
 
-    result =
-      attempt
-      |> PipelineStepAttempt.changeset(%{
-        status: "running",
-        started_at: now
-      })
-      |> Repo.update()
-      |> broadcast_on_ok()
+    claimed =
+      PipelineStepAttempt
+      |> where([candidate], candidate.id == ^attempt.id and candidate.status == "queued")
+      |> Repo.update_all(set: [status: "running", started_at: now, updated_at: now])
 
-    if match?({:ok, _attempt}, result) do
-      update_attempt_item_steps(attempt.id, %{status: "running", started_at: now})
+    case claimed do
+      {1, _rows} ->
+        result = {:ok, %{attempt | status: "running", started_at: now}}
+        update_attempt_item_steps(attempt.id, %{status: "running", started_at: now})
+        Newspaper.Events.broadcast_data_changed(:processing_changed)
+        refresh_attempt_batch(result)
+
+      {0, _rows} ->
+        {:error, :not_queued}
     end
-
-    refresh_attempt_batch(result)
   end
 
   def finish_attempt(%PipelineStepAttempt{} = attempt, status, attrs \\ %{})
@@ -975,7 +1570,7 @@ defmodule Newspaper.Processing do
     |> where(
       [item_step, item],
       item.article_id == ^article_id and item_step.step_type == ^step_type and
-        item_step.status in ["not_requested", "pending", "blocked", "failed"]
+        item_step.status in ["not_requested", "pending", "blocked", "failed", "cancelled"]
     )
     |> Repo.update_all(
       set: [
@@ -999,35 +1594,13 @@ defmodule Newspaper.Processing do
 
   def refresh_batch_run(nil, _items_considered), do: {:ok, nil}
 
-  def refresh_batch_run(batch_run_id, items_considered) when is_integer(batch_run_id) do
+  def refresh_batch_run(batch_run_id, _items_considered) when is_integer(batch_run_id) do
     batch = Operations.get_run!(batch_run_id)
-
-    status_counts =
-      PipelineStepAttempt
-      |> where([attempt], attempt.batch_run_id == ^batch_run_id)
-      |> group_by([attempt], attempt.status)
-      |> select([attempt], {attempt.status, count(attempt.id)})
-      |> Repo.all()
-      |> Map.new()
-
-    counts = %{
-      "queued" => Map.get(status_counts, "queued", 0),
-      "running" => Map.get(status_counts, "running", 0),
-      "succeeded" => Map.get(status_counts, "succeeded", 0),
-      "failed" => Map.get(status_counts, "failed", 0),
-      "skipped" => Map.get(status_counts, "skipped", 0)
-    }
-
+    counts = batch_member_counts(batch_run_id)
     total = Enum.sum(Map.values(counts))
-    items_considered = items_considered || batch.summary_counts["items_considered"] || total
-
-    summary =
-      counts
-      |> Map.put("total", total)
-      |> Map.put("items_considered", items_considered)
-      |> Map.update!("skipped", &(&1 + max(items_considered - total, 0)))
-
+    summary = Map.put(counts, "total", total)
     active = counts["queued"] + counts["running"]
+    cancelled? = batch_cancelled?(batch)
 
     cond do
       active > 0 ->
@@ -1038,7 +1611,13 @@ defmodule Newspaper.Processing do
         })
 
       is_nil(batch.finished_at) ->
-        status = if counts["failed"] > 0, do: "failed", else: "succeeded"
+        status =
+          cond do
+            cancelled? -> "cancelled"
+            counts["failed"] > 0 -> "failed"
+            true -> "succeeded"
+          end
+
         Operations.finish_run(batch, status, %{summary_counts: summary})
 
       true ->
@@ -1046,21 +1625,148 @@ defmodule Newspaper.Processing do
     end
   end
 
+  # Counts by member outcome; active members report their item step's state.
+  # Batches created before membership existed fall back to their attempts.
+  defp batch_member_counts(batch_run_id) do
+    member_rows =
+      PipelineBatchMember
+      |> join(:inner, [member], item_step in GeneratedFeedItemStep,
+        on: item_step.id == member.generated_feed_item_step_id
+      )
+      |> where([member], member.batch_run_id == ^batch_run_id)
+      |> select([member, item_step], {member.outcome, item_step.status})
+      |> Repo.all()
+
+    rows =
+      if member_rows == [] do
+        PipelineStepAttempt
+        |> where([attempt], attempt.batch_run_id == ^batch_run_id)
+        |> select([attempt], {nil, attempt.status})
+        |> Repo.all()
+      else
+        member_rows
+      end
+
+    base = %{
+      "queued" => 0,
+      "running" => 0,
+      "succeeded" => 0,
+      "failed" => 0,
+      "skipped" => 0,
+      "cancelled" => 0
+    }
+
+    Enum.reduce(rows, base, fn {outcome, status}, acc ->
+      Map.update!(acc, member_bucket(outcome, status), &(&1 + 1))
+    end)
+  end
+
+  defp member_bucket(outcome, _status)
+       when outcome in ["succeeded", "failed", "skipped", "cancelled"],
+       do: outcome
+
+  defp member_bucket(_outcome, status)
+       when status in ["succeeded", "failed", "skipped", "cancelled"],
+       do: status
+
+  defp member_bucket(_outcome, "running"), do: "running"
+  defp member_bucket(_outcome, _status), do: "queued"
+
+  @doc "Records that `item_step_id` belongs to `batch_run_id` (idempotent)."
+  def ensure_member(batch_run_id, item_step_id) do
+    %PipelineBatchMember{}
+    |> PipelineBatchMember.changeset(%{
+      batch_run_id: batch_run_id,
+      generated_feed_item_step_id: item_step_id
+    })
+    |> Repo.insert(
+      on_conflict: :nothing,
+      conflict_target: [:batch_run_id, :generated_feed_item_step_id]
+    )
+  end
+
   def change_step(%PipelineStep{} = step, attrs \\ %{}), do: PipelineStep.changeset(step, attrs)
 
   defp enqueue_batch_items(items, batch_run_id, step_type, selection) do
     opts = batch_request_opts(batch_run_id, selection)
 
-    Enum.reduce_while(items, :ok, fn item, :ok ->
-      case request_item_step(item, step_type, opts) do
-        {:ok, _attempts} -> {:cont, :ok}
-        {:error, reason} -> {:halt, {:error, reason}}
+    items
+    |> Enum.with_index()
+    |> Enum.reduce_while(:ok, fn {item, index}, :ok ->
+      cond do
+        rem(index, 20) == 0 and batch_cancelled?(batch_run_id) ->
+          {:halt, :ok}
+
+        true ->
+          case request_item_step(item, step_type, opts) do
+            {:ok, attempts} ->
+              record_member!(batch_run_id, item.id, step_type, attempts)
+              {:cont, :ok}
+
+            {:error, reason} ->
+              {:halt, {:error, reason}}
+          end
       end
     end)
   end
 
+  # A member that enrollment resolved without new work records its outcome
+  # immediately: satisfied by an existing artifact, or skipped because the item
+  # was already terminal (a pre-existing failure is not this batch's failure).
+  defp record_member!(batch_run_id, item_id, step_type, attempts) do
+    case Repo.get_by(GeneratedFeedItemStep, generated_feed_item_id: item_id, step_type: step_type) do
+      nil ->
+        :ok
+
+      item_step ->
+        {:ok, _member} = ensure_member(batch_run_id, item_step.id)
+
+        outcome =
+          cond do
+            attempts != [] -> nil
+            item_step.status == "succeeded" -> "succeeded"
+            item_step.status in @terminal_item_statuses -> "skipped"
+            true -> nil
+          end
+
+        if outcome do
+          PipelineBatchMember
+          |> where(
+            [member],
+            member.batch_run_id == ^batch_run_id and
+              member.generated_feed_item_step_id == ^item_step.id and is_nil(member.outcome)
+          )
+          |> Repo.update_all(set: [outcome: outcome, outcome_at: DateTime.utc_now(:second)])
+        end
+
+        :ok
+    end
+  end
+
+  # First enrollment selects by status; recovery re-enrolls the durable members.
+  defp batch_enrollment_items(batch, feed, step_type, selection) do
+    member_item_ids =
+      PipelineBatchMember
+      |> join(:inner, [member], item_step in GeneratedFeedItemStep,
+        on: item_step.id == member.generated_feed_item_step_id
+      )
+      |> where([member], member.batch_run_id == ^batch.id and is_nil(member.outcome))
+      |> select([_member, item_step], item_step.generated_feed_item_id)
+      |> Repo.all()
+
+    if member_item_ids == [] and selection != "items" do
+      batch_items(feed, step_type, selection)
+    else
+      GeneratedFeedItem
+      |> where([item], item.id in ^member_item_ids)
+      |> order_by([item], asc: item.id)
+      |> preload([:generated_feed, article: [:extraction, :digests]])
+      |> Repo.all()
+    end
+  end
+
   defp create_feed_batch(feed, steps, trigger, step_type, selection) do
-    selection = Atom.to_string(selection)
+    selection = selection_name(selection)
 
     Operations.start_run(
       "pipeline_batch",
@@ -1076,11 +1782,14 @@ defmodule Newspaper.Processing do
     )
   end
 
+  defp selection_name({:items, _ids}), do: "items"
+  defp selection_name(selection) when is_atom(selection), do: Atom.to_string(selection)
+
   defp feed_batch_context(batch) do
     with feed_id when is_integer(feed_id) <- batch.related["generated_feed_id"],
-         step_type when step_type in ["extraction", "digestion"] <-
-           batch.related["step_type"],
-         selection when selection in ["all_existing", "not_requested", "failed"] <-
+         step_type when is_binary(step_type) <- batch.related["step_type"],
+         selection
+         when selection in ["all_existing", "not_requested", "failed", "cancelled", "items"] <-
            Map.get(batch.related, "selection", "all_existing") do
       {:ok, feed_id, step_type, selection}
     else
@@ -1091,6 +1800,8 @@ defmodule Newspaper.Processing do
   defp batch_items(feed, _step_type, "all_existing") do
     Newspaper.Publishing.list_items_for_feed(feed)
   end
+
+  defp batch_items(_feed, _step_type, "items"), do: []
 
   defp batch_items(feed, step_type, selection) do
     GeneratedFeedItem
@@ -1107,16 +1818,27 @@ defmodule Newspaper.Processing do
     |> Repo.all()
   end
 
-  defp batch_request_opts(batch_run_id, "failed") do
+  defp batch_request_opts(batch_run_id, selection) when selection in ["failed", "items"] do
     [
       batch_run_id: batch_run_id,
       request_metadata: %{"retry_origin" => "manual_batch"}
     ]
   end
 
+  defp batch_request_opts(batch_run_id, "cancelled") do
+    [
+      batch_run_id: batch_run_id,
+      revive_downstream: true,
+      request_metadata: %{"retry_origin" => "manual_batch"}
+    ]
+  end
+
   defp batch_request_opts(batch_run_id, _selection), do: [batch_run_id: batch_run_id]
 
-  defp batch_type(step_type, "failed"), do: "retry_failed_#{step_type}"
+  defp batch_type(step_type, selection) when selection in ["failed", "items"],
+    do: "retry_failed_#{step_type}"
+
+  defp batch_type(step_type, "cancelled"), do: "rerun_cancelled_#{step_type}"
   defp batch_type(step_type, _selection), do: "process_existing_#{step_type}"
 
   defp format_batch_error(reason) when is_binary(reason), do: reason
@@ -1362,10 +2084,25 @@ defmodule Newspaper.Processing do
   end
 
   defp update_attempt_item_steps(attempt_id, attrs) do
-    GeneratedFeedItemStep
-    |> where([item_step], item_step.latest_attempt_id == ^attempt_id)
-    |> Repo.all()
-    |> Enum.each(&update_item_step!(&1, attrs))
+    item_steps =
+      GeneratedFeedItemStep
+      |> where([item_step], item_step.latest_attempt_id == ^attempt_id)
+      |> Repo.all()
+
+    Enum.each(item_steps, &update_item_step!(&1, attrs))
+
+    if attrs[:status] in @terminal_item_statuses do
+      item_step_ids = Enum.map(item_steps, & &1.id)
+
+      PipelineBatchMember
+      |> where(
+        [member],
+        member.generated_feed_item_step_id in ^item_step_ids and is_nil(member.outcome)
+      )
+      |> Repo.update_all(set: [outcome: attrs[:status], outcome_at: DateTime.utc_now(:second)])
+    end
+
+    :ok
   end
 
   defp reactivate_skipped_article_steps(article_id, step_type) do
@@ -1580,14 +2317,6 @@ defmodule Newspaper.Processing do
       _ ->
         false
     end)
-  end
-
-  defp next_position(feed_id) do
-    Repo.one(
-      from step in PipelineStep,
-        where: step.generated_feed_id == ^feed_id,
-        select: coalesce(max(step.position), -1)
-    ) + 1
   end
 
   defp config_attrs(attrs, fallback \\ %{}) do

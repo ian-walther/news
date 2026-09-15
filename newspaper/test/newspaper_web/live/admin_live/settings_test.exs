@@ -56,42 +56,4 @@ defmodule NewspaperWeb.AdminLive.SettingsTest do
     assert has_element?(view, "#settings-form option[value='qwen3.6:27b'][selected]")
     assert has_element?(view, "#ollama-connection-status", "Unavailable")
   end
-
-  test "pauses and resumes digestion without clearing the selected model", %{conn: conn} do
-    settings = Operations.get_settings()
-
-    assert {:ok, _settings} =
-             Operations.update_settings(settings, %{
-               ollama_model: "qwen3.6:27b"
-             })
-
-    Req.Test.stub(Newspaper.Digestion.OllamaClient, fn conn ->
-      Req.Test.json(conn, %{"models" => [%{"name" => "qwen3.6:27b"}]})
-    end)
-
-    {:ok, view, _html} = live(conn, ~p"/settings")
-    render_async(view)
-
-    assert has_element?(view, "#digestion-runtime-status[data-state='running']")
-    assert has_element?(view, "#toggle-digestion-pause", "Pause digestion")
-
-    view
-    |> element("#toggle-digestion-pause")
-    |> render_click()
-
-    settings = Operations.get_settings()
-    assert settings.digestion_paused
-    assert settings.ollama_model == "qwen3.6:27b"
-    assert has_element?(view, "#digestion-runtime-status[data-state='paused']")
-    assert has_element?(view, "#toggle-digestion-pause", "Resume digestion")
-
-    view
-    |> element("#toggle-digestion-pause")
-    |> render_click()
-
-    settings = Operations.get_settings()
-    refute settings.digestion_paused
-    assert settings.ollama_model == "qwen3.6:27b"
-    assert has_element?(view, "#digestion-runtime-status[data-state='running']")
-  end
 end

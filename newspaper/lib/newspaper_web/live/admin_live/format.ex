@@ -6,8 +6,8 @@ defmodule NewspaperWeb.AdminLive.Format do
   def run_type_label("fetch_input_feed"), do: "Feed fetch"
   def run_type_label("process_input_feed"), do: "Feed processing"
   def run_type_label("process_intake_group"), do: "Group processing"
-  def run_type_label("backfill_output_feed"), do: "Output backfill"
-  def run_type_label("rerender_output_feed"), do: "Output re-render"
+  def run_type_label("backfill_output_feed"), do: "Add matching articles"
+  def run_type_label("rerender_output_feed"), do: "Refresh RSS output"
   def run_type_label("pipeline_step"), do: "Pipeline attempt"
   def run_type_label(value), do: humanize(value)
 
@@ -20,14 +20,21 @@ defmodule NewspaperWeb.AdminLive.Format do
   def run_summary(%{run: run}), do: run_summary(run)
 
   def run_summary(%{run_type: "pipeline_batch", summary_counts: counts}) do
-    [
-      count_phrase(counts, "succeeded", "succeeded"),
-      count_phrase(counts, "failed", "failed"),
-      count_phrase(counts, "skipped", "skipped")
-    ]
-    |> Enum.reject(&is_nil/1)
-    |> Enum.join(" · ")
-    |> empty_fallback("Waiting to start")
+    if Map.has_key?(counts || %{}, "total") do
+      [
+        count_phrase(counts, "succeeded", "succeeded"),
+        count_phrase(counts, "failed", "failed"),
+        count_phrase(counts, "skipped", "skipped"),
+        count_phrase(counts, "cancelled", "cancelled"),
+        count_phrase(counts, "queued", "queued"),
+        count_phrase(counts, "running", "running")
+      ]
+      |> Enum.reject(&is_nil/1)
+      |> Enum.join(" · ")
+      |> empty_fallback("Nothing to do")
+    else
+      "Waiting to start"
+    end
   end
 
   def run_summary(%{run_type: "fetch_all", summary_counts: counts}) do
@@ -62,6 +69,123 @@ defmodule NewspaperWeb.AdminLive.Format do
     end)
   end
 
+  @doc """
+  One line for a batch: `done of total`, then a rate and rounded estimate
+  when `Processing.batch_progress/2` found one defensible, otherwise the
+  reason there is none.
+  """
+  def progress_summary(%{eta_reason: :not_started}), do: "Waiting to start"
+
+  def progress_summary(%{done: done, total: total} = progress) do
+    [
+      "#{done} of #{total}",
+      progress_detail(progress)
+    ]
+    |> Enum.reject(&is_nil/1)
+    |> Enum.join(" · ")
+  end
+
+  defp progress_detail(%{eta_reason: :complete}), do: nil
+  defp progress_detail(%{eta_reason: :paused}), do: "paused"
+  defp progress_detail(%{eta_reason: :site_backoff}), do: "waiting on site backoff"
+  defp progress_detail(%{eta_reason: :insufficient_samples}), do: "estimating"
+
+  defp progress_detail(%{per_minute: per_minute, eta_seconds: eta_seconds})
+       when is_number(per_minute) and is_integer(eta_seconds) do
+    "#{format_rate(per_minute)}/min · ~#{eta_label(eta_seconds)} left"
+  end
+
+  defp progress_detail(_progress), do: nil
+
+  @doc "Executions completed per minute for a stage, or why there is no rate yet."
+  def throughput_label(%{per_minute: nil, window_minutes: minutes}),
+    do: "No rate yet (fewer than 3 completions in #{minutes} min)"
+
+  def throughput_label(%{per_minute: per_minute, window_minutes: minutes}),
+    do: "#{format_rate(per_minute)}/min over #{minutes} min"
+
+  @doc """
+  A stage's queue line: queued count, rate, and an estimate only when the
+  stage is moving and not paused.
+  """
+  def stage_eta_label(%{queued: 0}), do: nil
+  def stage_eta_label(%{paused: true}), do: "paused"
+  def stage_eta_label(%{per_minute: nil}), do: "estimating"
+
+  def stage_eta_label(%{queued: queued, per_minute: per_minute}),
+    do: "~#{eta_label(round(queued / per_minute * 60))} left"
+
+  def batch_selection_label("failed"), do: "Failed items"
+  def batch_selection_label("items"), do: "Selected items"
+  def batch_selection_label(_selection), do: "Existing items"
+
+  def format_rate(per_minute) when per_minute >= 10, do: Integer.to_string(round(per_minute))
+  def format_rate(per_minute), do: :erlang.float_to_binary(per_minute / 1, decimals: 1)
+
+  defp eta_label(seconds) when seconds < 90, do: "1 min"
+  defp eta_label(seconds) when seconds < 3_600, do: "#{round(seconds / 60)} min"
+
+  defp eta_label(seconds) when seconds < 36_000,
+    do: "#{:erlang.float_to_binary(seconds / 3_600, decimals: 1)} h"
+
+  defp eta_label(seconds), do: "#{round(seconds / 3_600)} h"
+
+  @doc "Coverage for one step of one feed, in output item steps."
+  def coverage_label(counts) do
+    [
+      "#{counts.ready} of #{counts.total} ready",
+      count_phrase(counts, :queued, "queued"),
+      count_phrase(counts, :running, "running"),
+      count_phrase(counts, :blocked, "waiting"),
+      count_phrase(counts, :not_requested, "not requested"),
+      count_phrase(counts, :failed, "failed"),
+      count_phrase(counts, :skipped, "skipped")
+    ]
+    |> Enum.reject(&is_nil/1)
+    |> Enum.join(" · ")
+  end
+
+  @doc "Operator-facing text for a `Newspaper.Processing` error reason."
+  def processing_error_message({:no_enabled_step, step_type}),
+    do: "Enable #{step_type} for this feed first"
+
+  def processing_error_message(:extraction_step_required), do: "Enable article extraction first"
+
+  def processing_error_message({:prerequisite_required, step_type}),
+    do: "Enable #{step_type} first"
+
+  def processing_error_message(:ollama_model_not_configured),
+    do: "Choose an Ollama model in Settings first"
+
+  def processing_error_message(:digest_rendering_requires_digestion),
+    do: "Digest title or summary requires article digestion"
+
+  def processing_error_message(:digestion_requires_extraction),
+    do: "Disable article digestion before disabling extraction"
+
+  def processing_error_message({:dependent_step_enabled, step_type}),
+    do: "Disable #{step_type} first"
+
+  def processing_error_message(:rendering_requires_extraction),
+    do: "Hosted links or extracted bodies require article extraction"
+
+  def processing_error_message({:rendering_depends_on_step, step_type}),
+    do: "This feed's rendering settings depend on #{step_type}"
+
+  def processing_error_message(:step_exists), do: "This feed already has that step"
+
+  def processing_error_message(:step_has_active_work),
+    do: "Wait for queued and running work on this step to finish first"
+
+  def processing_error_message({:unknown_step_type, step_type}),
+    do: "#{step_type} is not a registered step"
+
+  def processing_error_message({:invalid_batch_selection, _selection}),
+    do: "Choose which items the batch should include"
+
+  def processing_error_message(%Ecto.Changeset{}), do: "Processing setting could not be saved"
+  def processing_error_message(reason), do: inspect(reason)
+
   def failure_type_label("pipeline_step_rate_limited"), do: "Rate limited"
   def failure_type_label("fetch_input_feed_failed"), do: "Feed fetch failed"
   def failure_type_label("pipeline_step_timeout"), do: "Extraction timed out"
@@ -70,6 +194,27 @@ defmodule NewspaperWeb.AdminLive.Format do
   def failure_type_label(value), do: humanize(value)
 
   def status_label(value), do: humanize(value)
+
+  @doc """
+  The shared vocabulary for pipeline work (item steps, attempts, article
+  extraction state). Runs keep `status_label/1`.
+  """
+  def work_status_label("not_requested"), do: "Not requested"
+  def work_status_label(status) when status in ["pending", "blocked"], do: "Waiting"
+  def work_status_label("queued"), do: "Queued"
+  def work_status_label("running"), do: "Running"
+  def work_status_label("succeeded"), do: "Ready"
+  def work_status_label("failed"), do: "Failed"
+  def work_status_label("skipped"), do: "Skipped"
+  def work_status_label("cancelled"), do: "Cancelled"
+  def work_status_label(value), do: humanize(value)
+
+  def work_status_badge_class("succeeded"), do: "badge badge-success badge-soft"
+  def work_status_badge_class("failed"), do: "badge badge-error badge-soft"
+  def work_status_badge_class("running"), do: "badge badge-info badge-soft"
+  def work_status_badge_class("queued"), do: "badge badge-warning badge-soft"
+  def work_status_badge_class("cancelled"), do: "badge badge-neutral badge-soft"
+  def work_status_badge_class(_status), do: "badge badge-ghost"
 
   def status_badge_class("succeeded"), do: "badge badge-success badge-soft"
   def status_badge_class("failed"), do: "badge badge-error badge-soft"
@@ -132,7 +277,7 @@ defmodule NewspaperWeb.AdminLive.Format do
   end
 
   defp count_phrase(counts, key, label) do
-    value = count(counts, key)
+    value = if is_atom(key), do: Map.get(counts, key, 0), else: count(counts, key)
     if value > 0, do: "#{value} #{label}"
   end
 

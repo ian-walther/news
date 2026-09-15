@@ -2,7 +2,7 @@ defmodule Newspaper.Processing.GeneratedFeedItemStep do
   use Ecto.Schema
   import Ecto.Changeset
 
-  @statuses ~w(not_requested pending blocked queued running succeeded failed skipped)
+  @statuses ~w(not_requested pending blocked queued running succeeded failed skipped cancelled)
 
   schema "generated_feed_item_steps" do
     field :step_type, :string

@@ -1,10 +1,19 @@
 defmodule NewspaperWeb.AdminLive.Nav do
   use NewspaperWeb, :html
 
+  alias Newspaper.Operations.Attention
+
   attr :current, :string, required: true
 
+  attr :attention_count, :integer,
+    default: nil,
+    doc: "Attention group count for the badge; computed when not supplied"
+
   def nav(assigns) do
-    assigns = assign(assigns, :items, nav_items())
+    assigns =
+      assigns
+      |> assign(:items, nav_items())
+      |> assign_new(:badge_count, fn %{attention_count: count} -> count || Attention.count() end)
 
     ~H"""
     <nav id="app-nav" class="mb-8 border-b border-base-300" aria-label="Primary navigation">
@@ -32,6 +41,14 @@ defmodule NewspaperWeb.AdminLive.Nav do
             ]}
           >
             <.icon name={item.icon} class="size-4" /> {item.label}
+            <span
+              :if={item.key == "processing" && @badge_count > 0}
+              id="nav-attention-badge"
+              class="badge badge-error badge-sm tabular-nums"
+              title={"#{@badge_count} needing attention"}
+            >
+              {@badge_count}
+            </span>
           </.link>
         </div>
       </div>
@@ -41,22 +58,10 @@ defmodule NewspaperWeb.AdminLive.Nav do
 
   defp nav_items do
     [
-      %{key: "activity", label: "Activity", path: ~p"/", icon: "hero-chart-bar"},
-      %{key: "intake", label: "Intake", path: ~p"/intake", icon: "hero-arrow-down-tray"},
-      %{
-        key: "output-feeds",
-        label: "Outputs",
-        path: ~p"/output-feeds",
-        icon: "hero-rss"
-      },
+      %{key: "processing", label: "Processing", path: ~p"/", icon: "hero-queue-list"},
+      %{key: "intake", label: "Sources", path: ~p"/intake", icon: "hero-arrow-down-tray"},
+      %{key: "output-feeds", label: "Outputs", path: ~p"/output-feeds", icon: "hero-rss"},
       %{key: "articles", label: "Articles", path: ~p"/articles", icon: "hero-newspaper"},
-      %{key: "sites", label: "Sites", path: ~p"/sites", icon: "hero-globe-alt"},
-      %{
-        key: "processing",
-        label: "Processing",
-        path: ~p"/processing",
-        icon: "hero-queue-list"
-      },
       %{key: "settings", label: "Settings", path: ~p"/settings", icon: "hero-cog-6-tooth"}
     ]
   end

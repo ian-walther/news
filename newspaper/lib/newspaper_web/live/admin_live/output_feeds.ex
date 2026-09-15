@@ -286,28 +286,27 @@ defmodule NewspaperWeb.AdminLive.OutputFeeds do
   end
 
   defp pipeline_label(feed) do
-    enabled_types =
+    verbs =
       feed.pipeline_steps
       |> Enum.filter(& &1.enabled)
-      |> Enum.map(& &1.step_type)
+      |> Newspaper.Processing.Registry.sort_steps()
+      |> Enum.map(&step_verb(&1.step_type))
 
-    cond do
-      enabled_types == [] ->
-        "No active processing"
-
-      enabled_types == ["extraction"] ->
-        "Extracts future articles"
-
-      enabled_types == ["digestion"] ->
-        "Digests future articles"
-
-      "extraction" in enabled_types and "digestion" in enabled_types ->
-        "Extracts + digests future articles"
-
-      true ->
-        "#{length(enabled_types)} active steps"
+    if verbs == [] do
+      "No active processing"
+    else
+      "#{Enum.join(verbs, " + ")} future articles"
     end
   end
+
+  defp step_verb("extraction"), do: "Extracts"
+  defp step_verb("digestion"), do: "Digests"
+
+  defp step_verb(step_type),
+    do:
+      step_type
+      |> Newspaper.Processing.Registry.step_label()
+      |> String.replace_prefix("Article ", "")
 
   defp body_label(feed) do
     title = if feed.title_source == "digest", do: "digest title", else: "original title"

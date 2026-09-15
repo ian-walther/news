@@ -12,6 +12,11 @@ defmodule Newspaper.Digestion.Dispatcher do
     GenServer.cast(__MODULE__, {:enqueue, attempt_id, priority})
   end
 
+  @doc "Drops queued attempts from the queue (cancellation). Best effort."
+  def remove(attempt_ids) when is_list(attempt_ids) do
+    GenServer.cast(__MODULE__, {:remove, attempt_ids})
+  end
+
   @impl true
   def init(_state) do
     if Application.get_env(:newspaper, :processing_dispatcher_enabled, true) do
@@ -64,6 +69,11 @@ defmodule Newspaper.Digestion.Dispatcher do
   def handle_cast({:enqueue, attempt_id, priority}, state) do
     state = state |> enqueue_attempt(attempt_id, priority) |> start_next()
     {:noreply, state}
+  end
+
+  def handle_cast({:remove, attempt_ids}, state) do
+    queue = Enum.reduce(attempt_ids, state.queue, &PriorityQueue.remove(&2, &1))
+    {:noreply, %{state | queue: queue}}
   end
 
   def handle_cast({:finished, task_pid, _result}, %{task_pid: task_pid} = state) do

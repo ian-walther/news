@@ -317,6 +317,19 @@ defmodule Newspaper.DigestionPipelineTest do
 
     item_step_id = digestion_step.id
     pipeline_step = Processing.get_step!(digestion_step.pipeline_step_id)
+
+    assert {:error, :digest_rendering_requires_digestion} =
+             Processing.delete_step(pipeline_step)
+
+    assert {:ok, _feed} =
+             Newspaper.Publishing.update_generated_feed(
+               Newspaper.Publishing.get_generated_feed!(feed.id),
+               %{
+                 "title_source" => "original",
+                 "body_source" => "original_feed"
+               }
+             )
+
     assert {:ok, _deleted_step} = Processing.delete_step(pipeline_step)
 
     assert Repo.get!(PipelineStepAttempt, attempt.id).pipeline_step_id == nil

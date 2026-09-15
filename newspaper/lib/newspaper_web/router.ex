@@ -17,15 +17,13 @@ defmodule NewspaperWeb.Router do
   scope "/", NewspaperWeb do
     pipe_through :browser
 
-    live "/", AdminLive.Dashboard, :index
+    live "/", AdminLive.Processing, :index
     live "/intake", AdminLive.Intake, :index
     live "/output-feeds", AdminLive.OutputFeeds, :index
     live "/output-feeds/:id", AdminLive.OutputFeed, :show
     live "/articles", AdminLive.Articles, :index
     live "/articles/:guid", ArticleLive.Show, :show
-    live "/sites", AdminLive.SiteExtractionPolicies, :index
     live "/processing", AdminLive.Processing, :index
-    live "/runs", AdminLive.Processing, :legacy
     live "/settings", AdminLive.Settings, :index
 
     get "/feeds/*path", FeedController, :show
