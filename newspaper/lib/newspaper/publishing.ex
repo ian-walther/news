@@ -438,6 +438,19 @@ defmodule Newspaper.Publishing do
 
   defp preload_feed(feed), do: Repo.preload(feed, [:intake_groups, :input_feeds, :pipeline_steps])
 
+  @doc """
+  The step types this feed's rendering settings depend on: a step in this
+  list cannot be disabled or removed without first changing the settings.
+  """
+  def rendering_step_dependencies(%GeneratedFeed{} = feed) do
+    digest? = feed.title_source == "digest" or feed.body_source == "digest_summary"
+
+    extraction? =
+      digest? or feed.link_to_hosted_article or feed.body_source == "extracted_content"
+
+    Enum.reject([extraction? && "extraction", digest? && "digestion"], &(&1 == false))
+  end
+
   defp validate_rendering_dependencies(changeset, steps) do
     title_source = Changeset.get_field(changeset, :title_source)
     body_source = Changeset.get_field(changeset, :body_source)

@@ -101,6 +101,9 @@ defmodule Newspaper.Digestion do
              {:ok, run} <- start_run(attempt, extraction) do
           execute_generation(attempt, extraction, run)
         else
+          {:error, :not_queued} ->
+            {:ok, attempt}
+
           {:error, reason} ->
             fail_execution(attempt, format_reason(reason), "digestion_failed")
         end

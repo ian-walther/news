@@ -28,10 +28,12 @@ defmodule NewspaperWeb.AdminLive.ProcessingTest do
         summary_counts: %{"total" => 4, "succeeded" => 4}
       })
 
-    {:ok, view, _html} = live(conn, ~p"/processing")
+    {:ok, view, _html} = live(conn, ~p"/")
 
-    assert has_element?(view, "#processing-stage-extraction")
-    assert has_element?(view, "#processing-stage-digestion")
+    assert has_element?(view, "#processing-tab-queue[aria-current='page']")
+    assert has_element?(view, "#stage-card-extraction", "Counts executions")
+    assert has_element?(view, "#stage-card-digestion")
+    assert has_element?(view, "#article-health", "3 articles")
     assert has_element?(view, "#running-attempt-#{running.id}", "Extraction")
     assert has_element?(view, "#queued-extraction-extraction-#{queued.id}")
     assert has_element?(view, "#queued-digestion-digestion-#{digestion.id}")
@@ -42,7 +44,7 @@ defmodule NewspaperWeb.AdminLive.ProcessingTest do
              "Waiting for article extraction"
            )
 
-    assert has_element?(view, "#recent-run-#{batch.id}", "Digestion batch")
+    refute has_element?(view, "#recent-run-#{batch.id}")
 
     assert {:ok, digestion} = Processing.mark_attempt_running(digestion)
     refresh_processing(view)
@@ -54,38 +56,81 @@ defmodule NewspaperWeb.AdminLive.ProcessingTest do
     refresh_processing(view)
 
     refute has_element?(view, "#running-attempt-#{digestion.id}")
+
+    assert has_element?(
+             view,
+             "#completed-attempt-#{digestion.id}",
+             "The article ready for digestion"
+           )
+
+    assert has_element?(view, "#recently-processed-link[href='/articles?sort=recent']")
+
+    {:ok, view, _html} = live(conn, ~p"/processing?tab=history")
+    assert has_element?(view, "#recent-run-#{batch.id}", "Digestion batch")
     assert has_element?(view, "#recent-attempt-#{digestion.id}", "Digestion")
   end
 
-  test "filters the complete processing view by output and stage", %{conn: conn} do
+  test "history filters every status by output and stage and honours legacy context links", %{
+    conn: conn
+  } do
     %{feed: feed, running: running, digestion: digestion} = processing_fixture!()
 
     {:ok, view, _html} =
       live(conn, ~p"/processing?stage=digestion&generated_feed_id=#{feed.id}")
 
+    assert has_element?(view, "#processing-tab-history[aria-current='page']")
     assert has_element?(view, "#processing-stage-digestion.btn-active")
     assert has_element?(view, "#processing-filter option[selected]", feed.title)
-    refute has_element?(view, "#running-attempt-#{running.id}")
-    assert has_element?(view, "#queued-digestion-digestion-#{digestion.id}")
-    assert has_element?(view, "#processing-summary", "Queued next")
+    refute has_element?(view, "#recent-attempt-#{running.id}")
+    assert has_element?(view, "#recent-attempt-#{digestion.id}", "Queued")
+
+    {:ok, view, _html} = live(conn, ~p"/processing?article_id=#{running.article_id}")
+    assert has_element?(view, "#processing-context", "Article ##{running.article_id}")
+    assert has_element?(view, "#recent-attempt-#{running.id}", "Running")
+    refute has_element?(view, "#recent-attempt-#{digestion.id}")
   end
 
-  test "shows the global digestion pause and updates when it resumes", %{conn: conn} do
+  test "pauses and resumes digestion from the queue and reflects changes made elsewhere", %{
+    conn: conn
+  } do
     processing_fixture!()
+    {:ok, view, _html} = live(conn, ~p"/")
+
+    assert has_element?(view, "#digestion-runtime-status[data-state='running']")
+    view |> element("#toggle-digestion-pause") |> render_click()
+
     settings = Operations.get_settings()
-    assert {:ok, _settings} = Operations.update_settings(settings, %{digestion_paused: true})
-
-    {:ok, view, _html} = live(conn, ~p"/processing?stage=digestion")
-
-    assert has_element?(view, "#digestion-paused-notice")
+    assert settings.digestion_paused
+    assert settings.ollama_model == "qwen3.6:27b"
+    assert has_element?(view, "#digestion-runtime-status[data-state='paused']")
     assert has_element?(view, "#digestion-queue-state", "Paused")
+    assert has_element?(view, "#stage-eta-digestion", "paused")
 
-    settings = Operations.get_settings()
     assert {:ok, _settings} = Operations.update_settings(settings, %{digestion_paused: false})
-    _ = :sys.get_state(view.pid)
+    refresh_processing(view)
 
-    refute has_element?(view, "#digestion-paused-notice")
-    refute has_element?(view, "#digestion-queue-state", "Paused")
+    assert has_element?(view, "#digestion-runtime-status[data-state='running']")
+    refute has_element?(view, "#digestion-queue-state")
+  end
+
+  test "shows website pacing state with a single Try now", %{conn: conn} do
+    processing_fixture!()
+
+    {:ok, policy} =
+      Newspaper.Content.create_site_extraction_policy(%{
+        site_host: "racer.com",
+        consecutive_rate_limits: 3,
+        backoff_until: DateTime.add(DateTime.utc_now(:second), 15 * 60, :second)
+      })
+
+    {:ok, view, _html} = live(conn, ~p"/")
+
+    assert has_element?(view, "#host-racer-com[data-state='backoff']", "0 queued")
+    assert has_element?(view, "#host-theautopian-com[data-state='running']", "1 queued")
+    assert has_element?(view, "#retry-site-now-#{policy.id}", "Try now")
+
+    view |> element("#retry-site-now-#{policy.id}") |> render_click()
+    assert has_element?(view, "#flash-info", "No queued articles for racer.com")
   end
 
   test "renders completed recovered attempts without a start timestamp", %{conn: conn} do
@@ -100,7 +145,7 @@ defmodule NewspaperWeb.AdminLive.ProcessingTest do
     })
     |> Repo.update!()
 
-    {:ok, view, _html} = live(conn, ~p"/processing")
+    {:ok, view, _html} = live(conn, ~p"/processing?tab=history")
 
     assert has_element?(view, "#recent-attempt-#{digestion.id}", "Duration unavailable")
   end
@@ -109,6 +154,7 @@ defmodule NewspaperWeb.AdminLive.ProcessingTest do
     %{digestion: digestion} = processing_fixture!()
     {:ok, view, _html} = live(conn, ~p"/processing")
 
+    assert has_element?(view, "#processing-tab-queue[aria-current='page']")
     assert has_element?(view, "#queued-digestion-digestion-#{digestion.id}")
     assert {:ok, digestion} = Processing.mark_attempt_running(digestion)
 

@@ -8,23 +8,42 @@ defmodule NewspaperWeb.AdminLive.Articles do
   @stages ~w(extraction digestion)
   @extraction_statuses ~w(all succeeded not_requested processing failed skipped)
   @digestion_statuses ~w(all succeeded waiting not_requested processing failed skipped not_enabled)
+  @sorts ~w(published recent)
 
   def mount(_params, _session, socket) do
     if connected?(socket), do: Newspaper.Events.subscribe()
 
-    {:ok, stream_configure(socket, :articles, dom_id: &"article-#{&1.id}")}
+    {:ok,
+     socket
+     |> assign(:expanded_history, MapSet.new())
+     |> assign(:refresh_queued, false)
+     |> stream_configure(:articles, dom_id: &"article-#{&1.id}")}
   end
 
   def handle_params(params, _uri, socket) do
     {:noreply, assign_data(socket, filters_from_params(params))}
   end
 
+  # Bursts of processing events are coalesced into one refresh; expanded
+  # history rows survive it (audit IMP-12).
   def handle_info({:newspaper_data_changed, event}, socket)
       when event in [:processing_changed, :publishing_changed, :intake_changed] do
-    {:noreply, assign_data(socket, socket.assigns.filters)}
+    if socket.assigns.refresh_queued do
+      {:noreply, socket}
+    else
+      Process.send_after(self(), :refresh_articles, 300)
+      {:noreply, assign(socket, :refresh_queued, true)}
+    end
   end
 
   def handle_info({:newspaper_data_changed, _event}, socket), do: {:noreply, socket}
+
+  def handle_info(:refresh_articles, socket) do
+    {:noreply,
+     socket
+     |> assign(:refresh_queued, false)
+     |> assign_data(socket.assigns.filters)}
+  end
 
   def handle_event("filter", %{"filters" => params}, socket) do
     filters = %{
@@ -36,6 +55,45 @@ defmodule NewspaperWeb.AdminLive.Articles do
     }
 
     {:noreply, push_patch(socket, to: ~p"/articles?#{filter_query(filters)}")}
+  end
+
+  def handle_event("load_history", %{"id" => article_id}, socket) do
+    article_id = String.to_integer(article_id)
+
+    case Map.fetch(socket.assigns.entries_by_id, article_id) do
+      {:ok, entry} ->
+        entry = with_history(entry)
+
+        {:noreply,
+         socket
+         |> assign(:expanded_history, MapSet.put(socket.assigns.expanded_history, article_id))
+         |> assign(:entries_by_id, Map.put(socket.assigns.entries_by_id, article_id, entry))
+         |> stream_insert(:articles, entry)}
+
+      :error ->
+        {:noreply, socket}
+    end
+  end
+
+  # Collapse updates the streamed row too, so the summary's next click is a
+  # load again and no later refresh can drop a reopened history (audit IMP-12).
+  def handle_event("collapse_history", %{"id" => article_id}, socket) do
+    article_id = String.to_integer(article_id)
+    expanded = MapSet.delete(socket.assigns.expanded_history, article_id)
+
+    case Map.fetch(socket.assigns.entries_by_id, article_id) do
+      {:ok, entry} ->
+        entry = %{entry | history: [], history_loaded?: false}
+
+        {:noreply,
+         socket
+         |> assign(:expanded_history, expanded)
+         |> assign(:entries_by_id, Map.put(socket.assigns.entries_by_id, article_id, entry))
+         |> stream_insert(:articles, entry)}
+
+      :error ->
+        {:noreply, assign(socket, :expanded_history, expanded)}
+    end
   end
 
   def handle_event("extract", %{"id" => article_id}, socket) do
@@ -82,10 +140,22 @@ defmodule NewspaperWeb.AdminLive.Articles do
     end
   end
 
+  defp with_history(entry) do
+    history =
+      Processing.list_processing_attempts(
+        ["running", "queued", "succeeded", "failed", "skipped"],
+        article_id: entry.id,
+        limit: 25,
+        order: :desc
+      )
+
+    %{entry | history: history, history_loaded?: true}
+  end
+
   def render(assigns) do
     ~H"""
     <Layouts.app flash={@flash}>
-      <.nav current="articles" />
+      <.nav current="articles" attention_count={@attention_count} />
 
       <header class="mb-8">
         <p class="mb-1 text-xs font-semibold uppercase tracking-wider text-base-content/50">
@@ -169,8 +239,36 @@ defmodule NewspaperWeb.AdminLive.Articles do
       <div class="mb-3 flex items-baseline justify-between gap-4">
         <p class="text-sm text-base-content/60">
           {@page.total_count} {if @page.total_count == 1, do: "article", else: "articles"}
+          <span
+            :if={@filters.held}
+            id="articles-held-filter"
+            class="badge badge-warning badge-soft badge-sm ml-1"
+          >
+            Held from publication
+            <.link
+              patch={~p"/articles?#{filter_query(@filters, %{held: false, page: 1})}"}
+              class="ml-1"
+              aria-label="Clear held filter"
+            >
+              ×
+            </.link>
+          </span>
         </p>
-        <p class="text-xs text-base-content/50">Newest first</p>
+        <nav class="flex gap-1" aria-label="Sort">
+          <.link
+            :for={{value, label} <- sort_options()}
+            id={"article-sort-#{value}"}
+            patch={~p"/articles?#{filter_query(@filters, %{sort: value, page: 1})}"}
+            data-active={to_string(@filters.sort == value)}
+            class={[
+              "btn btn-xs",
+              @filters.sort == value && "btn-active",
+              @filters.sort != value && "btn-ghost"
+            ]}
+          >
+            {label}
+          </.link>
+        </nav>
       </div>
 
       <section
@@ -234,7 +332,7 @@ defmodule NewspaperWeb.AdminLive.Articles do
                   :for={step <- row.steps}
                   id={"article-processing-#{entry.article.id}-#{row.feed_id}-#{step.step_type}"}
                   navigate={
-                    ~p"/processing?#{%{article_id: entry.article.id, generated_feed_id: row.feed_id, stage: step.step_type}}"
+                    ~p"/processing?#{%{tab: "history", article_id: entry.article.id, generated_feed_id: row.feed_id, stage: step.step_type}}"
                   }
                   class={pipeline_badge_class(step.status)}
                 >
@@ -242,6 +340,48 @@ defmodule NewspaperWeb.AdminLive.Articles do
                 </.link>
               </div>
             </div>
+            <details
+              id={"article-history-#{entry.article.id}"}
+              class="mt-2 text-xs"
+              open={entry.history_loaded?}
+            >
+              <summary
+                class="cursor-pointer text-base-content/55 hover:text-base-content"
+                phx-click={if(entry.history_loaded?, do: "collapse_history", else: "load_history")}
+                phx-value-id={entry.article.id}
+              >
+                History
+              </summary>
+              <div
+                :if={entry.history_loaded?}
+                id={"article-history-list-#{entry.article.id}"}
+                class="mt-2 divide-y divide-base-300 border-y border-base-300"
+              >
+                <p :if={entry.history == []} class="py-2 text-base-content/50">
+                  No executions yet.
+                </p>
+                <div
+                  :for={attempt <- entry.history}
+                  id={"article-history-#{entry.article.id}-#{attempt.id}"}
+                  class="flex flex-wrap items-center gap-2 py-2"
+                >
+                  <span class={Format.work_status_badge_class(attempt.status)}>
+                    {Format.work_status_label(attempt.status)}
+                  </span>
+                  <span class="font-medium">{pipeline_type_label(attempt.step_type)}</span>
+                  <span class="text-base-content/50">{Format.duration(attempt)}</span>
+                  <.local_time
+                    id={"article-history-time-#{attempt.id}"}
+                    value={attempt.finished_at || attempt.started_at || attempt.inserted_at}
+                    class="text-base-content/50"
+                  />
+                  <span :if={attempt.error_message} class="basis-full text-error">
+                    {attempt.error_message}
+                  </span>
+                </div>
+              </div>
+              <p :if={!entry.history_loaded?} class="mt-2 text-base-content/50">Loading…</p>
+            </details>
           </div>
 
           <div class="flex flex-wrap items-center gap-2 lg:justify-end">
@@ -343,20 +483,29 @@ defmodule NewspaperWeb.AdminLive.Articles do
     extraction_eligible_ids = Processing.step_eligible_article_ids(article_ids, "extraction")
     digestion_eligible_ids = Processing.step_eligible_article_ids(article_ids, "digestion")
 
+    page_ids = MapSet.new(article_ids)
+    expanded = socket.assigns.expanded_history |> MapSet.intersection(page_ids)
+
     entries =
       Enum.map(page.articles, fn article ->
         pipeline_rows = pipeline_rows(article, filters.generated_feed_id)
 
-        %{
+        entry = %{
           id: article.id,
           article: article,
           extraction_eligible?: MapSet.member?(extraction_eligible_ids, article.id),
           digestion_eligible?: MapSet.member?(digestion_eligible_ids, article.id),
-          pipeline_rows: pipeline_rows
+          pipeline_rows: pipeline_rows,
+          history: [],
+          history_loaded?: false
         }
+
+        if MapSet.member?(expanded, article.id), do: with_history(entry), else: entry
       end)
 
     socket
+    |> assign(:expanded_history, expanded)
+    |> assign(:entries_by_id, Map.new(entries, &{&1.id, &1}))
     |> assign(:filters, Map.put(filters, :page, page.page))
     |> assign(:page, page)
     |> assign(:article_stats, Content.article_filter_counts(filters))
@@ -388,17 +537,33 @@ defmodule NewspaperWeb.AdminLive.Articles do
       search: String.trim(params["search"] || ""),
       input_feed_id: Format.parse_id(params["input_feed_id"]),
       generated_feed_id: Format.parse_id(params["generated_feed_id"]),
+      sort: allowed_sort(params["sort"]),
+      held: params["held"] in ["true", "1"],
       page: parse_page(params["page"])
     }
   end
 
+  defp allowed_sort(sort) when sort in @sorts, do: sort
+  defp allowed_sort(_sort), do: "published"
+
   defp filter_query(filters, overrides \\ %{}) do
     filters
     |> Map.merge(overrides)
-    |> Map.take([:stage, :status, :search, :input_feed_id, :generated_feed_id, :page])
+    |> Map.take([
+      :stage,
+      :status,
+      :search,
+      :input_feed_id,
+      :generated_feed_id,
+      :sort,
+      :held,
+      :page
+    ])
     |> Enum.reject(fn
       {:stage, "extraction"} -> true
       {:status, "all"} -> true
+      {:sort, "published"} -> true
+      {:held, false} -> true
       {:search, ""} -> true
       {_key, nil} -> true
       {:page, 1} -> true
@@ -420,6 +585,7 @@ defmodule NewspaperWeb.AdminLive.Articles do
   defp parse_page(value), do: Format.parse_id(value) || 1
 
   defp stage_options, do: [{"extraction", "Extraction"}, {"digestion", "Digestion"}]
+  defp sort_options, do: [{"published", "Newest first"}, {"recent", "Recently processed"}]
 
   defp status_options(stats, "digestion") do
     [
@@ -445,9 +611,7 @@ defmodule NewspaperWeb.AdminLive.Articles do
     ]
   end
 
-  defp status_label("succeeded"), do: "Ready"
-  defp status_label("not_requested"), do: "Not requested"
-  defp status_label(value), do: Format.status_label(value)
+  defp status_label(value), do: Format.work_status_label(value)
 
   defp extract_action?(entry) do
     entry.extraction_eligible? && not processing?(entry.article)
@@ -467,17 +631,18 @@ defmodule NewspaperWeb.AdminLive.Articles do
   defp processing?(article), do: article.extraction_status in ["queued", "running"]
 
   defp extract_action_label(%{extraction: extraction}) when not is_nil(extraction),
-    do: "Re-extract"
+    do: "Re-run extraction"
 
-  defp extract_action_label(%{extraction_status: "failed"}), do: "Retry extraction"
-  defp extract_action_label(%{extraction_status: "skipped"}), do: "Try extraction again"
-  defp extract_action_label(_article), do: "Extract"
+  defp extract_action_label(%{extraction_status: status}) when status in ["failed", "skipped"],
+    do: "Re-run extraction"
+
+  defp extract_action_label(_article), do: "Run extraction"
 
   defp no_content_reason("boilerplate_only"), do: "No article content"
   defp no_content_reason(reason), do: Format.status_label(reason)
 
-  defp digest_action_label(%{digests: [_digest | _rest]}), do: "Regenerate digest"
-  defp digest_action_label(_article), do: "Digest"
+  defp digest_action_label(%{digests: [_digest | _rest]}), do: "Re-run digestion"
+  defp digest_action_label(_article), do: "Run digestion"
 
   defp pipeline_rows(article, selected_feed_id) do
     article.generated_feed_items
@@ -514,25 +679,18 @@ defmodule NewspaperWeb.AdminLive.Articles do
     |> Enum.reject(&(&1.steps == []))
   end
 
+  defp pipeline_type_label(step_type), do: Newspaper.Processing.Registry.step_label(step_type)
+
   defp pipeline_step_label(step) do
     label = if step.step_type == "extraction", do: "Extract", else: "Digest"
     suffix = if step.current?, do: pipeline_status_label(step.status), else: "historical"
     "#{label}: #{suffix}"
   end
 
-  defp pipeline_status_label("succeeded"), do: "ready"
-  defp pipeline_status_label("not_requested"), do: "not requested"
-  defp pipeline_status_label("blocked"), do: "waiting"
-  defp pipeline_status_label("pending"), do: "waiting"
-  defp pipeline_status_label(status), do: status
+  defp pipeline_status_label(status),
+    do: status |> Format.work_status_label() |> String.downcase()
 
-  defp pipeline_badge_class("succeeded"), do: "badge badge-success badge-soft ml-1"
-  defp pipeline_badge_class("failed"), do: "badge badge-error badge-soft ml-1"
-
-  defp pipeline_badge_class(status) when status in ["queued", "running"],
-    do: "badge badge-info badge-soft ml-1"
-
-  defp pipeline_badge_class(_status), do: "badge badge-ghost ml-1"
+  defp pipeline_badge_class(status), do: Format.work_status_badge_class(status) <> " ml-1"
 
   defp article_sources(article) do
     article.article_sources

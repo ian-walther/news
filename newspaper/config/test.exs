@@ -27,6 +27,7 @@ config :newspaper, :processing_dispatcher_enabled, false
 config :newspaper, :pipeline_scheduler_enabled, false
 config :newspaper, :pipeline_batch_recovery_enabled, false
 config :newspaper, :operations_recovery_enabled, false
+config :newspaper, :attention_counter_background, false
 
 config :newspaper, :ollama_req_options, plug: {Req.Test, Newspaper.Digestion.OllamaClient}
 config :newspaper, :feed_req_options, plug: {Req.Test, Newspaper.Pipeline.FeedClient}

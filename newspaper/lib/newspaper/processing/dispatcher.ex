@@ -28,6 +28,11 @@ defmodule Newspaper.Processing.Dispatcher do
 
   def enqueue(_attempt_id, _site_host, _priority), do: :ok
 
+  @doc "Drops queued attempts from every host queue (cancellation). Best effort."
+  def remove(attempt_ids) when is_list(attempt_ids) do
+    GenServer.cast(__MODULE__, {:remove, attempt_ids})
+  end
+
   def retry_now(site_host) when is_binary(site_host) do
     site_host =
       site_host
@@ -138,6 +143,16 @@ defmodule Newspaper.Processing.Dispatcher do
   @impl true
   def handle_cast({:enqueue, attempt_id, site_host, priority}, state) do
     {:noreply, enqueue_attempt(state, attempt_id, site_host, priority)}
+  end
+
+  def handle_cast({:remove, attempt_ids}, state) do
+    hosts =
+      Map.new(state.hosts, fn {site_host, host_state} ->
+        queue = Enum.reduce(attempt_ids, host_state.queue, &PriorityQueue.remove(&2, &1))
+        {site_host, %{host_state | queue: queue}}
+      end)
+
+    {:noreply, %{state | hosts: hosts}}
   end
 
   def handle_cast({:finished, site_host, task_pid, result}, state) do

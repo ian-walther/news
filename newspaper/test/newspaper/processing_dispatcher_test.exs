@@ -88,4 +88,34 @@ defmodule Newspaper.ProcessingDispatcherTest do
 
     {Repo.one!(GeneratedFeedItem), Repo.one!(PipelineStepAttempt)}
   end
+
+  test "removed attempts leave the host queue so a later retry-now finds nothing" do
+    queue = PriorityQueue.new() |> PriorityQueue.put(4242, :bulk)
+
+    state = %{
+      hosts: %{
+        "theautopian.com" => %{
+          queue: queue,
+          running?: false,
+          timer: nil,
+          timer_token: nil,
+          task_pid: nil,
+          task_ref: nil,
+          attempt_id: nil
+        }
+      }
+    }
+
+    assert {:noreply, state} =
+             Newspaper.Processing.Dispatcher.handle_cast({:remove, [4242]}, state)
+
+    assert PriorityQueue.empty?(state.hosts["theautopian.com"].queue)
+
+    assert {:reply, :empty, _state} =
+             Newspaper.Processing.Dispatcher.handle_call(
+               {:retry_now, "theautopian.com"},
+               self(),
+               state
+             )
+  end
 end

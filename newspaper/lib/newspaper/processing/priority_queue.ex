@@ -35,6 +35,19 @@ defmodule Newspaper.Processing.PriorityQueue do
     end
   end
 
+  def remove(queue, value) do
+    if MapSet.member?(queue.members, value) do
+      %{
+        queue
+        | foreground: :queue.filter(&(&1 != value), queue.foreground),
+          bulk: :queue.filter(&(&1 != value), queue.bulk),
+          members: MapSet.delete(queue.members, value)
+      }
+    else
+      queue
+    end
+  end
+
   def empty?(queue), do: MapSet.size(queue.members) == 0
 
   def to_list(queue), do: :queue.to_list(queue.foreground) ++ :queue.to_list(queue.bulk)

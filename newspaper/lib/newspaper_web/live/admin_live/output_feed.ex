@@ -3,9 +3,7 @@ defmodule NewspaperWeb.AdminLive.OutputFeed do
 
   import NewspaperWeb.AdminLive.Nav
 
-  alias Ecto.Changeset
   alias Newspaper.{Intake, Pipeline, Processing, Publishing}
-  alias Newspaper.Processing.PipelineStep
   alias NewspaperWeb.AdminLive.Format
 
   @refresh_delay_ms 300
@@ -61,55 +59,6 @@ defmodule NewspaperWeb.AdminLive.OutputFeed do
       end
     else
       {:noreply, assign_form_error(socket, changeset, params)}
-    end
-  end
-
-  def handle_event("toggle_processing", %{"step-type" => step_type}, socket)
-      when step_type in ["extraction", "digestion"] do
-    state = processing_state(socket.assigns, step_type)
-    enabled = not state.enabled
-
-    with :ok <- validate_processing_toggle(socket.assigns, step_type, enabled),
-         {:ok, _step} <-
-           persist_processing_toggle(socket.assigns.feed, state.step, step_type, enabled) do
-      {:noreply,
-       socket
-       |> put_flash(:info, processing_toggle_message(step_type, enabled))
-       |> assign_processing()}
-    else
-      {:error, reason} ->
-        {:noreply, put_flash(socket, :error, error_message(reason))}
-    end
-  end
-
-  def handle_event("process_existing", %{"step-type" => step_type}, socket) do
-    case Processing.start_feed_batch(socket.assigns.feed.id, "manual", step_type) do
-      {:ok, _batch} ->
-        {:noreply,
-         socket
-         |> put_flash(
-           :info,
-           "#{step_label(step_type)} batch started"
-         )
-         |> assign_processing()}
-
-      {:error, reason} ->
-        {:noreply, put_flash(socket, :error, error_message(reason))}
-    end
-  end
-
-  def handle_event("retry_failed", %{"step-type" => "digestion"}, socket) do
-    case Processing.start_feed_batch(socket.assigns.feed.id, "manual", "digestion",
-           selection: :failed
-         ) do
-      {:ok, _batch} ->
-        {:noreply,
-         socket
-         |> put_flash(:info, "Failed digestion retry batch started")
-         |> assign_processing()}
-
-      {:error, reason} ->
-        {:noreply, put_flash(socket, :error, error_message(reason))}
     end
   end
 
@@ -200,7 +149,7 @@ defmodule NewspaperWeb.AdminLive.OutputFeed do
   def render(assigns) do
     ~H"""
     <Layouts.app flash={@flash}>
-      <.nav current="output-feeds" />
+      <.nav current="output-feeds" attention_count={@attention_count} />
 
       <header class="mb-7 flex flex-col gap-4 border-b border-base-300 pb-6 lg:flex-row lg:items-end lg:justify-between">
         <div class="min-w-0">
@@ -229,16 +178,22 @@ defmodule NewspaperWeb.AdminLive.OutputFeed do
           </a>
         </div>
         <div class="flex flex-wrap gap-2">
-          <button id="backfill-output-feed" class="btn btn-sm" phx-click="backfill_feed">
-            <.icon name="hero-plus-circle" class="size-4" /> Backfill
+          <button
+            id="backfill-output-feed"
+            class="btn btn-sm"
+            phx-click="backfill_feed"
+            title="Create feed items for already-ingested articles that match this feed's sources"
+          >
+            <.icon name="hero-plus-circle" class="size-4" /> Add matching articles
           </button>
           <button
             id="rerender-output-feed"
             class="btn btn-sm"
             phx-click="rerender_feed"
             disabled={@rerendering}
+            title="Regenerate stored RSS snapshots from stored artifacts; fetches and processes nothing"
           >
-            <.icon name="hero-arrow-path-rounded-square" class="size-4" /> Re-render
+            <.icon name="hero-arrow-path-rounded-square" class="size-4" /> Refresh RSS output
           </button>
           <button
             id="delete-output-feed"
@@ -273,26 +228,34 @@ defmodule NewspaperWeb.AdminLive.OutputFeed do
 
       <div class="grid gap-10 xl:grid-cols-[minmax(0,1.35fr)_minmax(22rem,0.8fr)] xl:items-start">
         <main id="processing-workspace" class="min-w-0">
-          <div class="mb-3">
-            <h2 class="text-lg font-semibold">Processing</h2>
+          <div class="mb-3 flex items-baseline justify-between gap-3">
+            <h2 class="text-lg font-semibold">Processing coverage</h2>
+            <.link
+              id="manage-pipeline"
+              navigate={~p"/processing?#{%{tab: "pipeline", generated_feed_id: @feed.id}}"}
+              class="link text-sm"
+            >
+              Manage steps in Pipeline
+            </.link>
           </div>
 
-          <div class="divide-y divide-base-300 border-y border-base-300">
-            <.processing_step
-              feed_id={@feed.id}
-              state={@extraction_state}
-              active_batch={@active_batches["extraction"]}
-              toggle_disabled={false}
-            />
-            <.processing_step
-              feed_id={@feed.id}
-              state={@digestion_state}
-              active_batch={@active_batches["digestion"]}
-              toggle_disabled={digestion_toggle_disabled?(assigns)}
-              toggle_title={digestion_toggle_title(assigns)}
-              model={@settings.ollama_model}
-              globally_paused={@settings.digestion_paused}
-            />
+          <div id="processing-coverage" class="divide-y divide-base-300 border-y border-base-300">
+            <p :if={@coverage == []} class="py-5 text-sm text-base-content/60">
+              This feed has no processing steps. Add extraction or digestion in Pipeline.
+            </p>
+            <div
+              :for={cov <- @coverage}
+              id={"coverage-#{cov.step_type}"}
+              class="grid gap-2 py-4 md:grid-cols-[12rem_minmax(0,1fr)] md:items-center"
+            >
+              <div class="flex flex-wrap items-center gap-2">
+                <span class="font-medium">{cov.label}</span>
+                <span class={if(cov.enabled, do: "badge badge-success badge-soft", else: "badge")}>
+                  {if cov.enabled, do: "Enabled", else: "Disabled"}
+                </span>
+              </div>
+              <p class="text-sm text-base-content/65">{Format.coverage_label(cov.counts)}</p>
+            </div>
           </div>
 
           <section :if={@batch_count > 0} class="mt-9">
@@ -327,13 +290,20 @@ defmodule NewspaperWeb.AdminLive.OutputFeed do
                   >
                   </progress>
                   <div class="mt-2 text-sm text-base-content/70">{batch_summary(batch)}</div>
+                  <div
+                    :if={batch.status == "running"}
+                    id={"pipeline-batch-progress-#{batch.id}"}
+                    class="mt-1 text-sm font-medium tabular-nums"
+                  >
+                    {Format.progress_summary(@batch_progress[batch.id])}
+                  </div>
                 </div>
                 <div class="text-sm text-base-content/60 md:text-right">
                   {Format.duration(batch)}
                   <.link
                     id={"view-pipeline-batch-#{batch.id}"}
                     navigate={
-                      ~p"/processing?#{%{generated_feed_id: @feed.id, batch_run_id: batch.id, stage: batch.related["step_type"] || "extraction"}}"
+                      ~p"/processing?#{%{tab: "history", generated_feed_id: @feed.id, batch_run_id: batch.id, stage: batch.related["step_type"] || "extraction"}}"
                     }
                     class="mt-1 block link text-xs"
                   >
@@ -461,117 +431,6 @@ defmodule NewspaperWeb.AdminLive.OutputFeed do
     """
   end
 
-  attr :state, :map, required: true
-  attr :feed_id, :integer, required: true
-  attr :active_batch, :any, default: nil
-  attr :toggle_disabled, :boolean, default: false
-  attr :toggle_title, :string, default: nil
-  attr :model, :string, default: nil
-  attr :globally_paused, :boolean, default: false
-
-  defp processing_step(assigns) do
-    ~H"""
-    <section id={"processing-#{@state.step_type}"} class="py-5">
-      <div class="grid gap-4 md:grid-cols-[minmax(0,1fr)_auto] md:items-start">
-        <div class="min-w-0">
-          <div class="flex flex-wrap items-center gap-2">
-            <span class="font-medium">{step_label(@state.step_type)}</span>
-            <span class={if(@state.enabled, do: "badge badge-success badge-soft", else: "badge")}>
-              {if @state.enabled, do: "Enabled", else: "Disabled"}
-            </span>
-            <span
-              :if={@state.step_type == "digestion" && @globally_paused}
-              class="badge badge-warning badge-soft"
-            >
-              Globally paused
-            </span>
-          </div>
-          <div class="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm text-base-content/65">
-            <span><strong class="tabular-nums">{@state.counts.ready}</strong> ready</span>
-            <span>
-              <strong class="tabular-nums">{@state.counts.not_requested}</strong> not requested
-            </span>
-            <span :if={@state.counts.blocked > 0}>
-              <strong class="tabular-nums">{@state.counts.blocked}</strong> waiting
-            </span>
-            <span :if={@state.counts.queued + @state.counts.running > 0}>
-              <strong class="tabular-nums">{@state.counts.queued + @state.counts.running}</strong>
-              processing
-            </span>
-            <span :if={@state.counts.failed > 0} class="text-error">
-              <strong class="tabular-nums">{@state.counts.failed}</strong> failed
-            </span>
-          </div>
-          <div class="mt-2">
-            <.link
-              id={"view-#{@state.step_type}-processing"}
-              navigate={~p"/processing?#{%{generated_feed_id: @feed_id, stage: @state.step_type}}"}
-              class="mr-4 link text-sm"
-            >
-              View processing
-            </.link>
-            <.link
-              :if={@state.step_type == "extraction"}
-              navigate={~p"/sites"}
-              class="link text-sm"
-            >
-              Website policies
-            </.link>
-            <.link
-              :if={@state.step_type == "digestion"}
-              navigate={~p"/settings"}
-              class="link text-sm"
-            >
-              {@model || "Configure Ollama model"}
-            </.link>
-          </div>
-        </div>
-        <div class="flex flex-col items-start gap-2 md:items-end">
-          <.input
-            id={"toggle-#{@state.step_type}-processing"}
-            name={"processing[#{@state.step_type}]"}
-            type="checkbox"
-            checked={@state.enabled}
-            label={step_toggle_label(@state.step_type)}
-            phx-click="toggle_processing"
-            phx-value-step-type={@state.step_type}
-            disabled={@toggle_disabled}
-            title={@toggle_title}
-          />
-          <button
-            id={"process-existing-#{@state.step_type}"}
-            type="button"
-            class="btn btn-sm"
-            phx-click="process_existing"
-            phx-value-step-type={@state.step_type}
-            phx-disable-with="Queueing..."
-            disabled={process_existing_disabled?(@state, @active_batch, @globally_paused)}
-          >
-            <.icon name="hero-play" class="size-4" />
-            {process_existing_label(@state, @active_batch, @globally_paused)}
-          </button>
-          <button
-            :if={
-              @state.step_type == "digestion" &&
-                (@state.counts.failed > 0 || failed_retry_batch?(@active_batch))
-            }
-            id="retry-failed-digestion"
-            type="button"
-            class="btn btn-sm"
-            phx-click="retry_failed"
-            phx-value-step-type="digestion"
-            phx-disable-with="Queueing..."
-            disabled={retry_failed_disabled?(@state, @active_batch, @globally_paused)}
-          >
-            <.icon name="hero-arrow-path" class="size-4" />
-            {retry_failed_label(@state, @active_batch, @globally_paused)}
-          </button>
-        </div>
-      </div>
-    </section>
-    """
-  end
-
   defp assign_feed(socket, feed \\ nil) do
     feed = feed || Publishing.get_generated_feed!(socket.assigns.feed_id)
 
@@ -584,7 +443,7 @@ defmodule NewspaperWeb.AdminLive.OutputFeed do
 
   defp assign_form_error(socket, changeset, params) do
     socket
-    |> assign(:form, to_form(changeset))
+    |> assign(:form, to_form(%{changeset | action: :validate}))
     |> assign(:intake_group_ids, Map.get(params, "intake_group_ids", []))
     |> assign(:input_feed_ids, Map.get(params, "input_feed_ids", []))
   end
@@ -594,26 +453,33 @@ defmodule NewspaperWeb.AdminLive.OutputFeed do
   end
 
   defp assign_processing(socket, feed) do
-    steps = Processing.list_steps(feed)
+    steps = Newspaper.Processing.Registry.sort_steps(Processing.list_steps(feed))
     counts = Processing.feed_step_counts(feed.id)
     item_count = Publishing.count_items_for_feed(feed)
     batches = Processing.list_feed_batches(feed.id)
 
+    coverage =
+      Enum.map(steps, fn step ->
+        %{
+          step_type: step.step_type,
+          label: Newspaper.Processing.Registry.step_label(step.step_type),
+          enabled: step.enabled,
+          counts: Map.fetch!(counts, step.id)
+        }
+      end)
+
     socket
     |> assign(:feed, feed)
-    |> assign(:settings, Newspaper.Operations.get_settings())
     |> assign(:item_count, item_count)
     |> assign(:enabled_step_count, Enum.count(steps, & &1.enabled))
-    |> assign(:extraction_state, build_processing_state("extraction", steps, counts, item_count))
-    |> assign(:digestion_state, build_processing_state("digestion", steps, counts, item_count))
-    |> assign(
-      :active_batches,
-      Map.new(
-        Enum.filter(batches, &(&1.status == "running")),
-        &{&1.related["step_type"] || "extraction", &1}
-      )
-    )
+    |> assign(:coverage, coverage)
     |> assign(:batch_count, length(batches))
+    |> assign(
+      :batch_progress,
+      batches
+      |> Enum.filter(&(&1.status == "running"))
+      |> Map.new(&{&1.id, Processing.batch_progress(&1)})
+    )
     |> stream(:batches, batches, reset: true)
   end
 
@@ -631,70 +497,6 @@ defmodule NewspaperWeb.AdminLive.OutputFeed do
     end
   end
 
-  defp build_processing_state(step_type, steps, counts, item_count) do
-    step = Enum.find(steps, &(&1.step_type == step_type))
-
-    %{
-      step_type: step_type,
-      step: step,
-      enabled: not is_nil(step) and step.enabled,
-      counts:
-        if(step,
-          do: Map.fetch!(counts, step.id),
-          else: %{
-            total: item_count,
-            ready: 0,
-            not_requested: item_count,
-            blocked: 0,
-            queued: 0,
-            running: 0,
-            failed: 0,
-            skipped: 0
-          }
-        )
-    }
-  end
-
-  defp processing_state(assigns, "extraction"), do: assigns.extraction_state
-  defp processing_state(assigns, "digestion"), do: assigns.digestion_state
-
-  defp persist_processing_toggle(feed, nil, "extraction", true),
-    do: Processing.create_extraction_step(feed)
-
-  defp persist_processing_toggle(feed, nil, "digestion", true),
-    do: Processing.create_digest_step(feed)
-
-  defp persist_processing_toggle(_feed, %PipelineStep{} = step, _step_type, enabled),
-    do: Processing.update_step(step, %{enabled: enabled})
-
-  defp persist_processing_toggle(_feed, nil, _step_type, false), do: {:ok, nil}
-
-  defp validate_processing_toggle(assigns, "digestion", true) do
-    cond do
-      not assigns.extraction_state.enabled -> {:error, :extraction_step_required}
-      Format.blank?(assigns.settings.ollama_model) -> {:error, :ollama_model_not_configured}
-      true -> :ok
-    end
-  end
-
-  defp validate_processing_toggle(assigns, "digestion", false) do
-    if digest_rendering?(assigns.feed) do
-      {:error, :digest_rendering_requires_digestion}
-    else
-      :ok
-    end
-  end
-
-  defp validate_processing_toggle(assigns, "extraction", false) do
-    cond do
-      assigns.digestion_state.enabled -> {:error, :digestion_requires_extraction}
-      extraction_rendering?(assigns.feed) -> {:error, :rendering_requires_extraction}
-      true -> :ok
-    end
-  end
-
-  defp validate_processing_toggle(_assigns, _step_type, _enabled), do: :ok
-
   defp rendering_changed?(feed, changeset) do
     Enum.any?(
       [
@@ -704,7 +506,7 @@ defmodule NewspaperWeb.AdminLive.OutputFeed do
         :body_source
       ],
       fn field ->
-        Map.get(feed, field) != Changeset.get_field(changeset, field)
+        Map.get(feed, field) != Ecto.Changeset.get_field(changeset, field)
       end
     )
   end
@@ -726,93 +528,7 @@ defmodule NewspaperWeb.AdminLive.OutputFeed do
     |> assign(:rerendering, true)
   end
 
-  defp digestion_toggle_disabled?(assigns) do
-    not assigns.digestion_state.enabled and
-      (not assigns.extraction_state.enabled or Format.blank?(assigns.settings.ollama_model))
-  end
-
-  defp digestion_toggle_title(assigns) do
-    cond do
-      assigns.digestion_state.enabled -> nil
-      not assigns.extraction_state.enabled -> "Enable article extraction first"
-      Format.blank?(assigns.settings.ollama_model) -> "Configure an Ollama model first"
-      true -> nil
-    end
-  end
-
-  defp process_existing_disabled?(%{step_type: "digestion"}, _active_batch, true), do: true
-
-  defp process_existing_disabled?(state, active_batch, _globally_paused) do
-    not state.enabled or state.counts.not_requested == 0 or not is_nil(active_batch)
-  end
-
-  defp process_existing_label(%{step_type: "digestion"}, nil, true), do: "Digestion paused"
-
-  defp process_existing_label(state, nil, _globally_paused) do
-    if state.step_type == "digestion" and state.counts.not_requested == 0 and
-         state.counts.blocked > 0 do
-      "Waiting for extraction"
-    else
-      process_available_label(state.step_type, state.counts.not_requested)
-    end
-  end
-
-  defp process_existing_label(_state, batch, _globally_paused) do
-    if failed_retry_batch?(batch) do
-      "Existing-item processing paused"
-    else
-      batch_progress_label(batch)
-    end
-  end
-
-  defp retry_failed_disabled?(%{enabled: enabled}, active_batch, globally_paused) do
-    not enabled or globally_paused or not is_nil(active_batch)
-  end
-
-  defp retry_failed_label(_state, nil, true), do: "Digestion paused"
-
-  defp retry_failed_label(state, nil, false) do
-    case state.counts.failed do
-      1 -> "Retry 1 failed digestion"
-      count -> "Retry #{count} failed digestions"
-    end
-  end
-
-  defp retry_failed_label(_state, batch, _globally_paused) do
-    if failed_retry_batch?(batch) do
-      batch_progress_label(batch)
-    else
-      "Failed-digestion retry paused"
-    end
-  end
-
-  defp batch_progress_label(batch) do
-    if Map.has_key?(batch.summary_counts, "total") do
-      "Processing #{batch_completed(batch)} of #{batch.summary_counts["total"]}"
-    else
-      "Starting batch..."
-    end
-  end
-
-  defp failed_retry_batch?(%{related: %{"selection" => "failed"}}), do: true
-  defp failed_retry_batch?(_batch), do: false
-
-  defp process_available_label(_step_type, 0), do: "No existing work"
-  defp process_available_label("extraction", 1), do: "Extract 1 existing article"
-  defp process_available_label("extraction", count), do: "Extract #{count} existing articles"
-  defp process_available_label("digestion", 1), do: "Digest 1 existing article"
-  defp process_available_label("digestion", count), do: "Digest #{count} existing articles"
-
-  defp step_label("extraction"), do: "Article extraction"
-  defp step_label("digestion"), do: "Article digestion"
-
-  defp step_toggle_label("extraction"), do: "Extract future articles"
-  defp step_toggle_label("digestion"), do: "Digest future articles"
-
-  defp processing_toggle_message("extraction", true), do: "Article extraction enabled"
-  defp processing_toggle_message("extraction", false), do: "Article extraction disabled"
-  defp processing_toggle_message("digestion", true), do: "Article digestion enabled"
-  defp processing_toggle_message("digestion", false), do: "Article digestion disabled"
+  defp step_label(step_type), do: Newspaper.Processing.Registry.step_label(step_type)
 
   defp rendering_label(feed) do
     title = if feed.title_source == "digest", do: "Digest title", else: "Original title"
@@ -827,30 +543,6 @@ defmodule NewspaperWeb.AdminLive.OutputFeed do
     "#{title} · #{body}"
   end
 
-  defp digest_rendering?(feed),
-    do: feed.title_source == "digest" or feed.body_source == "digest_summary"
-
-  defp extraction_rendering?(feed),
-    do: feed.link_to_hosted_article or feed.body_source == "extracted_content"
-
-  defp error_message({:no_enabled_step, step_type}),
-    do: "Enable #{step_label(step_type) |> String.downcase()} first"
-
-  defp error_message(:extraction_step_required), do: "Enable article extraction first"
-  defp error_message(:ollama_model_not_configured), do: "Choose an Ollama model in Settings first"
-
-  defp error_message(:digest_rendering_requires_digestion),
-    do: "Digest title or summary requires article digestion"
-
-  defp error_message(:digestion_requires_extraction),
-    do: "Disable article digestion before disabling extraction"
-
-  defp error_message(:rendering_requires_extraction),
-    do: "Hosted links or extracted bodies require article extraction"
-
-  defp error_message(%Changeset{}), do: "Processing setting could not be saved"
-  defp error_message(reason), do: inspect(reason)
-
   defp batch_completed(batch) do
     (batch.summary_counts["succeeded"] || 0) + (batch.summary_counts["failed"] || 0)
   end
@@ -862,11 +554,5 @@ defmodule NewspaperWeb.AdminLive.OutputFeed do
 
   defp batch_status_label(_batch), do: "Completed"
 
-  defp batch_summary(batch) do
-    counts = batch.summary_counts
-
-    "#{counts["succeeded"] || 0} succeeded · #{counts["failed"] || 0} failed · " <>
-      "#{counts["queued"] || 0} queued · #{counts["running"] || 0} running · " <>
-      "#{counts["skipped"] || 0} skipped"
-  end
+  defp batch_summary(batch), do: Format.run_summary(batch)
 end

@@ -1,8 +1,10 @@
 defmodule NewspaperWeb.AdminLive.Intake do
   use NewspaperWeb, :live_view
 
-  alias Newspaper.{Intake, Pipeline}
+  alias Newspaper.{Content, Intake, Operations, Pipeline}
+  alias Newspaper.Content.SiteExtractionPolicy
   alias Newspaper.Intake.{InputFeed, IntakeGroup}
+  alias Newspaper.Processing.Registry
   alias NewspaperWeb.AdminLive.Format
   import NewspaperWeb.AdminLive.Nav
 
@@ -11,11 +13,83 @@ defmodule NewspaperWeb.AdminLive.Intake do
 
     {:ok,
      socket
+     |> stream_configure(:policies, dom_id: &"site-policy-#{&1.id}")
      |> assign(:creating, nil)
      |> assign(:editing_group_id, nil)
      |> assign(:editing_feed_id, nil)
+     |> assign(:editing_policy_id, nil)
+     |> assign(:policy_edit_form, nil)
+     |> assign(:extractors, Registry.extractors())
+     |> assign_policy_form()
      |> assign_forms()
-     |> assign_data()}
+     |> assign_data()
+     |> assign_policies()}
+  end
+
+  def handle_event("fetch_all", _params, socket) do
+    Pipeline.Scheduler.fetch_now()
+    {:noreply, socket |> put_flash(:info, "Feed refresh started") |> assign_data()}
+  end
+
+  def handle_event("create_policy", %{"site_extraction_policy" => params}, socket) do
+    case Content.create_site_extraction_policy(params) do
+      {:ok, _policy} ->
+        {:noreply,
+         socket
+         |> put_flash(:info, "Website policy created")
+         |> assign_policy_form()
+         |> assign_policies()}
+
+      {:error, changeset} ->
+        {:noreply, assign(socket, :policy_form, to_form(changeset))}
+    end
+  end
+
+  def handle_event("edit_policy", %{"id" => id}, socket) do
+    policy = Content.get_site_extraction_policy!(to_id(id))
+
+    {:noreply,
+     socket
+     |> assign(:editing_policy_id, policy.id)
+     |> assign(:policy_edit_form, to_form(Content.change_site_extraction_policy(policy)))
+     |> assign_policies()}
+  end
+
+  def handle_event("cancel_edit_policy", _params, socket) do
+    {:noreply,
+     socket
+     |> assign(:editing_policy_id, nil)
+     |> assign(:policy_edit_form, nil)
+     |> assign_policies()}
+  end
+
+  def handle_event("update_policy", %{"site_extraction_policy" => params}, socket) do
+    policy = Content.get_site_extraction_policy!(socket.assigns.editing_policy_id)
+
+    case Content.update_site_extraction_policy(policy, params) do
+      {:ok, _policy} ->
+        {:noreply,
+         socket
+         |> put_flash(:info, "Website policy updated")
+         |> assign(:editing_policy_id, nil)
+         |> assign(:policy_edit_form, nil)
+         |> assign_policies()}
+
+      {:error, changeset} ->
+        {:noreply, assign(socket, :policy_edit_form, to_form(changeset))}
+    end
+  end
+
+  def handle_event("delete_policy", %{"id" => id}, socket) do
+    policy = Content.get_site_extraction_policy!(to_id(id))
+    {:ok, _policy} = Content.delete_site_extraction_policy(policy)
+
+    {:noreply,
+     socket
+     |> put_flash(:info, "Website policy removed")
+     |> assign(:editing_policy_id, nil)
+     |> assign(:policy_edit_form, nil)
+     |> assign_policies()}
   end
 
   def handle_event("show_create", %{"type" => type}, socket) when type in ["group", "feed"] do
@@ -191,6 +265,14 @@ defmodule NewspaperWeb.AdminLive.Intake do
     {:noreply, socket |> put_flash(:info, "Feed fetch started") |> assign_data()}
   end
 
+  def handle_info({:newspaper_data_changed, :site_extraction_policies_changed}, socket) do
+    {:noreply, assign_policies(socket)}
+  end
+
+  def handle_info({:newspaper_data_changed, :operations_changed}, socket) do
+    {:noreply, assign(socket, :latest_fetch, Operations.latest_run("fetch_all"))}
+  end
+
   def handle_info({:newspaper_data_changed, :intake_changed}, socket) do
     {:noreply, assign_data(socket)}
   end
@@ -200,19 +282,35 @@ defmodule NewspaperWeb.AdminLive.Intake do
   def render(assigns) do
     ~H"""
     <Layouts.app flash={@flash}>
-      <.nav current="intake" />
+      <.nav current="intake" attention_count={@attention_count} />
 
       <header class="mb-8 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <p class="mb-1 text-xs font-semibold uppercase tracking-wider text-base-content/50">
             Sources
           </p>
-          <h1 class="text-2xl font-semibold">Intake</h1>
+          <h1 class="text-2xl font-semibold">Sources</h1>
           <p class="mt-1 text-sm text-base-content/65">
-            Feeds discover articles; groups define deduplication boundaries.
+            Feeds discover articles; groups define deduplication boundaries; website policies
+            configure how articles are fetched from each host.
+          </p>
+          <p :if={@latest_fetch} id="latest-feed-refresh" class="mt-2 text-sm text-base-content/65">
+            Last refresh
+            <span class={Format.status_badge_class(@latest_fetch.status)}>
+              {Format.status_label(@latest_fetch.status)}
+            </span>
+            <.local_time
+              id={"latest-fetch-time-#{@latest_fetch.id}"}
+              value={@latest_fetch.started_at}
+              class="text-xs text-base-content/55"
+            />
+            <span class="text-base-content/55">· {Format.run_summary(@latest_fetch)}</span>
           </p>
         </div>
         <div class="flex flex-wrap gap-2">
+          <button id="fetch-all-now" type="button" class="btn" phx-click="fetch_all">
+            <.icon name="hero-arrow-path" class="size-4" /> Fetch all now
+          </button>
           <button
             id="add-input-feed"
             type="button"
@@ -393,6 +491,189 @@ defmodule NewspaperWeb.AdminLive.Intake do
               />
             </ul>
           </article>
+        </div>
+      </section>
+
+      <section id="website-policies" class="mb-10">
+        <div class="mb-3 flex items-baseline justify-between gap-4">
+          <div>
+            <h2 class="text-base font-semibold">Website policies</h2>
+            <p class="mt-1 text-sm text-base-content/55">
+              Extractor selection, escalation, and request pacing by host. Live pacing and
+              backoff state is on the Processing queue.
+            </p>
+          </div>
+          <span class="text-xs text-base-content/50">{@policy_count}</span>
+        </div>
+
+        <details id="add-site-policy" class="mb-4 border-y border-base-300 py-4">
+          <summary class="btn btn-sm w-fit cursor-pointer list-none">
+            <.icon name="hero-plus" class="size-4" /> Add website
+          </summary>
+          <.form
+            for={@policy_form}
+            id="new-site-policy-form"
+            phx-submit="create_policy"
+            class="mt-5 grid gap-4 md:grid-cols-2"
+          >
+            <.input
+              field={@policy_form[:site_host]}
+              type="text"
+              label="Website host"
+              placeholder="example.com"
+            />
+            <.input
+              field={@policy_form[:minimum_implementation]}
+              type="select"
+              label="Starting extractor"
+              options={extractor_options(@extractors)}
+            />
+            <.input
+              field={@policy_form[:minimum_request_interval_ms]}
+              type="number"
+              label="Minimum request interval (ms)"
+            />
+            <.input field={@policy_form[:timeout_ms]} type="number" label="Extraction timeout (ms)" />
+            <.input
+              field={@policy_form[:minimum_text_length]}
+              type="number"
+              label="Minimum text length"
+            />
+            <.input
+              field={@policy_form[:escalation_enabled]}
+              type="checkbox"
+              label="Allow escalation"
+            />
+            <div class="md:col-span-2">
+              <.input field={@policy_form[:notes]} type="textarea" label="Notes" />
+            </div>
+            <div class="md:col-span-2">
+              <.button><.icon name="hero-plus" class="size-4" /> Add website</.button>
+            </div>
+          </.form>
+        </details>
+
+        <div
+          id="site-policies"
+          phx-update="stream"
+          class="divide-y divide-base-300 border-y border-base-300"
+        >
+          <p
+            id="site-policies-empty"
+            class="hidden only:block py-8 text-center text-sm text-base-content/55"
+          >
+            No website policies configured. Defaults apply to every host.
+          </p>
+          <div
+            :for={{id, policy} <- @streams.policies}
+            id={id}
+            class="grid gap-4 py-5 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start"
+          >
+            <div class="min-w-0">
+              <div class="flex flex-wrap items-center gap-2">
+                <h3 class="font-semibold">{policy.site_host}</h3>
+                <span class="badge badge-outline">
+                  {extractor_label(policy.minimum_implementation)}
+                </span>
+                <span class={
+                  if(policy.escalation_enabled, do: "badge badge-success badge-soft", else: "badge")
+                }>
+                  {if policy.escalation_enabled, do: "Escalation on", else: "Escalation off"}
+                </span>
+              </div>
+              <div class="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm text-base-content/65">
+                <span>{policy.minimum_request_interval_ms} ms interval</span>
+                <span>{policy.timeout_ms} ms timeout</span>
+                <span>{policy.minimum_text_length} character minimum</span>
+                <span :if={policy.last_successful_implementation}>
+                  Last success: {extractor_label(policy.last_successful_implementation)}
+                </span>
+              </div>
+              <p :if={Format.present?(policy.notes)} class="mt-2 text-sm text-base-content/75">
+                {policy.notes}
+              </p>
+            </div>
+
+            <div class="flex flex-wrap gap-2 lg:justify-end">
+              <button
+                id={"edit-site-policy-#{policy.id}"}
+                type="button"
+                class="btn btn-sm"
+                phx-click="edit_policy"
+                phx-value-id={policy.id}
+              >
+                Edit
+              </button>
+              <button
+                id={"delete-site-policy-#{policy.id}"}
+                type="button"
+                class="btn btn-error btn-soft btn-sm"
+                phx-click="delete_policy"
+                phx-value-id={policy.id}
+                data-confirm="Remove this website policy? Defaults will be recreated on the next extraction."
+              >
+                Delete
+              </button>
+            </div>
+
+            <.form
+              :if={@editing_policy_id == policy.id}
+              for={@policy_edit_form}
+              id={"edit-site-policy-form-#{policy.id}"}
+              phx-submit="update_policy"
+              class="grid gap-4 border-t border-base-300 pt-5 lg:col-span-2 lg:grid-cols-2"
+            >
+              <.input
+                id={"edit-site-policy-host-#{policy.id}"}
+                field={@policy_edit_form[:site_host]}
+                type="text"
+                label="Website host"
+              />
+              <.input
+                id={"edit-site-policy-extractor-#{policy.id}"}
+                field={@policy_edit_form[:minimum_implementation]}
+                type="select"
+                label="Starting extractor"
+                options={extractor_options(@extractors)}
+              />
+              <.input
+                id={"edit-site-policy-interval-#{policy.id}"}
+                field={@policy_edit_form[:minimum_request_interval_ms]}
+                type="number"
+                label="Minimum request interval (ms)"
+              />
+              <.input
+                id={"edit-site-policy-timeout-#{policy.id}"}
+                field={@policy_edit_form[:timeout_ms]}
+                type="number"
+                label="Extraction timeout (ms)"
+              />
+              <.input
+                id={"edit-site-policy-minimum-text-#{policy.id}"}
+                field={@policy_edit_form[:minimum_text_length]}
+                type="number"
+                label="Minimum text length"
+              />
+              <.input
+                id={"edit-site-policy-escalation-#{policy.id}"}
+                field={@policy_edit_form[:escalation_enabled]}
+                type="checkbox"
+                label="Allow escalation"
+              />
+              <div class="lg:col-span-2">
+                <.input
+                  id={"edit-site-policy-notes-#{policy.id}"}
+                  field={@policy_edit_form[:notes]}
+                  type="textarea"
+                  label="Notes"
+                />
+              </div>
+              <div class="flex gap-2 lg:col-span-2">
+                <.button><.icon name="hero-check" class="size-4" /> Save</.button>
+                <button type="button" class="btn" phx-click="cancel_edit_policy">Cancel</button>
+              </div>
+            </.form>
+          </div>
         </div>
       </section>
     </Layouts.app>
@@ -577,6 +858,29 @@ defmodule NewspaperWeb.AdminLive.Intake do
       |> assign(:ungrouped_feed_count, length(ungrouped_feeds))
     end)
     |> assign(:group_options, [{"No intake group", ""} | Enum.map(groups, &{&1.name, &1.id})])
+    |> assign(:latest_fetch, Operations.latest_run("fetch_all"))
+  end
+
+  defp assign_policy_form(socket) do
+    form = %SiteExtractionPolicy{} |> Content.change_site_extraction_policy() |> to_form()
+    assign(socket, :policy_form, form)
+  end
+
+  defp assign_policies(socket) do
+    policies = Content.list_site_extraction_policies()
+
+    socket
+    |> assign(:policy_count, length(policies))
+    |> stream(:policies, policies, reset: true)
+  end
+
+  defp extractor_options(extractors), do: Enum.map(extractors, &{&1.label, &1.key})
+
+  defp extractor_label(key) do
+    case Registry.fetch_extractor(key) do
+      {:ok, extractor} -> extractor.label
+      :error -> key
+    end
   end
 
   defp assign_forms(socket) do
@@ -597,11 +901,13 @@ defmodule NewspaperWeb.AdminLive.Intake do
 
   defp blank_group_to_nil(params), do: params
 
-  defp fetch_status_label("ok"), do: "Healthy"
+  defp fetch_status_label(status) when status in ["ok", "not_modified"], do: "Healthy"
   defp fetch_status_label("failed"), do: "Failed"
   defp fetch_status_label(_status), do: "Never fetched"
 
-  defp fetch_status_class("ok"), do: "badge badge-success badge-soft"
+  defp fetch_status_class(status) when status in ["ok", "not_modified"],
+    do: "badge badge-success badge-soft"
+
   defp fetch_status_class("failed"), do: "badge badge-error badge-soft"
   defp fetch_status_class(_status), do: "badge badge-ghost"
 

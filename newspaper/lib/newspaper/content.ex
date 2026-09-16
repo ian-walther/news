@@ -41,6 +41,7 @@ defmodule Newspaper.Content do
         Map.get(filters, :status, "all"),
         Map.get(filters, :generated_feed_id)
       )
+      |> filter_article_held(Map.get(filters, :held, false), Map.get(filters, :generated_feed_id))
 
     total_count = Repo.aggregate(query, :count, :id)
     total_pages = max(ceil(total_count / per_page), 1)
@@ -48,11 +49,7 @@ defmodule Newspaper.Content do
 
     articles =
       query
-      |> order_by([article: article],
-        desc_nulls_last: article.published_at,
-        desc: article.inserted_at,
-        desc: article.id
-      )
+      |> order_articles(Map.get(filters, :sort, "published"))
       |> offset(^((page - 1) * per_page))
       |> limit(^per_page)
       |> preload([
@@ -75,6 +72,28 @@ defmodule Newspaper.Content do
       total_count: total_count,
       total_pages: total_pages
     }
+  end
+
+  # "recent" orders by the newest successful pipeline execution for the article
+  # (any step), so an operator can find what the pipeline just produced.
+  defp order_articles(query, "recent") do
+    query
+    |> order_by([article: article],
+      desc_nulls_last:
+        fragment(
+          "(SELECT max(finished_at) FROM pipeline_step_attempts WHERE article_id = ? AND status = 'succeeded')",
+          article.id
+        ),
+      desc: article.id
+    )
+  end
+
+  defp order_articles(query, _sort) do
+    order_by(query, [article: article],
+      desc_nulls_last: article.published_at,
+      desc: article.inserted_at,
+      desc: article.id
+    )
   end
 
   def article_status_counts do
@@ -103,17 +122,6 @@ defmodule Newspaper.Content do
       "digestion" -> digestion_filter_counts(query, Map.get(filters, :generated_feed_id))
       _stage -> extraction_filter_counts(query)
     end
-  end
-
-  def list_recent_extracted_articles(limit \\ 8) do
-    Article
-    |> join(:inner, [article], extraction in ArticleExtraction,
-      on: extraction.article_id == article.id
-    )
-    |> order_by([_article, extraction], desc: extraction.extracted_at, desc: extraction.id)
-    |> limit(^limit)
-    |> preload([_article, extraction], extraction: extraction)
-    |> Repo.all()
   end
 
   def list_active_site_backoffs(now \\ DateTime.utc_now(:second)) do
@@ -169,6 +177,26 @@ defmodule Newspaper.Content do
       not_enabled: count.("not_enabled")
     }
   end
+
+  # "Held" is the publication predicate itself: an item withheld from its
+  # feed's output (`publication_status = processing`), whatever step state
+  # is causing it (audit IMP-19).
+  defp filter_article_held(query, true, generated_feed_id) do
+    held_items =
+      GeneratedFeedItem
+      |> from(as: :held_item)
+      |> where([held_item: item], item.article_id == parent_as(:article).id)
+      |> where([held_item: item], item.publication_status == "processing")
+
+    held_items =
+      if generated_feed_id,
+        do: where(held_items, [held_item: item], item.generated_feed_id == ^generated_feed_id),
+        else: held_items
+
+    where(query, [article: _article], exists(held_items))
+  end
+
+  defp filter_article_held(query, _held, _generated_feed_id), do: query
 
   defp filter_article_stage_status(query, "digestion", status, generated_feed_id),
     do: filter_article_digestion_status(query, status, generated_feed_id)

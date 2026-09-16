@@ -5,115 +5,47 @@ defmodule NewspaperWeb.AdminLive.OutputFeedTest do
 
   alias Newspaper.Content.{Article, ArticleDigest, ArticleExtraction}
   alias Newspaper.Processing
-  alias Newspaper.Processing.{BatchDispatcher, PipelineStepAttempt}
   alias Newspaper.Publishing
   alias Newspaper.Publishing.GeneratedFeedItem
   alias Newspaper.Repo
 
-  test "configures processing and publishing from one workspace", %{conn: conn} do
+  test "shows processing coverage read-only and validates rendering against the chain", %{
+    conn: conn
+  } do
     {:ok, feed} =
       Publishing.create_generated_feed(%{
         "title" => "Technology Reading",
         "guid" => "feed_pipeline_ui_test"
       })
 
-    settings = Newspaper.Operations.get_settings()
-
-    assert {:ok, _settings} =
-             Newspaper.Operations.update_settings(settings, %{ollama_model: "qwen3.6:27b"})
-
-    Newspaper.Events.subscribe()
+    feed = Publishing.get_generated_feed!(feed.id)
     {:ok, view, _html} = live(conn, ~p"/output-feeds/#{feed.id}")
 
     assert has_element?(view, "#output-feed-settings-form")
-    assert has_element?(view, "#output-feed-hosted-digest:not([checked])")
-    assert has_element?(view, "#toggle-extraction-processing:not([checked])")
-    assert has_element?(view, "#toggle-digestion-processing[disabled]")
-    refute has_element?(view, "select[name='pipeline_step[implementation_key]']")
-
-    html = render_click(view, "toggle_processing", %{"step-type" => "digestion"})
-    assert html =~ "Enable article extraction first"
-    assert Processing.list_steps(feed) == []
-
-    view
-    |> element("#toggle-extraction-processing")
-    |> render_click()
-
-    [extraction_step] = Processing.list_steps(feed)
-    assert extraction_step.implementation_key == "extraction.site_policy"
-    assert extraction_step.config == %{}
-    assert has_element?(view, "#processing-extraction", "Enabled")
-    assert has_element?(view, "#process-existing-extraction")
-    refute has_element?(view, "#toggle-digestion-processing[disabled]")
-
-    view
-    |> element("#toggle-digestion-processing")
-    |> render_click()
-
-    [extraction_step, digestion_step] = Processing.list_steps(feed)
-    assert extraction_step.position == 0
-    assert digestion_step.position == 1
-    assert digestion_step.implementation_key == "digestion.ollama.article_digest"
-    assert has_element?(view, "#processing-digestion", "Enabled")
-    assert has_element?(view, "#process-existing-digestion")
-
-    feed = Publishing.get_generated_feed!(feed.id)
-    assert feed.title_source == "original"
-    assert feed.body_source == "original_feed"
-
-    view
-    |> form(
-      "#output-feed-settings-form",
-      feed_params(feed, %{
-        "link_to_hosted_article" => "true",
-        "show_digest_in_hosted_article" => "false",
-        "title_source" => "digest",
-        "body_source" => "digest_summary"
-      })
-    )
-    |> render_submit()
-
-    await_rerender(view)
-
-    feed = Publishing.get_generated_feed!(feed.id)
-    assert feed.link_to_hosted_article
-    refute Map.get(feed, :show_digest_in_hosted_article, true)
-    assert feed.title_source == "digest"
-    assert feed.body_source == "digest_summary"
+    assert has_element?(view, "#processing-coverage", "no processing steps")
+    assert has_element?(view, "#manage-pipeline[href*='tab=pipeline']")
+    refute has_element?(view, "#toggle-extraction-processing")
+    refute has_element?(view, "#process-existing-extraction")
 
     html =
       view
-      |> element("#toggle-digestion-processing")
-      |> render_click()
+      |> form(
+        "#output-feed-settings-form",
+        feed_params(feed, %{"title_source" => "digest", "body_source" => "digest_summary"})
+      )
+      |> render_submit()
 
-    assert html =~ "Digest title or summary requires article digestion"
-    assert Processing.get_step!(digestion_step.id).enabled
+    assert html =~ "requires article digestion"
+    assert Publishing.get_generated_feed!(feed.id).title_source == "original"
 
-    view
-    |> form(
-      "#output-feed-settings-form",
-      feed_params(feed, %{
-        "link_to_hosted_article" => "false",
-        "title_source" => "original",
-        "body_source" => "original_feed"
-      })
-    )
-    |> render_submit()
+    assert {:ok, _step} = Processing.create_step(feed, "extraction")
+    refresh_output_feed(view)
 
-    await_rerender(view)
-
-    view
-    |> element("#toggle-digestion-processing")
-    |> render_click()
-
-    refute Processing.get_step!(digestion_step.id).enabled
-
-    view
-    |> element("#toggle-extraction-processing")
-    |> render_click()
-
-    refute Processing.get_step!(extraction_step.id).enabled
-    _ = :sys.get_state(view.pid)
+    assert has_element?(view, "#coverage-extraction", "Article extraction")
+    assert has_element?(view, "#coverage-extraction", "Enabled")
+    assert has_element?(view, "#coverage-extraction", "0 of 0 ready")
+    assert has_element?(view, "#backfill-output-feed", "Add matching articles")
+    assert has_element?(view, "#rerender-output-feed", "Refresh RSS output")
   end
 
   test "rendering changes reuse stored artifacts and automatically re-render items", %{conn: conn} do
@@ -165,181 +97,12 @@ defmodule NewspaperWeb.AdminLive.OutputFeedTest do
     assert Repo.aggregate(ArticleDigest, :count) == 0
   end
 
-  test "shows live progress for a durable existing-item extraction batch", %{conn: conn} do
-    feed = output_feed_with_article!()
-
-    {:ok, _step} =
-      Processing.create_extraction_step(feed)
-
-    {:ok, view, _html} = live(conn, ~p"/output-feeds/#{feed.id}")
-
-    assert has_element?(view, "#feed-processing-summary")
-
-    assert has_element?(
-             view,
-             "#process-existing-extraction:not([disabled])",
-             "Extract 1 existing article"
-           )
-
-    assert has_element?(view, "#processing-extraction", "1 not requested")
-    assert has_element?(view, "#view-extraction-processing[href*='/processing']")
-
-    assert has_element?(
-             view,
-             "#process-existing-extraction[phx-disable-with='Queueing...']"
-           )
-
-    view
-    |> element("#process-existing-extraction")
-    |> render_click()
-
-    [batch] = Processing.list_feed_batches(feed.id)
-    assert :ok = BatchDispatcher.await(batch.id)
-    refresh_output_feed(view)
-    [attempt] = Processing.list_attempts_for_batch(batch.id)
-
-    assert has_element?(view, "#pipeline-batch-#{batch.id}")
-
-    assert has_element?(
-             view,
-             "#view-pipeline-batch-#{batch.id}[href*='batch_run_id=#{batch.id}']"
-           )
-
-    assert has_element?(view, "#process-existing-extraction[disabled]", "Processing 0 of 1")
-
-    assert {:ok, _attempt} = Processing.finish_attempt(attempt, "succeeded")
-    refresh_output_feed(view)
-
-    assert has_element?(view, "#pipeline-batch-#{batch.id}", "1 succeeded")
-    assert Repo.get!(PipelineStepAttempt, attempt.id).batch_run_id == batch.id
-    _ = :sys.get_state(view.pid)
-  end
-
-  test "shows existing digestion work as waiting until extraction is available", %{conn: conn} do
-    feed = output_feed_with_article!()
-    assert {:ok, _step} = Processing.create_extraction_step(feed)
-
-    settings = Newspaper.Operations.get_settings()
-
-    assert {:ok, _settings} =
-             Newspaper.Operations.update_settings(settings, %{ollama_model: "qwen3.6:27b"})
-
-    assert {:ok, _digestion_step} = Processing.create_digest_step(feed)
-
-    {:ok, view, _html} = live(conn, ~p"/output-feeds/#{feed.id}")
-
-    assert has_element?(view, "#processing-digestion", "1 waiting")
-
-    assert has_element?(
-             view,
-             "#process-existing-digestion[disabled]",
-             "Waiting for extraction"
-           )
-  end
-
-  test "shows globally paused digestion and prevents starting a bulk batch", %{conn: conn} do
-    feed = output_feed_with_article!()
-    assert {:ok, _step} = Processing.create_extraction_step(feed)
-
-    settings = Newspaper.Operations.get_settings()
-
-    assert {:ok, _settings} =
-             Newspaper.Operations.update_settings(settings, %{
-               ollama_model: "qwen3.6:27b",
-               digestion_paused: true
-             })
-
-    assert {:ok, _digestion_step} = Processing.create_digest_step(feed)
-
-    {:ok, view, _html} = live(conn, ~p"/output-feeds/#{feed.id}")
-
-    assert has_element?(view, "#processing-digestion", "Globally paused")
-    assert has_element?(view, "#process-existing-digestion[disabled]", "Digestion paused")
-  end
-
-  test "retries failed digestion as a durable feed batch", %{conn: conn} do
-    feed = output_feed_with_article!()
-    item = Repo.one!(GeneratedFeedItem) |> Repo.preload(:article)
-
-    %ArticleExtraction{}
-    |> ArticleExtraction.changeset(%{
-      article_id: item.article.id,
-      implementation_key: "extraction.simple_html",
-      final_url: item.article.canonical_url,
-      title: item.article.title,
-      site_name: "The Autopian",
-      content_html: "<p>Clean extracted article content.</p>",
-      content_text: "Clean extracted article content.",
-      extracted_at: ~U[2026-07-17 12:00:00Z]
-    })
-    |> Repo.insert!()
-
-    assert {:ok, _step} = Processing.create_extraction_step(feed)
-
-    settings = Newspaper.Operations.get_settings()
-
-    assert {:ok, _settings} =
-             Newspaper.Operations.update_settings(settings, %{ollama_model: "qwen3.6:27b"})
-
-    assert {:ok, _step} = Processing.create_digest_step(feed)
-    assert {:ok, [failed_attempt]} = Processing.request_item_step(item, "digestion")
-
-    assert {:ok, _attempt} =
-             Processing.finish_attempt(failed_attempt, "failed", %{
-               failure_kind: "configuration_error",
-               retryable: false,
-               error_message: "No Ollama model is configured"
-             })
-
-    {:ok, view, _html} = live(conn, ~p"/output-feeds/#{feed.id}")
-
-    assert has_element?(
-             view,
-             "#retry-failed-digestion:not([disabled])",
-             "Retry 1 failed digestion"
-           )
-
-    settings = Newspaper.Operations.get_settings()
-
-    assert {:ok, _settings} =
-             Newspaper.Operations.update_settings(settings, %{digestion_paused: true})
-
-    _ = :sys.get_state(view.pid)
-    assert has_element?(view, "#retry-failed-digestion[disabled]", "Digestion paused")
-
-    settings = Newspaper.Operations.get_settings()
-
-    assert {:ok, _settings} =
-             Newspaper.Operations.update_settings(settings, %{digestion_paused: false})
-
-    _ = :sys.get_state(view.pid)
-
-    view
-    |> element("#retry-failed-digestion")
-    |> render_click()
-
-    [retry_batch] =
-      feed.id
-      |> Processing.list_feed_batches()
-      |> Enum.filter(&(&1.related["selection"] == "failed"))
-
-    assert :ok = BatchDispatcher.await(retry_batch.id)
-    refresh_output_feed(view)
-
-    assert has_element?(view, "#retry-failed-digestion[disabled]", "Processing 0 of 1")
-
-    [retry_attempt] = Processing.list_attempts_for_batch(retry_batch.id)
-    assert retry_attempt.id != failed_attempt.id
-    assert retry_attempt.status == "queued"
-    assert Repo.get!(PipelineStepAttempt, failed_attempt.id).status == "failed"
-  end
-
   test "coalesces bursts of processing events before refreshing feed state", %{conn: conn} do
     feed = output_feed_with_article!()
     assert {:ok, _step} = Processing.create_extraction_step(feed)
 
     {:ok, view, _html} = live(conn, ~p"/output-feeds/#{feed.id}")
-    assert has_element?(view, "#processing-extraction", "1 not requested")
+    assert has_element?(view, "#coverage-extraction", "1 not requested")
 
     item = Repo.one!(GeneratedFeedItem)
     assert {:ok, [_attempt]} = Processing.request_item_step(item, "extraction")
@@ -349,12 +112,12 @@ defmodule NewspaperWeb.AdminLive.OutputFeedTest do
     end
 
     _ = :sys.get_state(view.pid)
-    assert has_element?(view, "#processing-extraction", "1 not requested")
+    assert has_element?(view, "#coverage-extraction", "1 not requested")
 
     send(view.pid, :refresh_output_feed_data)
     _ = :sys.get_state(view.pid)
 
-    assert has_element?(view, "#processing-extraction", "1 processing")
+    assert has_element?(view, "#coverage-extraction", "1 queued")
   end
 
   defp refresh_output_feed(view) do
@@ -411,11 +174,5 @@ defmodule NewspaperWeb.AdminLive.OutputFeedTest do
 
     assert {:ok, _run} = Newspaper.Pipeline.backfill_output_feed(feed.id, "test")
     Publishing.get_generated_feed!(feed.id)
-  end
-
-  defp await_rerender(view) do
-    assert_receive {:newspaper_data_changed, :operations_changed}
-    assert_receive {:newspaper_data_changed, :operations_changed}
-    _ = :sys.get_state(view.pid)
   end
 end

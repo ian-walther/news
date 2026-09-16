@@ -36,30 +36,6 @@ defmodule NewspaperWeb.AdminLive.Settings do
     {:noreply, start_model_discovery(socket)}
   end
 
-  def handle_event("toggle_digestion_pause", _params, socket) do
-    paused = not socket.assigns.settings.digestion_paused
-
-    if not paused and not model_configured?(socket.assigns.settings) do
-      {:noreply, put_flash(socket, :error, "Choose an article digestion model before resuming")}
-    else
-      case Operations.update_settings(socket.assigns.settings, %{digestion_paused: paused}) do
-        {:ok, settings} ->
-          message =
-            if paused,
-              do: "Article digestion paused; active work will finish",
-              else: "Article digestion resumed"
-
-          {:noreply,
-           socket
-           |> put_flash(:info, message)
-           |> assign(settings: settings, form: to_form(Operations.change_settings(settings)))}
-
-        {:error, changeset} ->
-          {:noreply, assign(socket, :form, to_form(changeset))}
-      end
-    end
-  end
-
   def handle_info(:discover_ollama_models, socket) do
     {:noreply, start_model_discovery(socket)}
   end
@@ -90,7 +66,7 @@ defmodule NewspaperWeb.AdminLive.Settings do
   def render(assigns) do
     ~H"""
     <Layouts.app flash={@flash}>
-      <.nav current="settings" />
+      <.nav current="settings" attention_count={@attention_count} />
       <div class="max-w-3xl">
         <header class="mb-8">
           <p class="mb-1 text-xs font-semibold uppercase tracking-wider text-base-content/50">
@@ -98,7 +74,7 @@ defmodule NewspaperWeb.AdminLive.Settings do
           </p>
           <h1 class="text-2xl font-semibold">Settings</h1>
           <p class="mt-1 text-sm text-base-content/65">
-            Global scheduling, diagnostics, and local model runtime.
+            Fetch interval and the local model runtime. Pause and resume digestion from Processing.
           </p>
         </header>
         <.form
@@ -150,49 +126,6 @@ defmodule NewspaperWeb.AdminLive.Settings do
               prompt="Select a discovered model"
               options={model_options(assigns)}
             />
-            <div
-              id="digestion-runtime-status"
-              data-state={if(@settings.digestion_paused, do: "paused", else: "running")}
-              class="flex flex-col gap-3 border-y border-base-300 py-4 sm:flex-row sm:items-center sm:justify-between"
-            >
-              <div>
-                <div class="flex flex-wrap items-center gap-2">
-                  <span class="font-medium">Article digestion</span>
-                  <span class={[
-                    "badge badge-soft",
-                    if(@settings.digestion_paused, do: "badge-warning", else: "badge-success")
-                  ]}>
-                    {if @settings.digestion_paused, do: "Paused", else: "Running"}
-                  </span>
-                </div>
-                <p class="mt-1 text-sm text-base-content/55">
-                  <%= if @settings.digestion_paused do %>
-                    Queued and future work is retained until digestion resumes.
-                  <% else %>
-                    New and queued articles may use the selected model.
-                  <% end %>
-                </p>
-              </div>
-              <button
-                id="toggle-digestion-pause"
-                type="button"
-                class="btn btn-sm shrink-0"
-                phx-click="toggle_digestion_pause"
-                disabled={@settings.digestion_paused && not model_configured?(@settings)}
-                title={
-                  if(@settings.digestion_paused && not model_configured?(@settings),
-                    do: "Choose and save a model before resuming",
-                    else: nil
-                  )
-                }
-              >
-                <.icon
-                  name={if(@settings.digestion_paused, do: "hero-play", else: "hero-pause")}
-                  class="size-4"
-                />
-                {if @settings.digestion_paused, do: "Resume digestion", else: "Pause digestion"}
-              </button>
-            </div>
             <p id="ollama-connection-status" class={ollama_status_class(@ollama_status)}>
               {ollama_status_text(@ollama_status)}
             </p>
@@ -239,9 +172,4 @@ defmodule NewspaperWeb.AdminLive.Settings do
   defp ollama_status_class({:connected, _count}), do: "text-sm text-success"
   defp ollama_status_class({:error, _reason}), do: "text-sm text-error"
   defp ollama_status_class(_status), do: "text-sm text-base-content/55"
-
-  defp model_configured?(%{ollama_model: model}) when is_binary(model),
-    do: String.trim(model) != ""
-
-  defp model_configured?(_settings), do: false
 end

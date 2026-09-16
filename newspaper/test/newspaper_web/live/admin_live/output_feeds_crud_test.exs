@@ -111,8 +111,8 @@ defmodule NewspaperWeb.AdminLive.OutputFeedsCrudTest do
 
     {:ok, view, _html} = live(conn, ~p"/output-feeds/#{output_feed.id}")
 
-    assert has_element?(view, "#backfill-output-feed")
-    assert has_element?(view, "#rerender-output-feed")
+    assert has_element?(view, "#backfill-output-feed", "Add matching articles")
+    assert has_element?(view, "#rerender-output-feed", "Refresh RSS output")
   end
 
   test "toggles an output feed from the list without changing its membership", %{conn: conn} do

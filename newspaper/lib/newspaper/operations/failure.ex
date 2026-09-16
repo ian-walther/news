@@ -9,6 +9,7 @@ defmodule Newspaper.Operations.Failure do
     field :retry_count, :integer, default: 0
     field :last_attempted_at, :utc_datetime
     field :related, :map, default: %{}
+    field :resolved_at, :utc_datetime
 
     belongs_to :run, Newspaper.Operations.Run
 
@@ -24,6 +25,7 @@ defmodule Newspaper.Operations.Failure do
       :retry_count,
       :last_attempted_at,
       :related,
+      :resolved_at,
       :run_id
     ])
     |> validate_required([:failure_type, :message])

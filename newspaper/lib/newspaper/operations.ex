@@ -1,7 +1,6 @@
 defmodule Newspaper.Operations do
   import Ecto.Query
 
-  alias Newspaper.Content.Article
   alias Newspaper.Intake.InputFeed
   alias Newspaper.Operations.{AppSettings, Failure, Run}
   alias Newspaper.Publishing.GeneratedFeed
@@ -25,13 +24,6 @@ defmodule Newspaper.Operations do
 
   def digestion_paused?, do: get_settings().digestion_paused
 
-  def list_runs(limit \\ 50) do
-    Run
-    |> order_by([r], desc: r.started_at)
-    |> limit(^limit)
-    |> Repo.all()
-  end
-
   def get_run!(id), do: Repo.get!(Run, id)
 
   def latest_run(run_type) do
@@ -42,21 +34,17 @@ defmodule Newspaper.Operations do
     |> Repo.one()
   end
 
-  def list_run_entries(scope \\ "overview", status \\ "all", limit \\ 100) do
-    Run
-    |> run_scope(scope)
-    |> run_status(status)
-    |> order_by([run], desc: run.started_at, desc: run.id)
-    |> limit(^limit)
-    |> Repo.all()
-    |> attach_run_context()
-  end
-
   def list_processing_run_entries(opts \\ []) do
     limit = Keyword.get(opts, :limit, 50)
 
     Run
     |> where([run], run.run_type != "pipeline_step")
+    |> then(fn query ->
+      case Keyword.get(opts, :status) do
+        nil -> query
+        status -> where(query, [run], run.status == ^status)
+      end
+    end)
     |> filter_processing_run_stage(Keyword.get(opts, :stage))
     |> filter_processing_run_feed(Keyword.get(opts, :generated_feed_id))
     |> filter_processing_run_article(Keyword.get(opts, :article_id))
@@ -75,7 +63,10 @@ defmodule Newspaper.Operations do
       status: "running",
       started_at: DateTime.utc_now(:second),
       related: related,
-      debug_metadata: debug_metadata,
+      debug_metadata:
+        debug_metadata
+        |> Map.put("owner", inspect(self()))
+        |> Map.put("owner_boot", Newspaper.Runtime.boot_id()),
       pipeline_step_attempt_id: related_id(related, "pipeline_step_attempt_id")
     })
     |> Repo.insert()
@@ -140,6 +131,162 @@ defmodule Newspaper.Operations do
     count
   end
 
+  @doc """
+  Whether the process that started `run` is still alive on this node. A run
+  started before a restart parses to a pid from another node incarnation and
+  is reported dead, which is the correct answer.
+  """
+  # Pipeline runs are recovered by their dispatchers; only these run kinds
+  # can be judged abandoned by an operator.
+  @closable_run_types ~w(fetch_all fetch_input_feed process_input_feed process_intake_group backfill_output_feed rerender_output_feed retry_entry_failures)
+  @stage_timeouts_seconds %{
+    "fetch_all" => 600,
+    "fetch_input_feed" => 120,
+    "process_input_feed" => 600,
+    "process_intake_group" => 600,
+    "backfill_output_feed" => 900,
+    "rerender_output_feed" => 900,
+    "retry_entry_failures" => 600
+  }
+
+  def stage_timeout_seconds(run_type), do: Map.get(@stage_timeouts_seconds, run_type, 900)
+
+  @doc """
+  Whether the process that started `run` is still alive **in this VM boot**.
+  The owner pid text is only meaningful together with the boot identity it
+  was recorded under; a pid string from a previous boot that happens to
+  match a live process today is not the owner (audit IMP-10).
+  """
+  def run_owner_alive?(%Run{debug_metadata: metadata}) do
+    with true <- metadata["owner_boot"] == Newspaper.Runtime.boot_id(),
+         "#PID" <> rest <- metadata["owner"] do
+      try do
+        rest |> String.to_charlist() |> :erlang.list_to_pid() |> Process.alive?()
+      rescue
+        ArgumentError -> false
+      end
+    else
+      _ -> false
+    end
+  end
+
+  @doc """
+  The liveness state of a running operation at `now`: `:active` within its
+  stage timeout, `:slow` past it with a live owner, `:abandoned` past it with
+  no live owner. Finished runs are `:finished`.
+  """
+  def run_liveness(%Run{} = run, now \\ DateTime.utc_now(:second)) do
+    cond do
+      run.status != "running" ->
+        :finished
+
+      DateTime.diff(now, run.started_at, :second) <= stage_timeout_seconds(run.run_type) ->
+        :active
+
+      run_owner_alive?(run) ->
+        :slow
+
+      true ->
+        :abandoned
+    end
+  end
+
+  @doc """
+  Closes a run the operator has judged abandoned. The domain re-validates
+  the judgement: only operation runs, only past their stage timeout, only
+  with no live owner, and only while still running (audit IMP-10).
+  """
+  def close_run_as_failed(run_id, now \\ DateTime.utc_now(:second)) when is_integer(run_id) do
+    case Repo.get(Run, run_id) do
+      nil ->
+        {:error, :not_found}
+
+      %Run{run_type: run_type} when run_type not in @closable_run_types ->
+        {:error, :not_closable}
+
+      %Run{} = run ->
+        case run_liveness(run, now) do
+          :finished -> {:error, :not_running}
+          :active -> {:error, :within_timeout}
+          :slow -> {:error, :owner_alive}
+          :abandoned -> do_close_run(run_id, now)
+        end
+    end
+  end
+
+  defp do_close_run(run_id, now) do
+    {count, _rows} =
+      Run
+      |> where([run], run.id == ^run_id and run.status == "running")
+      |> Repo.update_all(
+        set: [
+          status: "failed",
+          finished_at: now,
+          error_summary: "Closed by operator: the run had no live owner",
+          updated_at: now
+        ]
+      )
+
+    case count do
+      1 ->
+        Newspaper.Events.broadcast_data_changed(:operations_changed)
+        {:ok, get_run!(run_id)}
+
+      0 ->
+        {:error, :not_running}
+    end
+  end
+
+  @doc """
+  Marks unresolved failure records resolved when the thing they were about has
+  since been processed successfully. `criteria` is a list of `{related_key,
+  value}` pairs; a failure matches when every pair matches its `related` map.
+  """
+  def resolve_failures(failure_types, criteria)
+      when is_list(failure_types) and is_list(criteria) do
+    if criteria == [] or Enum.any?(criteria, fn {_key, value} -> value in [nil, ""] end) do
+      # An absent identifier never widens the match (audit IMP-09).
+      0
+    else
+      do_resolve_failures(failure_types, criteria)
+    end
+  end
+
+  defp do_resolve_failures(failure_types, criteria) do
+    query =
+      Enum.reduce(
+        criteria,
+        from(f in Failure, where: f.failure_type in ^failure_types and is_nil(f.resolved_at)),
+        fn
+          {"id", value}, query when is_integer(value) ->
+            where(query, [f], f.id == ^value)
+
+          {key, value}, query when is_integer(value) ->
+            where(query, [f], fragment("(?->>?)::bigint = ?", f.related, ^key, ^value))
+
+          {key, value}, query when is_binary(value) ->
+            where(query, [f], fragment("?->>? = ?", f.related, ^key, ^value))
+        end
+      )
+
+    {count, _rows} = Repo.update_all(query, set: [resolved_at: DateTime.utc_now(:second)])
+    if count > 0, do: Newspaper.Events.broadcast_data_changed(:operations_changed)
+    count
+  end
+
+  def unresolved_failures?(failure_types) when is_list(failure_types) do
+    Failure
+    |> where([f], f.failure_type in ^failure_types and is_nil(f.resolved_at))
+    |> Repo.exists?()
+  end
+
+  def list_unresolved_failures(failure_types) when is_list(failure_types) do
+    Failure
+    |> where([f], f.failure_type in ^failure_types and is_nil(f.resolved_at))
+    |> order_by([f], desc: f.inserted_at, desc: f.id)
+    |> Repo.all()
+  end
+
   def list_failures(limit \\ 50) do
     Failure
     |> order_by([f], desc: f.inserted_at)
@@ -171,45 +318,6 @@ defmodule Newspaper.Operations do
     |> broadcast_on_ok(:operations_changed)
   end
 
-  def list_actionable_failure_groups(limit \\ 8) do
-    failures =
-      Failure
-      |> order_by([failure], desc: failure.inserted_at, desc: failure.id)
-      |> limit(500)
-      |> preload(:run)
-      |> Repo.all()
-
-    article_statuses = current_article_statuses(failures)
-    input_feeds = current_input_feeds(failures)
-
-    failures
-    |> Enum.filter(&actionable_failure?(&1, article_statuses, input_feeds))
-    |> Enum.group_by(&failure_group_key(&1, input_feeds))
-    |> Enum.map(fn {{failure_type, source}, grouped_failures} ->
-      latest = Enum.max_by(grouped_failures, &{&1.inserted_at, &1.id})
-
-      latest_retryable =
-        grouped_failures
-        |> Enum.filter(& &1.retryable)
-        |> Enum.max_by(&{&1.inserted_at, &1.id}, fn -> nil end)
-
-      %{
-        id: latest.id,
-        failure_type: failure_type,
-        source: source,
-        count: length(grouped_failures),
-        retryable_count: Enum.count(grouped_failures, & &1.retryable),
-        latest_failure_id: latest_retryable && latest_retryable.id,
-        latest_at: latest.inserted_at,
-        message: latest.message,
-        related: latest.related,
-        run_related: (latest.run && latest.run.related) || %{}
-      }
-    end)
-    |> Enum.sort_by(&{&1.latest_at, &1.id}, :desc)
-    |> Enum.take(limit)
-  end
-
   defp create_default_settings do
     %AppSettings{}
     |> AppSettings.changeset(%{})
@@ -224,30 +332,6 @@ defmodule Newspaper.Operations do
   end
 
   defp broadcast_on_ok(result, _event), do: result
-
-  defp run_scope(query, "all"), do: query
-
-  defp run_scope(query, _overview) do
-    overview_types = [
-      "fetch_all",
-      "backfill_output_feed",
-      "rerender_output_feed",
-      "pipeline_batch"
-    ]
-
-    where(
-      query,
-      [run],
-      run.run_type in ^overview_types or
-        (run.trigger not in ["system", "pipeline"] and run.run_type != "pipeline_step")
-    )
-  end
-
-  defp run_status(query, status) when status in ["running", "succeeded", "failed"] do
-    where(query, [run], run.status == ^status)
-  end
-
-  defp run_status(query, _status), do: query
 
   defp filter_processing_run_stage(query, stage)
        when stage in ["extraction", "digestion"] do
@@ -339,66 +423,6 @@ defmodule Newspaper.Operations do
     |> Enum.uniq()
   end
 
-  defp current_article_statuses(failures) do
-    ids =
-      failures
-      |> Enum.map(&related_id(&1.related, "article_id"))
-      |> Enum.reject(&is_nil/1)
-      |> Enum.uniq()
-
-    Article
-    |> where([article], article.id in ^ids)
-    |> select([article], {article.id, article.extraction_status})
-    |> Repo.all()
-    |> Map.new()
-  end
-
-  defp current_input_feeds(failures) do
-    ids =
-      failures
-      |> Enum.map(&related_id(&1.related, "input_feed_id"))
-      |> Enum.reject(&is_nil/1)
-      |> Enum.uniq()
-
-    InputFeed
-    |> where([feed], feed.id in ^ids)
-    |> Repo.all()
-    |> Map.new(&{&1.id, &1})
-  end
-
-  defp actionable_failure?(failure, article_statuses, input_feeds) do
-    article_id = related_id(failure.related, "article_id")
-    input_feed_id = related_id(failure.related, "input_feed_id")
-
-    cond do
-      article_id -> Map.get(article_statuses, article_id) != "succeeded"
-      input_feed_id -> not healthy_input_feed?(input_feeds[input_feed_id])
-      true -> true
-    end
-  end
-
-  defp healthy_input_feed?(%InputFeed{last_fetch_status: status})
-       when status in ["ok", "not_modified"],
-       do: true
-
-  defp healthy_input_feed?(_feed), do: false
-
-  defp failure_group_key(failure, input_feeds) do
-    input_feed_id = related_id(failure.related, "input_feed_id")
-    input_feed = input_feeds[input_feed_id]
-    url = failure.related["url"] || (failure.run && failure.run.related["url"])
-
-    source =
-      cond do
-        input_feed -> input_feed.name
-        url -> url_host(url)
-        failure.related["generated_feed"] -> failure.related["generated_feed"]
-        true -> "Application"
-      end
-
-    {failure.failure_type, source}
-  end
-
   defp related_id(related, key) do
     case Map.get(related || %{}, key) do
       id when is_integer(id) -> id
@@ -412,16 +436,5 @@ defmodule Newspaper.Operations do
       {value, ""} -> value
       _ -> nil
     end
-  end
-
-  defp url_host(url) do
-    url
-    |> URI.parse()
-    |> Map.get(:host)
-    |> to_string()
-    |> String.downcase()
-    |> String.trim_leading("www.")
-  rescue
-    _ -> "Unknown source"
   end
 end

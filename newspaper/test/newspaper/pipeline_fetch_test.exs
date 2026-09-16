@@ -69,4 +69,46 @@ defmodule Newspaper.PipelineFetchTest do
     feed = Intake.get_input_feed!(feed.id)
     assert feed.last_fetch_status == "not_modified"
   end
+
+  test "withholds cache validators when any entry failed so the next fetch re-receives it" do
+    {:ok, feed} =
+      Intake.create_input_feed(%{
+        name: "The Autopian",
+        url: "https://www.theautopian.com/feed/"
+      })
+
+    {:ok, output_feed} =
+      Newspaper.Publishing.create_generated_feed(%{
+        "title" => "Cars",
+        "input_feed_ids" => [feed.id]
+      })
+
+    %Newspaper.Processing.PipelineStep{}
+    |> Ecto.Changeset.change(%{
+      generated_feed_id: output_feed.id,
+      step_type: "extraction",
+      implementation_key: "",
+      position: 0,
+      enabled: true,
+      config: %{}
+    })
+    |> Repo.insert!()
+
+    response_body =
+      File.read!(Path.expand("../fixtures/feeds/rss2-rich.xml", __DIR__))
+
+    Req.Test.stub(Newspaper.Pipeline.FeedClient, fn conn ->
+      conn
+      |> Plug.Conn.put_resp_header("etag", "\"feed-version-7\"")
+      |> Plug.Conn.put_resp_content_type("application/rss+xml")
+      |> Plug.Conn.resp(200, response_body)
+    end)
+
+    assert {:error, {:item_failures, 1}} = Pipeline.fetch_input_feed(feed, "test")
+
+    feed = Intake.get_input_feed!(feed.id)
+    assert feed.last_fetch_status == "failed"
+    assert feed.etag == nil
+    assert feed.last_modified == nil
+  end
 end

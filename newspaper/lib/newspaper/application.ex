@@ -14,6 +14,7 @@ defmodule Newspaper.Application do
       {Phoenix.PubSub, name: Newspaper.PubSub},
       {Task.Supervisor, name: Newspaper.Processing.TaskSupervisor},
       Newspaper.Operations.Recovery,
+      Newspaper.Operations.AttentionCounter,
       Newspaper.Processing.BatchDispatcher,
       Newspaper.Processing.Dispatcher,
       Newspaper.Digestion.Dispatcher,

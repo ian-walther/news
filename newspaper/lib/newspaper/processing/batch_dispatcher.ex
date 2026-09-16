@@ -66,12 +66,22 @@ defmodule Newspaper.Processing.BatchDispatcher do
   def handle_info({:DOWN, ref, :process, _pid, reason}, state) do
     case Enum.find(state, fn {_batch_id, task} -> task.ref == ref end) do
       {batch_id, _task} ->
-        if reason != :normal, do: Processing.fail_feed_batch(batch_id, reason)
+        if reason != :normal, do: safely_fail_batch(batch_id, reason)
         {:noreply, Map.delete(state, batch_id)}
 
       nil ->
         {:noreply, state}
     end
+  end
+
+  # The batch row can be gone by the time its task dies (a rolled-back test
+  # sandbox, a deleted run); the dispatcher must survive that.
+  defp safely_fail_batch(batch_id, reason) do
+    Processing.fail_feed_batch(batch_id, reason)
+  rescue
+    error ->
+      require Logger
+      Logger.warning("could not fail batch #{batch_id}: #{inspect(error)}")
   end
 
   defp recover_batches(state) do

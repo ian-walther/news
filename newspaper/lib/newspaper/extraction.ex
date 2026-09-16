@@ -20,7 +20,14 @@ defmodule Newspaper.Extraction do
   end
 
   defp do_execute_attempt(attempt) do
-    {:ok, attempt} = Processing.mark_attempt_running(attempt)
+    case Processing.mark_attempt_running(attempt) do
+      {:ok, attempt} -> run_claimed_attempt(attempt)
+      {:error, :not_queued} -> {:ok, attempt}
+    end
+  end
+
+  # The attempt was cancelled or claimed elsewhere between dispatch and start.
+  defp run_claimed_attempt(attempt) do
     article = attempt.article
     {:ok, article} = Content.set_extraction_status(article, "running")
     url_candidates = Content.extraction_url_candidates(article)
