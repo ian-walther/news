@@ -39,6 +39,12 @@ defmodule Newspaper.Operations do
 
     Run
     |> where([run], run.run_type != "pipeline_step")
+    |> then(fn query ->
+      case Keyword.get(opts, :status) do
+        nil -> query
+        status -> where(query, [run], run.status == ^status)
+      end
+    end)
     |> filter_processing_run_stage(Keyword.get(opts, :stage))
     |> filter_processing_run_feed(Keyword.get(opts, :generated_feed_id))
     |> filter_processing_run_article(Keyword.get(opts, :article_id))
@@ -57,7 +63,10 @@ defmodule Newspaper.Operations do
       status: "running",
       started_at: DateTime.utc_now(:second),
       related: related,
-      debug_metadata: Map.put(debug_metadata, "owner", inspect(self())),
+      debug_metadata:
+        debug_metadata
+        |> Map.put("owner", inspect(self()))
+        |> Map.put("owner_boot", Newspaper.Runtime.boot_id()),
       pipeline_step_attempt_id: related_id(related, "pipeline_step_attempt_id")
     })
     |> Repo.insert()
@@ -127,24 +136,85 @@ defmodule Newspaper.Operations do
   started before a restart parses to a pid from another node incarnation and
   is reported dead, which is the correct answer.
   """
-  def run_owner_alive?(%Run{debug_metadata: metadata}) do
-    case metadata["owner"] do
-      "#PID" <> rest ->
-        try do
-          rest |> String.to_charlist() |> :erlang.list_to_pid() |> Process.alive?()
-        rescue
-          ArgumentError -> false
-        end
+  # Pipeline runs are recovered by their dispatchers; only these run kinds
+  # can be judged abandoned by an operator.
+  @closable_run_types ~w(fetch_all fetch_input_feed process_input_feed process_intake_group backfill_output_feed rerender_output_feed retry_entry_failures)
+  @stage_timeouts_seconds %{
+    "fetch_all" => 600,
+    "fetch_input_feed" => 120,
+    "process_input_feed" => 600,
+    "process_intake_group" => 600,
+    "backfill_output_feed" => 900,
+    "rerender_output_feed" => 900,
+    "retry_entry_failures" => 600
+  }
 
-      _owner ->
-        false
+  def stage_timeout_seconds(run_type), do: Map.get(@stage_timeouts_seconds, run_type, 900)
+
+  @doc """
+  Whether the process that started `run` is still alive **in this VM boot**.
+  The owner pid text is only meaningful together with the boot identity it
+  was recorded under; a pid string from a previous boot that happens to
+  match a live process today is not the owner (audit IMP-10).
+  """
+  def run_owner_alive?(%Run{debug_metadata: metadata}) do
+    with true <- metadata["owner_boot"] == Newspaper.Runtime.boot_id(),
+         "#PID" <> rest <- metadata["owner"] do
+      try do
+        rest |> String.to_charlist() |> :erlang.list_to_pid() |> Process.alive?()
+      rescue
+        ArgumentError -> false
+      end
+    else
+      _ -> false
     end
   end
 
-  @doc "Closes a run the operator has judged abandoned; refuses if it already finished."
-  def close_run_as_failed(run_id) when is_integer(run_id) do
-    now = DateTime.utc_now(:second)
+  @doc """
+  The liveness state of a running operation at `now`: `:active` within its
+  stage timeout, `:slow` past it with a live owner, `:abandoned` past it with
+  no live owner. Finished runs are `:finished`.
+  """
+  def run_liveness(%Run{} = run, now \\ DateTime.utc_now(:second)) do
+    cond do
+      run.status != "running" ->
+        :finished
 
+      DateTime.diff(now, run.started_at, :second) <= stage_timeout_seconds(run.run_type) ->
+        :active
+
+      run_owner_alive?(run) ->
+        :slow
+
+      true ->
+        :abandoned
+    end
+  end
+
+  @doc """
+  Closes a run the operator has judged abandoned. The domain re-validates
+  the judgement: only operation runs, only past their stage timeout, only
+  with no live owner, and only while still running (audit IMP-10).
+  """
+  def close_run_as_failed(run_id, now \\ DateTime.utc_now(:second)) when is_integer(run_id) do
+    case Repo.get(Run, run_id) do
+      nil ->
+        {:error, :not_found}
+
+      %Run{run_type: run_type} when run_type not in @closable_run_types ->
+        {:error, :not_closable}
+
+      %Run{} = run ->
+        case run_liveness(run, now) do
+          :finished -> {:error, :not_running}
+          :active -> {:error, :within_timeout}
+          :slow -> {:error, :owner_alive}
+          :abandoned -> do_close_run(run_id, now)
+        end
+    end
+  end
+
+  defp do_close_run(run_id, now) do
     {count, _rows} =
       Run
       |> where([run], run.id == ^run_id and run.status == "running")
@@ -174,6 +244,15 @@ defmodule Newspaper.Operations do
   """
   def resolve_failures(failure_types, criteria)
       when is_list(failure_types) and is_list(criteria) do
+    if criteria == [] or Enum.any?(criteria, fn {_key, value} -> value in [nil, ""] end) do
+      # An absent identifier never widens the match (audit IMP-09).
+      0
+    else
+      do_resolve_failures(failure_types, criteria)
+    end
+  end
+
+  defp do_resolve_failures(failure_types, criteria) do
     query =
       Enum.reduce(
         criteria,

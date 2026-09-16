@@ -110,6 +110,7 @@ defmodule NewspaperWeb.AdminLive.Format do
   """
   def stage_eta_label(%{queued: 0}), do: nil
   def stage_eta_label(%{paused: true}), do: "paused"
+  def stage_eta_label(%{backoff: true}), do: "held by website backoff"
   def stage_eta_label(%{per_minute: nil}), do: "estimating"
 
   def stage_eta_label(%{queued: queued, per_minute: per_minute}),
@@ -137,9 +138,11 @@ defmodule NewspaperWeb.AdminLive.Format do
       count_phrase(counts, :queued, "queued"),
       count_phrase(counts, :running, "running"),
       count_phrase(counts, :blocked, "waiting"),
+      count_phrase(counts, :pending, "requested"),
       count_phrase(counts, :not_requested, "not requested"),
       count_phrase(counts, :failed, "failed"),
-      count_phrase(counts, :skipped, "skipped")
+      count_phrase(counts, :skipped, "skipped"),
+      count_phrase(counts, :cancelled, "cancelled")
     ]
     |> Enum.reject(&is_nil/1)
     |> Enum.join(" · ")
@@ -173,6 +176,25 @@ defmodule NewspaperWeb.AdminLive.Format do
     do: "This feed's rendering settings depend on #{step_type}"
 
   def processing_error_message(:step_exists), do: "This feed already has that step"
+  def processing_error_message(:batch_cancelled), do: "That batch was cancelled"
+
+  def processing_error_message(:batch_already_running),
+    do: "A batch for this step is already running"
+
+  def processing_error_message(:digestion_paused), do: "Digestion is paused"
+  def processing_error_message(:no_eligible_items), do: "None of those items can be processed"
+  def processing_error_message({:close_run, :not_found}), do: "That run no longer exists"
+
+  def processing_error_message({:close_run, :not_closable}),
+    do: "Only operations can be closed this way"
+
+  def processing_error_message({:close_run, :not_running}), do: "That run already finished"
+
+  def processing_error_message({:close_run, :within_timeout}),
+    do: "That run is still within its expected time"
+
+  def processing_error_message({:close_run, :owner_alive}),
+    do: "That run's owner is still alive; it is slow, not abandoned"
 
   def processing_error_message(:step_has_active_work),
     do: "Wait for queued and running work on this step to finish first"

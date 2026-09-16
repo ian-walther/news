@@ -41,6 +41,7 @@ defmodule Newspaper.Content do
         Map.get(filters, :status, "all"),
         Map.get(filters, :generated_feed_id)
       )
+      |> filter_article_held(Map.get(filters, :held, false), Map.get(filters, :generated_feed_id))
 
     total_count = Repo.aggregate(query, :count, :id)
     total_pages = max(ceil(total_count / per_page), 1)
@@ -176,6 +177,26 @@ defmodule Newspaper.Content do
       not_enabled: count.("not_enabled")
     }
   end
+
+  # "Held" is the publication predicate itself: an item withheld from its
+  # feed's output (`publication_status = processing`), whatever step state
+  # is causing it (audit IMP-19).
+  defp filter_article_held(query, true, generated_feed_id) do
+    held_items =
+      GeneratedFeedItem
+      |> from(as: :held_item)
+      |> where([held_item: item], item.article_id == parent_as(:article).id)
+      |> where([held_item: item], item.publication_status == "processing")
+
+    held_items =
+      if generated_feed_id,
+        do: where(held_items, [held_item: item], item.generated_feed_id == ^generated_feed_id),
+        else: held_items
+
+    where(query, [article: _article], exists(held_items))
+  end
+
+  defp filter_article_held(query, _held, _generated_feed_id), do: query
 
   defp filter_article_stage_status(query, "digestion", status, generated_feed_id),
     do: filter_article_digestion_status(query, status, generated_feed_id)

@@ -82,7 +82,7 @@ defmodule NewspaperWeb.AdminLive.OutputFeeds do
   def render(assigns) do
     ~H"""
     <Layouts.app flash={@flash}>
-      <.nav current="output-feeds" />
+      <.nav current="output-feeds" attention_count={@attention_count} />
       <header class="mb-8 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <p class="mb-1 text-xs font-semibold uppercase tracking-wider text-base-content/50">

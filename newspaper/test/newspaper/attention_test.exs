@@ -32,8 +32,8 @@ defmodule Newspaper.AttentionTest do
       assert group.subject == "Cars"
       assert group.count == 2
       assert group.action_label == "Retry 2"
-      assert {:retry_items, feed_id, "extraction", [_, _]} = group.action
-      assert feed_id == feed.id
+      assert group.action == {:retry_step_group, feed.id, "extraction", "http_error"}
+      assert %{items: [_, _], total: 2, more?: false} = Attention.group_items(group)
       assert Attention.count() == 1
 
       assert {:ok, message} = Attention.perform(group.action)
@@ -64,16 +64,39 @@ defmodule Newspaper.AttentionTest do
       assert_receive {:DOWN, ^ref, :process, ^pid, _}
       refute Operations.run_owner_alive?(run)
 
-      later = DateTime.add(run.started_at, 3600, :second)
-      assert [group] = Attention.groups(later)
+      # Within its stage timeout the run is merely active, and the domain
+      # refuses to close it even though the owner is gone.
+      assert Attention.groups() == []
+      assert {:error, :within_timeout} = Operations.close_run_as_failed(run.id)
+
+      run = age_run!(run, 3600)
+      assert [group] = Attention.groups()
       assert group.kind == :stuck_run
       assert group.title == "Abandoned Feed fetch"
       assert group.action == {:close_run, run.id}
 
       assert {:ok, _message} = Attention.perform(group.action)
       assert Operations.get_run!(run.id).status == "failed"
-      assert {:error, :run_already_finished} = Attention.perform(group.action)
-      assert Attention.groups(later) == []
+      assert {:error, {:close_run, :not_running}} = Attention.perform(group.action)
+      assert Attention.groups() == []
+    end
+
+    test "a live owner past the timeout cannot be closed, and pipeline runs never can" do
+      {:ok, run} = Operations.start_run("backfill_output_feed", "manual")
+      run = age_run!(run, 3600)
+      assert {:error, :owner_alive} = Operations.close_run_as_failed(run.id)
+
+      {:ok, batch} = Operations.start_run("pipeline_batch", "manual")
+      assert {:error, :not_closable} = Operations.close_run_as_failed(batch.id)
+      assert {:error, :not_found} = Operations.close_run_as_failed(batch.id + 100_000)
+    end
+
+    test "an owner pid from a previous boot is never treated as alive" do
+      {:ok, run} = Operations.start_run("fetch_input_feed", "scheduled")
+      assert Operations.run_owner_alive?(run)
+
+      stale = %{run | debug_metadata: Map.put(run.debug_metadata, "owner_boot", "previous-boot")}
+      refute Operations.run_owner_alive?(stale)
     end
 
     test "a live owner past the timeout is reported as slow with no action" do
@@ -116,13 +139,147 @@ defmodule Newspaper.AttentionTest do
       assert [group] = Attention.groups()
       assert group.kind == :entry_failed
       assert group.subject == "Ars"
-      assert group.action == {:retry_entries, [failure.id]}
+      assert group.action == {:retry_entry_group, "raw_item_processing_failed", input_feed.id}
 
-      assert {:ok, "Retried 1 of 1 entries"} = Attention.perform(group.action)
+      assert %{items: [%{id: item_id, action: {:retry_entries, [item_id]}}]} =
+               Attention.group_items(group)
+
+      assert item_id == failure.id
+
+      assert {:ok, message} = Attention.perform(group.action)
+      assert message =~ "in the background"
+
+      # The supervised retry itself, run synchronously here.
+      assert {:ok, %{run: run, results: results}} = Pipeline.retry_entry_failures([failure.id])
+      assert results == %{failure.id => :repaired}
+      assert run.status == "succeeded"
+      assert run.summary_counts["repaired"] == 1
       assert Operations.get_failure!(failure.id).resolved_at
+      assert Operations.get_failure!(failure.id).retry_count == 1
       assert Attention.groups() == []
       assert Repo.aggregate(Content.Article, :count) == 1
       assert {:error, :already_resolved} = Pipeline.retry_entry_failure(failure.id)
+    end
+
+    test "a successful refetch that no longer carries the entry is not a repair" do
+      {:ok, source} =
+        Intake.create_input_feed(%{name: "Ars", url: "https://feeds.arstechnica.com/index"})
+
+      {:ok, failure} =
+        Operations.create_failure(%{
+          failure_type: "raw_item_ingestion_failed",
+          message: "Previous bad entry",
+          related: %{"input_feed_id" => source.id, "feed_guid" => "expired-entry"}
+        })
+
+      {:ok, other} =
+        Operations.create_failure(%{
+          failure_type: "raw_item_ingestion_failed",
+          message: "Another bad entry",
+          related: %{"input_feed_id" => source.id, "feed_guid" => "also-expired"}
+        })
+
+      fetches = :counters.new(1, [])
+
+      Req.Test.stub(Newspaper.Pipeline.FeedClient, fn conn ->
+        :counters.add(fetches, 1, 1)
+
+        Plug.Conn.resp(conn, 200, """
+        <rss version="2.0"><channel><title>Ars</title><link>https://arstechnica.com</link>
+        <description>Technology</description></channel></rss>
+        """)
+      end)
+
+      assert {:ok, %{run: run, results: results}} =
+               Pipeline.retry_entry_failures([failure.id, other.id])
+
+      # One refetch for the whole source, and neither record is repaired.
+      assert :counters.get(fetches, 1) == 1
+      assert results == %{failure.id => :entry_missing, other.id => :entry_missing}
+      assert run.status == "failed"
+      assert run.summary_counts["entry_missing"] == 2
+      refute Operations.get_failure!(failure.id).resolved_at
+      assert {:error, :entry_missing} = Pipeline.retry_entry_failure(failure.id)
+    end
+
+    test "a feed entry without a GUID is ingested while an unrelated ingestion failure is open" do
+      {:ok, source} =
+        Intake.create_input_feed(%{name: "Ars", url: "https://feeds.arstechnica.com/index"})
+
+      {:ok, unrelated} =
+        Operations.create_failure(%{
+          failure_type: "raw_item_ingestion_failed",
+          message: "Previous bad entry",
+          related: %{"input_feed_id" => source.id, "url" => "https://arstechnica.com/missing/"}
+        })
+
+      Req.Test.stub(Newspaper.Pipeline.FeedClient, fn conn ->
+        Plug.Conn.resp(conn, 200, """
+        <rss version="2.0"><channel><title>Ars</title><link>https://arstechnica.com</link>
+        <description>Technology</description><item><title>A useful article without a GUID</title>
+        <link>https://arstechnica.com/guid-less/</link><description>Summary.</description>
+        </item></channel></rss>
+        """)
+      end)
+
+      assert {:ok, run} = Pipeline.fetch_input_feed(source, "test")
+      assert run.summary_counts["items"] == 1
+      refute Operations.get_failure!(unrelated.id).resolved_at
+
+      # The same fetch repairs a failure recorded for that URL.
+      {:ok, by_url} =
+        Operations.create_failure(%{
+          failure_type: "raw_item_ingestion_failed",
+          message: "Bad entry",
+          related: %{"input_feed_id" => source.id, "url" => "https://arstechnica.com/guid-less/"}
+        })
+
+      assert {:ok, _run} = Pipeline.fetch_input_feed(source, "test", ignore_validators: true)
+      assert Operations.get_failure!(by_url.id).resolved_at
+    end
+
+    test "re-render failures are attributable, actionable, and resolve on a later success" do
+      {:ok, source} =
+        Intake.create_input_feed(%{name: "Ars", url: "https://feeds.arstechnica.com/index"})
+
+      {:ok, _raw} =
+        Intake.upsert_raw_item(source, %{
+          feed_guid: "ars-r",
+          url: "https://arstechnica.com/r/",
+          title: "Render me",
+          discovered_at: ~U[2026-09-14 12:00:00Z]
+        })
+
+      assert {:ok, _run} = Pipeline.process_input_feed(source.id, "test")
+
+      {:ok, feed} =
+        Publishing.create_generated_feed(%{"title" => "Tech", "input_feed_ids" => [source.id]})
+
+      assert {:ok, _run} = Pipeline.backfill_output_feed(feed.id, "test")
+      [item] = Publishing.list_items_for_feed(feed)
+
+      {:ok, failure} =
+        Operations.create_failure(%{
+          failure_type: "generated_feed_item_render_failed",
+          message: "title can't be blank",
+          retryable: true,
+          related: %{
+            "generated_feed_id" => feed.id,
+            "generated_feed_item_id" => item.id,
+            "article_id" => item.article_id
+          }
+        })
+
+      assert [group] = Attention.groups()
+      assert group.kind == :entry_failed
+      assert group.stage == "publishing"
+      assert group.subject == "Tech"
+      assert group.action == {:rerender, feed.id}
+      assert Attention.count() == 1
+
+      assert {:ok, _run} = Pipeline.rerender_output_feed(feed.id, "test")
+      assert Operations.get_failure!(failure.id).resolved_at
+      assert Attention.groups() == []
     end
 
     test "an ingestion failure retries by refetching without cache validators" do
@@ -149,6 +306,12 @@ defmodule Newspaper.AttentionTest do
       assert [_feed_group, _entry_group] = Enum.sort_by(Attention.groups(), & &1.kind)
       assert Enum.any?(Attention.groups(), &(&1.kind == :feed_fetch_failed))
     end
+  end
+
+  defp age_run!(run, seconds) do
+    run
+    |> Ecto.Changeset.change(started_at: DateTime.add(run.started_at, -seconds, :second))
+    |> Repo.update!()
   end
 
   defp feed_with_articles!(count) do

@@ -1,19 +1,17 @@
 defmodule NewspaperWeb.AdminLive.Nav do
   use NewspaperWeb, :html
 
-  alias Newspaper.Operations.Attention
-
   attr :current, :string, required: true
 
   attr :attention_count, :integer,
-    default: nil,
-    doc: "Attention group count for the badge; computed when not supplied"
+    required: true,
+    doc: "Reactive count from NewspaperWeb.AttentionHook; never queried here"
 
   def nav(assigns) do
     assigns =
       assigns
       |> assign(:items, nav_items())
-      |> assign_new(:badge_count, fn %{attention_count: count} -> count || Attention.count() end)
+      |> assign(:badge_count, assigns.attention_count || 0)
 
     ~H"""
     <nav id="app-nav" class="mb-8 border-b border-base-300" aria-label="Primary navigation">

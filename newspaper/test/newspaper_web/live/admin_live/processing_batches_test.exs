@@ -46,7 +46,7 @@ defmodule NewspaperWeb.AdminLive.ProcessingBatchesTest do
     {:ok, view, _html} = live(conn, ~p"/processing?tab=batches")
     view |> element("#cancel-batch-#{batch.id}") |> render_click()
 
-    assert has_element?(view, "#flash-info", "Cancelled 2 items")
+    assert has_element?(view, "#flash-info", "Cancelled 2 extraction")
     assert has_element?(view, "#batch-#{batch.id}[data-status='cancelled']")
     refute has_element?(view, "#cancel-batch-#{batch.id}")
     assert Operations.get_run!(batch.id).status == "cancelled"

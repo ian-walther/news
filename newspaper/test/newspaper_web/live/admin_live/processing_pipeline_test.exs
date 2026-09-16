@@ -52,7 +52,7 @@ defmodule NewspaperWeb.AdminLive.ProcessingPipelineTest do
     view |> element("#add-step-#{feed.id}-extraction") |> render_click()
 
     assert has_element?(view, "#chain-link-#{feed.id}-extraction")
-    assert has_element?(view, "#toggle-step-#{feed.id}-extraction[checked]")
+    assert has_element?(view, "#toggle-step-#{feed.id}-extraction[aria-checked='true']")
     assert has_element?(view, "#add-step-#{feed.id}-digestion")
 
     view |> element("#add-step-#{feed.id}-digestion") |> render_click()

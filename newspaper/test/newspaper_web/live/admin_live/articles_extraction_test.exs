@@ -51,6 +51,7 @@ defmodule NewspaperWeb.AdminLive.ArticlesExtractionTest do
     assert Repo.get_by!(ArticleExtraction, article_id: article.id).content_html =~
              "Extracted article body"
 
+    refresh_articles(view)
     assert has_element?(view, "a[href='/articles/#{article.guid}']")
 
     assert {:ok, article_view, _html} = live(conn, ~p"/articles/#{article.guid}")
@@ -119,7 +120,7 @@ defmodule NewspaperWeb.AdminLive.ArticlesExtractionTest do
     end)
 
     assert {:ok, _attempt} = Digestion.execute_attempt(attempt.id)
-    _ = :sys.get_state(view.pid)
+    refresh_articles(view)
 
     assert has_element?(view, "#article-#{article.id}", "Digest: ready")
 
@@ -155,6 +156,12 @@ defmodule NewspaperWeb.AdminLive.ArticlesExtractionTest do
 
     assert {:ok, digest_view, _html} = live(conn, hosted_path)
     assert has_element?(digest_view, "#article-digest", "Rectangular headlights")
+  end
+
+  # Article updates are coalesced; flush the pending refresh.
+  defp refresh_articles(view) do
+    send(view.pid, :refresh_articles)
+    _ = :sys.get_state(view.pid)
   end
 
   defp configure_extraction!(article) do

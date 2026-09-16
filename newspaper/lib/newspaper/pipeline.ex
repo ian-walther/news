@@ -220,9 +220,41 @@ defmodule Newspaper.Pipeline do
 
     feed = Newspaper.Publishing.get_generated_feed!(generated_feed_id)
     items = Publishing.list_items_for_feed(feed)
-    results = Enum.map(items, &Publishing.rerender_item(&1, broadcast: false))
-    errors = Enum.filter(results, &match?({:error, _}, &1))
+    resolve? = Operations.unresolved_failures?(["generated_feed_item_render_failed"])
 
+    results =
+      Enum.map(items, fn item ->
+        case Publishing.rerender_item(item, broadcast: false) do
+          {:ok, _rendered} = ok ->
+            if resolve? do
+              safely_resolve(["generated_feed_item_render_failed"], [
+                {"generated_feed_item_id", item.id}
+              ])
+            end
+
+            ok
+
+          {:error, reason} = error ->
+            # Each failed item is an attributable, resolvable record so
+            # Attention can name it and a later successful render clears it
+            # (audit IMP-21).
+            Operations.create_failure(%{
+              failure_type: "generated_feed_item_render_failed",
+              message: render_error_message(reason),
+              retryable: true,
+              related: %{
+                "generated_feed_id" => feed.id,
+                "generated_feed_item_id" => item.id,
+                "article_id" => item.article_id
+              },
+              run_id: run.id
+            })
+
+            error
+        end
+      end)
+
+    errors = Enum.filter(results, &match?({:error, _}, &1))
     status = if errors == [], do: "succeeded", else: "failed"
 
     result =
@@ -238,6 +270,14 @@ defmodule Newspaper.Pipeline do
     Newspaper.Events.broadcast_data_changed(:publishing_changed)
     result
   end
+
+  defp render_error_message(%Ecto.Changeset{} = changeset) do
+    changeset
+    |> Ecto.Changeset.traverse_errors(fn {message, _opts} -> message end)
+    |> Enum.map_join("; ", fn {field, messages} -> "#{field} #{Enum.join(messages, ", ")}" end)
+  end
+
+  defp render_error_message(reason), do: inspect(reason)
 
   def retry_failure(failure_id, trigger \\ "manual_retry") do
     failure = Operations.get_failure!(failure_id)
@@ -256,36 +296,134 @@ defmodule Newspaper.Pipeline do
   defp ensure_success(%Req.Response{status: status}), do: {:error, {:http_status, status}}
 
   @doc """
-  Retries a pre-pipeline failure record. Processing and publication failures
-  replay the stored raw item through the same path the fetch used, so a fix
-  (a schema change, a feed rule) takes effect without waiting for the origin.
-  Ingestion failures have no stored item to replay, so the feed is refetched
-  without cache validators. A failure that no longer has anything to replay
-  is resolved and reported as such.
+  Starts a supervised retry of pre-pipeline failure records and returns at
+  once; the work is tracked as a `retry_entry_failures` run whose summary
+  reports each outcome (audit IMP-17).
   """
+  def start_retry_entry_failures(failure_ids, trigger \\ "manual") when is_list(failure_ids) do
+    Task.Supervisor.start_child(Newspaper.Processing.TaskSupervisor, fn ->
+      retry_entry_failures(failure_ids, trigger)
+    end)
+    |> case do
+      {:ok, _pid} -> {:ok, length(failure_ids)}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  @doc """
+  Retries pre-pipeline failure records and reports what actually happened to
+  each one. Processing and publication failures replay the stored raw item
+  through the same path the fetch used. Ingestion failures are grouped by
+  source and each source is refetched **once**, without cache validators;
+  afterwards each failure is checked again, so a refetch that no longer
+  carries the entry is reported as `:entry_missing`, never as a repair.
+
+  Outcomes: `:repaired`, `:still_failed`, `:entry_missing`,
+  `:target_missing` (raw item or source deleted; the record is resolved as
+  unrepairable), `:already_resolved`, `:not_retryable`.
+  """
+  def retry_entry_failures(failure_ids, trigger \\ "manual") when is_list(failure_ids) do
+    failures = Enum.map(failure_ids, &Operations.get_failure!/1)
+
+    {:ok, run} =
+      Operations.start_run("retry_entry_failures", trigger, %{
+        "failure_ids" => Enum.map(failures, & &1.id)
+      })
+
+    {ingestion, others} =
+      Enum.split_with(failures, &(&1.failure_type == "raw_item_ingestion_failed"))
+
+    results =
+      Enum.map(others, fn failure -> {failure.id, retry_one_entry(failure)} end) ++
+        retry_ingestion_failures(ingestion)
+
+    counts =
+      results
+      |> Enum.group_by(fn {_id, outcome} -> Atom.to_string(outcome) end)
+      |> Map.new(fn {outcome, entries} -> {outcome, length(entries)} end)
+      |> Map.put("failures", length(results))
+
+    repaired = Map.get(counts, "repaired", 0)
+    status = if repaired == length(results), do: "succeeded", else: "failed"
+
+    error_summary =
+      results
+      |> Enum.reject(fn {_id, outcome} -> outcome == :repaired end)
+      |> case do
+        [] -> nil
+        unrepaired -> Enum.map_join(unrepaired, ", ", fn {id, outcome} -> "##{id} #{outcome}" end)
+      end
+
+    {:ok, run} =
+      Operations.finish_run(run, status, %{summary_counts: counts, error_summary: error_summary})
+
+    {:ok, %{run: run, results: Map.new(results)}}
+  end
+
+  @doc "Retries one failure record; see `retry_entry_failures/2` for outcomes."
   def retry_entry_failure(failure_id) when is_integer(failure_id) do
     failure = Operations.get_failure!(failure_id)
 
+    if failure.failure_type == "raw_item_ingestion_failed" do
+      [{_id, outcome}] = retry_ingestion_failures([failure])
+      outcome_result(outcome)
+    else
+      failure |> retry_one_entry() |> outcome_result()
+    end
+  end
+
+  defp outcome_result(:repaired), do: {:ok, :repaired}
+  defp outcome_result(outcome), do: {:error, outcome}
+
+  defp retry_one_entry(failure) do
     cond do
       failure.resolved_at != nil ->
-        {:error, :already_resolved}
+        :already_resolved
 
       failure.failure_type in ["raw_item_processing_failed", "generated_feed_item_create_failed"] ->
         replay_raw_item(failure)
 
-      failure.failure_type == "raw_item_ingestion_failed" ->
-        refetch_for_failure(failure)
+      failure.failure_type == "generated_feed_item_render_failed" ->
+        rerender_failed_item(failure)
 
       true ->
-        {:error, :not_retryable}
+        :not_retryable
+    end
+  end
+
+  # Re-renders exactly the failed item; only its own record resolves, and
+  # only if that render succeeded (audit IMP-21).
+  defp rerender_failed_item(failure) do
+    {:ok, _failure} = Operations.increment_failure_retry(failure)
+    item_id = failure.related["generated_feed_item_id"]
+
+    case item_id && Repo.get(Newspaper.Publishing.GeneratedFeedItem, item_id) do
+      nil ->
+        Operations.resolve_failures([failure.failure_type], [{"id", failure.id}])
+        :target_missing
+
+      item ->
+        case Publishing.rerender_item(item) do
+          {:ok, _rendered} ->
+            Operations.resolve_failures(["generated_feed_item_render_failed"], [
+              {"generated_feed_item_id", item.id}
+            ])
+
+            :repaired
+
+          {:error, _reason} ->
+            :still_failed
+        end
     end
   end
 
   defp replay_raw_item(failure) do
+    {:ok, _failure} = Operations.increment_failure_retry(failure)
+
     case failure.related["raw_item_id"] && Repo.get(RawItem, failure.related["raw_item_id"]) do
       nil ->
         Operations.resolve_failures([failure.failure_type], [{"id", failure.id}])
-        {:error, :raw_item_missing}
+        :target_missing
 
       raw_item ->
         {:ok, run} =
@@ -306,19 +444,51 @@ defmodule Newspaper.Pipeline do
           error_summary: error_summary(errors)
         })
 
-        if errors == [], do: {:ok, run}, else: {:error, {:item_failures, length(errors)}}
+        # The replay may have succeeded without touching this record's
+        # target (an output disabled or removed since); only the record's
+        # own resolution counts as repair.
+        if Operations.get_failure!(failure.id).resolved_at, do: :repaired, else: :still_failed
     end
   end
 
-  defp refetch_for_failure(failure) do
-    case failure.related["input_feed_id"] && Repo.get(InputFeed, failure.related["input_feed_id"]) do
-      nil ->
-        Operations.resolve_failures([failure.failure_type], [{"id", failure.id}])
-        {:error, :input_feed_missing}
+  # One refetch per source, then each record is re-read: transport success is
+  # not repair.
+  defp retry_ingestion_failures([]), do: []
 
-      feed ->
-        fetch_input_feed(feed, "manual", ignore_validators: true)
-    end
+  defp retry_ingestion_failures(failures) do
+    failures
+    |> Enum.group_by(& &1.related["input_feed_id"])
+    |> Enum.flat_map(fn {feed_id, group} ->
+      {resolved, open} = Enum.split_with(group, &(&1.resolved_at != nil))
+      resolved_results = Enum.map(resolved, &{&1.id, :already_resolved})
+
+      open_results =
+        case feed_id && Repo.get(InputFeed, feed_id) do
+          nil ->
+            Enum.map(open, fn failure ->
+              Operations.resolve_failures([failure.failure_type], [{"id", failure.id}])
+              {failure.id, :target_missing}
+            end)
+
+          feed when open == [] ->
+            _ = feed
+            []
+
+          feed ->
+            Enum.each(open, &Operations.increment_failure_retry/1)
+            fetch_result = fetch_input_feed(feed, "manual", ignore_validators: true)
+
+            Enum.map(open, fn failure ->
+              cond do
+                Operations.get_failure!(failure.id).resolved_at -> {failure.id, :repaired}
+                match?({:ok, _run}, fetch_result) -> {failure.id, :entry_missing}
+                true -> {failure.id, :still_failed}
+              end
+            end)
+        end
+
+      resolved_results ++ open_results
+    end)
   end
 
   defp persist_raw_items(feed, items, run) do
@@ -327,13 +497,7 @@ defmodule Newspaper.Pipeline do
     Enum.reduce(items, {[], []}, fn item, {raw_items, errors} ->
       case Intake.upsert_raw_item(feed, item, broadcast: false) do
         {:ok, raw_item} ->
-          if resolve? do
-            Operations.resolve_failures(["raw_item_ingestion_failed"], [
-              {"input_feed_id", feed.id},
-              {"feed_guid", raw_item.feed_guid}
-            ])
-          end
-
+          if resolve?, do: resolve_ingestion_failure(feed, raw_item)
           {[raw_item | raw_items], errors}
 
         {:error, reason} ->
@@ -357,6 +521,38 @@ defmodule Newspaper.Pipeline do
     |> then(fn {raw_items, errors} -> {Enum.reverse(raw_items), Enum.reverse(errors)} end)
   end
 
+  # A feed entry is identified within its feed by its stable id when it has
+  # one, else by its URL. Neither present means nothing can be matched, and
+  # matching must never widen to the whole feed (audit IMP-09).
+  defp resolve_ingestion_failure(feed, raw_item) do
+    cond do
+      is_binary(raw_item.feed_guid) and raw_item.feed_guid != "" ->
+        safely_resolve(["raw_item_ingestion_failed"], [
+          {"input_feed_id", feed.id},
+          {"feed_guid", raw_item.feed_guid}
+        ])
+
+      is_binary(raw_item.url) and raw_item.url != "" ->
+        safely_resolve(["raw_item_ingestion_failed"], [
+          {"input_feed_id", feed.id},
+          {"url", raw_item.url}
+        ])
+
+      true ->
+        0
+    end
+  end
+
+  # Reconciling diagnostics is never allowed to fail successful ingestion.
+  defp safely_resolve(failure_types, criteria) do
+    Operations.resolve_failures(failure_types, criteria)
+  rescue
+    error ->
+      require Logger
+      Logger.warning("failure resolution skipped: #{Exception.message(error)}")
+      0
+  end
+
   @entry_failure_types ~w(raw_item_processing_failed generated_feed_item_create_failed)
 
   defp process_raw_items(raw_items, run) do
@@ -367,9 +563,7 @@ defmodule Newspaper.Pipeline do
         article = Content.create_or_update_from_raw_item(raw_item, dedupe_keys(raw_item))
 
         if resolve? do
-          Operations.resolve_failures(["raw_item_processing_failed"], [
-            {"raw_item_id", raw_item.id}
-          ])
+          safely_resolve(["raw_item_processing_failed"], [{"raw_item_id", raw_item.id}])
         end
 
         publishing_errors =
@@ -378,7 +572,7 @@ defmodule Newspaper.Pipeline do
           |> Enum.flat_map(fn
             {feed, {:ok, _item}} ->
               if resolve? do
-                Operations.resolve_failures(["generated_feed_item_create_failed"], [
+                safely_resolve(["generated_feed_item_create_failed"], [
                   {"generated_feed_id", feed.id},
                   {"article_id", article.id}
                 ])

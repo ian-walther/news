@@ -288,6 +288,269 @@ defmodule Newspaper.ProcessingCancelTest do
     {:ok, _settings} = Operations.update_settings(settings, %{ollama_model: "qwen3.6:27b"})
   end
 
+  describe "shared demand across feeds (audit IMP-01..07, IMP-16)" do
+    test "completing a shared execution settles every batch that requested it" do
+      %{feed_a: feed_a, feed_b: feed_b} = two_feeds_sharing_articles!(1)
+      assert {:ok, batch_a} = Processing.start_feed_batch(feed_a.id, "test", "extraction")
+      assert :ok = BatchDispatcher.await(batch_a.id)
+      assert {:ok, batch_b} = Processing.start_feed_batch(feed_b.id, "test", "extraction")
+      assert :ok = BatchDispatcher.await(batch_b.id)
+      assert Repo.aggregate(PipelineStepAttempt, :count) == 1
+
+      [attempt] = Processing.list_attempts_for_batch(batch_a.id)
+      assert [^attempt] = Processing.list_attempts_for_batch(batch_b.id)
+      assert {:ok, _} = Processing.finish_attempt(attempt, "succeeded")
+
+      assert Operations.get_run!(batch_a.id).status == "succeeded"
+      assert Operations.get_run!(batch_b.id).status == "succeeded"
+      assert Operations.get_run!(batch_b.id).summary_counts["succeeded"] == 1
+    end
+
+    test "a permitted automatic retry keeps its member and batch active" do
+      %{feed_a: feed_a} = two_feeds_sharing_articles!(1)
+      assert {:ok, batch} = Processing.start_feed_batch(feed_a.id, "test", "extraction")
+      assert :ok = BatchDispatcher.await(batch.id)
+      [attempt] = Processing.list_attempts_for_batch(batch.id)
+
+      assert {:ok, attempt} =
+               Processing.finish_attempt(attempt, "failed", %{
+                 failure_kind: "rate_limited",
+                 retryable: true
+               })
+
+      assert Operations.get_run!(batch.id).status == "running"
+      [member] = Repo.all(PipelineBatchMember)
+      assert member.outcome == nil
+
+      assert {:ok, retry} = Processing.schedule_automatic_retry(attempt)
+      assert retry.status == "queued"
+      assert retry.batch_run_id == batch.id
+      assert Operations.get_run!(batch.id).status == "running"
+      assert Operations.get_run!(batch.id).summary_counts["queued"] == 1
+
+      assert {:ok, _} = Processing.finish_attempt(retry, "succeeded")
+      assert Operations.get_run!(batch.id).status == "succeeded"
+    end
+
+    test "an exhausted retry budget settles the member as failed" do
+      %{feed_a: feed_a} = two_feeds_sharing_articles!(1)
+      assert {:ok, batch} = Processing.start_feed_batch(feed_a.id, "test", "extraction")
+      assert :ok = BatchDispatcher.await(batch.id)
+      [attempt] = Processing.list_attempts_for_batch(batch.id)
+
+      final =
+        Enum.reduce(1..4, attempt, fn _round, attempt ->
+          assert {:ok, failed} =
+                   Processing.finish_attempt(attempt, "failed", %{
+                     failure_kind: "rate_limited",
+                     retryable: true
+                   })
+
+          case Processing.schedule_automatic_retry(failed) do
+            {:ok, %PipelineStepAttempt{} = retry} -> retry
+            {:ok, nil} -> failed
+          end
+        end)
+
+      assert final.status == "failed"
+      assert Operations.get_run!(batch.id).status == "failed"
+      assert Enum.all?(Repo.all(PipelineBatchMember), &(&1.outcome == "failed"))
+    end
+
+    test "claiming shared work does not resurrect a cancelled item step" do
+      %{feed_a: feed_a, feed_b: feed_b} = two_feeds_sharing_articles!(1)
+      assert {:ok, batch_a} = Processing.start_feed_batch(feed_a.id, "test", "extraction")
+      assert :ok = BatchDispatcher.await(batch_a.id)
+      assert {:ok, batch_b} = Processing.start_feed_batch(feed_b.id, "test", "extraction")
+      assert :ok = BatchDispatcher.await(batch_b.id)
+      [attempt] = Processing.list_attempts_for_batch(batch_a.id)
+
+      assert {:ok, _} = Processing.cancel_feed_batch(batch_a.id)
+      assert [%{status: "cancelled"}] = feed_item_steps(feed_a)
+
+      assert {:ok, running} = Processing.mark_attempt_running(attempt)
+      assert [%{status: "cancelled"}] = feed_item_steps(feed_a)
+      assert [%{status: "running"}] = feed_item_steps(feed_b)
+
+      assert {:ok, _} = Processing.finish_attempt(running, "succeeded")
+      assert [%{status: "cancelled"}] = feed_item_steps(feed_a)
+      assert [%{status: "succeeded"}] = feed_item_steps(feed_b)
+      assert Operations.get_run!(batch_a.id).status == "cancelled"
+      assert Operations.get_run!(batch_b.id).status == "succeeded"
+    end
+
+    test "no-content does not convert an operator's cancellation" do
+      %{feed_a: feed_a} = two_feeds_sharing_articles!(1)
+      assert {:ok, batch} = Processing.start_feed_batch(feed_a.id, "test", "extraction")
+      assert :ok = BatchDispatcher.await(batch.id)
+      assert {:ok, _} = Processing.cancel_feed_batch(batch.id)
+      [item] = Publishing.list_items_for_feed(feed_a)
+
+      assert :ok = Processing.skip_article_steps(item.article_id, "extraction", "no content")
+      assert [%{status: "cancelled"}] = feed_item_steps(feed_a)
+    end
+
+    test "cancellation cascades below a running member" do
+      %{feed_a: feed_a} = two_feeds_sharing_articles!(1)
+      configure_model!()
+      assert {:ok, _digestion} = Processing.create_step(feed_a, "digestion")
+      assert {:ok, batch} = Processing.start_feed_batch(feed_a.id, "test", "extraction")
+      assert :ok = BatchDispatcher.await(batch.id)
+      [attempt] = Processing.list_attempts_for_batch(batch.id)
+      assert {:ok, running} = Processing.mark_attempt_running(attempt)
+
+      assert {:ok, result} = Processing.cancel_feed_batch(batch.id)
+      assert result.running == 1
+      assert result.cancelled == %{"digestion" => 1}
+
+      statuses = feed_a |> feed_item_steps() |> Map.new(&{&1.step_type, &1.status})
+      assert statuses == %{"extraction" => "running", "digestion" => "cancelled"}
+
+      assert {:ok, _} = Processing.finish_attempt(running, "succeeded")
+      statuses = feed_a |> feed_item_steps() |> Map.new(&{&1.step_type, &1.status})
+      assert statuses == %{"extraction" => "succeeded", "digestion" => "cancelled"}
+      assert Operations.get_run!(batch.id).status == "cancelled"
+    end
+
+    test "recovery keeps a running execution that another batch still demands" do
+      %{feed_a: feed_a, feed_b: feed_b} = two_feeds_sharing_articles!(1)
+      assert {:ok, batch_a} = Processing.start_feed_batch(feed_a.id, "test", "extraction")
+      assert :ok = BatchDispatcher.await(batch_a.id)
+      assert {:ok, batch_b} = Processing.start_feed_batch(feed_b.id, "test", "extraction")
+      assert :ok = BatchDispatcher.await(batch_b.id)
+      [attempt] = Processing.list_attempts_for_batch(batch_a.id)
+      assert {:ok, _} = Processing.mark_attempt_running(attempt)
+      assert {:ok, _} = Processing.cancel_feed_batch(batch_a.id)
+
+      assert Processing.requeue_interrupted_attempts("extraction") == 1
+      assert Repo.get!(PipelineStepAttempt, attempt.id).status == "queued"
+      assert [%{status: "cancelled"}] = feed_item_steps(feed_a)
+      assert [%{status: "queued"}] = feed_item_steps(feed_b)
+      assert Operations.get_run!(batch_a.id).status == "cancelled"
+      assert Operations.get_run!(batch_b.id).status == "running"
+    end
+
+    test "recovery cancels a running execution nobody demands any more" do
+      %{feed_a: feed_a} = two_feeds_sharing_articles!(1)
+      assert {:ok, batch} = Processing.start_feed_batch(feed_a.id, "test", "extraction")
+      assert :ok = BatchDispatcher.await(batch.id)
+      [attempt] = Processing.list_attempts_for_batch(batch.id)
+      assert {:ok, _} = Processing.mark_attempt_running(attempt)
+      assert {:ok, _} = Processing.cancel_feed_batch(batch.id)
+
+      assert Processing.requeue_interrupted_attempts("extraction") == 0
+      assert Repo.get!(PipelineStepAttempt, attempt.id).status == "skipped"
+      assert Operations.get_run!(batch.id).status == "cancelled"
+    end
+
+    test "an explicit retry of a cancelled batch's execution does not recreate its work" do
+      %{feed_a: feed_a, feed_b: feed_b} = two_feeds_sharing_articles!(1)
+      assert {:ok, batch_a} = Processing.start_feed_batch(feed_a.id, "test", "extraction")
+      assert :ok = BatchDispatcher.await(batch_a.id)
+      [item_b] = Publishing.list_items_for_feed(feed_b)
+      assert {:ok, [attempt]} = Processing.request_item_step(item_b, "extraction")
+      assert {:ok, _} = Processing.cancel_feed_batch(batch_a.id)
+
+      assert {:ok, failed} =
+               Processing.finish_attempt(attempt, "failed", %{
+                 failure_kind: "http_error",
+                 retryable: true
+               })
+
+      assert {:ok, retry} = Processing.retry_attempt(failed.id, origin: "manual")
+      assert retry.batch_run_id == nil
+      assert [%{status: "cancelled"}] = feed_item_steps(feed_a)
+      assert [%{status: "queued"}] = feed_item_steps(feed_b)
+    end
+
+    test "late enrollment cannot create work after cancellation" do
+      %{feed_a: feed_a} = two_feeds_sharing_articles!(1)
+
+      {:ok, batch} =
+        Operations.start_run("pipeline_batch", "test", %{
+          "generated_feed_id" => feed_a.id,
+          "step_type" => "extraction",
+          "selection" => "not_requested"
+        })
+
+      assert {:ok, _} = Processing.cancel_feed_batch(batch.id)
+      [item] = Publishing.list_items_for_feed(feed_a)
+
+      assert {:error, :batch_cancelled} =
+               Processing.request_item_step(item, "extraction", batch_run_id: batch.id)
+
+      assert Repo.aggregate(PipelineStepAttempt, :count) == 0
+    end
+
+    test "a step definition cannot be removed while its items are served by another feed's attempt" do
+      %{feed_a: feed_a, feed_b: feed_b} = two_feeds_sharing_articles!(1)
+      assert {:ok, batch_a} = Processing.start_feed_batch(feed_a.id, "test", "extraction")
+      assert :ok = BatchDispatcher.await(batch_a.id)
+      assert {:ok, batch_b} = Processing.start_feed_batch(feed_b.id, "test", "extraction")
+      assert :ok = BatchDispatcher.await(batch_b.id)
+
+      [definition] = Processing.list_steps(feed_b.id)
+      assert {:error, :step_has_active_work} = Processing.delete_step(definition)
+
+      assert {:ok, _} = Processing.cancel_feed_batch(batch_b.id)
+      assert {:ok, _} = Processing.delete_step(Processing.get_step!(definition.id))
+    end
+
+    test "batch history lists executions the batch joined, not only those it created" do
+      %{feed_a: feed_a, feed_b: feed_b} = two_feeds_sharing_articles!(1)
+      assert {:ok, batch_a} = Processing.start_feed_batch(feed_a.id, "test", "extraction")
+      assert :ok = BatchDispatcher.await(batch_a.id)
+      assert {:ok, batch_b} = Processing.start_feed_batch(feed_b.id, "test", "extraction")
+      assert :ok = BatchDispatcher.await(batch_b.id)
+      [attempt] = Processing.list_attempts_for_batch(batch_a.id)
+
+      assert Enum.any?(
+               Processing.list_processing_attempts(["queued"], batch_run_id: batch_b.id),
+               &(&1.id == attempt.id)
+             )
+
+      # An automatic retry replaces the item step's pointer but never the
+      # lineage: both batches keep the first attempt and gain the retry.
+      assert {:ok, failed} =
+               Processing.finish_attempt(attempt, "failed", %{
+                 failure_kind: "rate_limited",
+                 retryable: true
+               })
+
+      assert {:ok, retry} = Processing.schedule_automatic_retry(failed)
+      ids = batch_b.id |> Processing.list_attempts_for_batch() |> Enum.map(& &1.id)
+      assert Enum.sort(ids) == Enum.sort([attempt.id, retry.id])
+
+      # A manual retry after the batches have settled is new, unattributed work.
+      assert {:ok, failed_again} =
+               Processing.finish_attempt(retry, "failed", %{
+                 failure_kind: "http_error",
+                 retryable: true
+               })
+
+      assert Operations.get_run!(batch_b.id).status == "failed"
+      assert {:ok, manual} = Processing.retry_attempt(failed_again.id, origin: "manual")
+      assert manual.batch_run_id == nil
+      ids = batch_b.id |> Processing.list_attempts_for_batch() |> Enum.map(& &1.id)
+      assert Enum.sort(ids) == Enum.sort([attempt.id, retry.id])
+    end
+
+    test "a finished batch is never reopened by later independent work" do
+      %{feed_a: feed_a} = two_feeds_sharing_articles!(1)
+      assert {:ok, batch} = Processing.start_feed_batch(feed_a.id, "test", "extraction")
+      assert :ok = BatchDispatcher.await(batch.id)
+      [attempt] = Processing.list_attempts_for_batch(batch.id)
+      assert {:ok, _} = Processing.finish_attempt(attempt, "succeeded")
+      assert Operations.get_run!(batch.id).status == "succeeded"
+
+      [item] = Publishing.list_items_for_feed(feed_a)
+      assert {:ok, [_again]} = Processing.request_item_step(item, "extraction", force: true)
+      batch = Operations.get_run!(batch.id)
+      assert batch.status == "succeeded"
+      assert batch.summary_counts["succeeded"] == 1
+    end
+  end
+
   defp two_feeds_sharing_articles!(count) do
     {:ok, input_feed} =
       Intake.create_input_feed(%{

@@ -15,6 +15,10 @@ defmodule Newspaper.Repo.Migrations.CreatePipelineBatchMembers do
 
       add :outcome, :string
       add :outcome_at, :utc_datetime
+      # Set when enrollment has issued this member's request; until then the
+      # member is "selected, not yet requested" and no prior item-step state
+      # may satisfy it.
+      add :enrolled_at, :utc_datetime
 
       timestamps(type: :utc_datetime)
     end
@@ -23,31 +27,54 @@ defmodule Newspaper.Repo.Migrations.CreatePipelineBatchMembers do
     create index(:pipeline_batch_members, [:generated_feed_item_step_id])
     create index(:pipeline_batch_members, [:batch_run_id, :outcome])
 
-    execute """
-    INSERT INTO pipeline_batch_members (
-      batch_run_id, generated_feed_item_step_id, outcome, outcome_at, inserted_at, updated_at
-    )
-    SELECT DISTINCT ON (attempt.batch_run_id, item_step.id)
-      attempt.batch_run_id,
-      item_step.id,
-      CASE WHEN attempt.status IN ('succeeded', 'failed', 'skipped') THEN attempt.status ELSE NULL END,
-      CASE WHEN attempt.status IN ('succeeded', 'failed', 'skipped') THEN attempt.finished_at ELSE NULL END,
-      NOW(),
-      NOW()
-    FROM pipeline_step_attempts AS attempt
-    JOIN generated_feed_item_steps AS item_step
-      ON item_step.id = attempt.generated_feed_item_step_id
-      OR item_step.latest_attempt_id = attempt.id
-    WHERE attempt.batch_run_id IS NOT NULL
-    ORDER BY attempt.batch_run_id, item_step.id, attempt.id DESC
-    ON CONFLICT DO NOTHING
-    """
+    create table(:pipeline_batch_attempts) do
+      add :batch_run_id, references(:runs, on_delete: :delete_all), null: false
+
+      add :pipeline_step_attempt_id, references(:pipeline_step_attempts, on_delete: :delete_all),
+        null: false
+
+      add :inserted_at, :utc_datetime, null: false
+    end
+
+    create unique_index(:pipeline_batch_attempts, [:batch_run_id, :pipeline_step_attempt_id])
+    create index(:pipeline_batch_attempts, [:pipeline_step_attempt_id])
+
+    # Immutable participation: every attempt an item step ever pointed at.
+    # `generated_feed_item_steps.latest_attempt_id` moves on with retries;
+    # this does not, so feed-scoped history stays complete.
+    create table(:pipeline_item_step_attempts) do
+      add :generated_feed_item_step_id,
+          references(:generated_feed_item_steps, on_delete: :delete_all),
+          null: false
+
+      add :pipeline_step_attempt_id, references(:pipeline_step_attempts, on_delete: :delete_all),
+        null: false
+
+      add :inserted_at, :utc_datetime, null: false
+    end
+
+    create unique_index(:pipeline_item_step_attempts, [
+             :generated_feed_item_step_id,
+             :pipeline_step_attempt_id
+           ])
+
+    create index(:pipeline_item_step_attempts, [:pipeline_step_attempt_id])
+
+    # Backfill from the pre-membership schema. The statements live in
+    # `Newspaper.Processing.MembershipBackfill` so the upgrade is testable.
+    for sql <- Newspaper.Processing.MembershipBackfill.member_statements(), do: execute(sql)
+    for sql <- Newspaper.Processing.MembershipBackfill.lineage_statements(), do: execute(sql)
+
+    for sql <- Newspaper.Processing.MembershipBackfill.participation_statements(),
+        do: execute(sql)
 
     alter table(:failures) do
       add :resolved_at, :utc_datetime
     end
 
     create index(:failures, [:resolved_at])
+
+    for sql <- Newspaper.Processing.MembershipBackfill.resolution_statements(), do: execute(sql)
   end
 
   def down do
@@ -55,6 +82,8 @@ defmodule Newspaper.Repo.Migrations.CreatePipelineBatchMembers do
       remove :resolved_at
     end
 
+    drop table(:pipeline_item_step_attempts)
+    drop table(:pipeline_batch_attempts)
     drop table(:pipeline_batch_members)
   end
 end

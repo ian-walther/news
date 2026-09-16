@@ -66,7 +66,7 @@ defmodule NewspaperWeb.AdminLive.Settings do
   def render(assigns) do
     ~H"""
     <Layouts.app flash={@flash}>
-      <.nav current="settings" />
+      <.nav current="settings" attention_count={@attention_count} />
       <div class="max-w-3xl">
         <header class="mb-8">
           <p class="mb-1 text-xs font-semibold uppercase tracking-wider text-base-content/50">

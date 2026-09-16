@@ -6,6 +6,7 @@ defmodule Newspaper.ProcessingBatchTest do
   alias Newspaper.Intake
   alias Newspaper.Operations
   alias Newspaper.Operations.Run
+  alias Newspaper.Publishing
   alias Newspaper.Pipeline
   alias Newspaper.Processing
   alias Newspaper.Processing.{BatchDispatcher, GeneratedFeedItemStep, PipelineStepAttempt}
@@ -192,11 +193,13 @@ defmodule Newspaper.ProcessingBatchTest do
       spawn_monitor(fn ->
         result = Processing.start_feed_batch(feed.id, "test")
         send(parent, {:batch_start_result, result})
+        Process.sleep(:infinity)
       end)
 
-    assert_receive {:newspaper_data_changed, :operations_changed}
-
-    if Process.alive?(caller), do: Process.exit(caller, :kill)
+    # Membership is committed before the caller can be interrupted; from
+    # here enrollment belongs to the supervised dispatcher task.
+    assert_receive {:batch_start_result, {:ok, _batch}}, 5_000
+    Process.exit(caller, :kill)
     assert_receive {:DOWN, ^caller_ref, :process, ^caller, reason}
     assert reason in [:normal, :killed]
 
@@ -221,10 +224,22 @@ defmodule Newspaper.ProcessingBatchTest do
                  "batch_type" => "process_existing_extraction",
                  "generated_feed_id" => feed.id,
                  "generated_feed_title" => feed.title,
-                 "step_type" => "extraction"
+                 "step_type" => "extraction",
+                 "selection" => "not_requested"
                },
                %{"pipeline_step_ids" => [step.id]}
              )
+
+    # The durable members are what recovery enrolls; nothing is re-selected.
+    for item <- Publishing.list_items_for_feed(feed) do
+      item_step =
+        Repo.get_by!(Newspaper.Processing.GeneratedFeedItemStep,
+          generated_feed_item_id: item.id,
+          step_type: "extraction"
+        )
+
+      {:ok, _member} = Processing.ensure_member(batch.id, item_step.id)
+    end
 
     Newspaper.Events.subscribe()
     assert {:ok, 1} = BatchDispatcher.recover()

@@ -282,7 +282,7 @@ defmodule NewspaperWeb.AdminLive.Intake do
   def render(assigns) do
     ~H"""
     <Layouts.app flash={@flash}>
-      <.nav current="intake" />
+      <.nav current="intake" attention_count={@attention_count} />
 
       <header class="mb-8 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>

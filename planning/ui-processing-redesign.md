@@ -283,9 +283,9 @@ Four phases, each independently shippable and deployed on its own. Every
 phase ends with the full Elixir suite green and a production smoke check of
 the pages it touched.
 
-**Status 2026-09-14: all four phases are implemented in the working tree
-(uncommitted, per the Decision log) and `scripts/precommit.sh` is clean
-(162 Elixir tests, worker tests). Each phase heading below carries a status
+**Status 2026-09-15: all four phases and all three implementation-audit
+rounds are addressed in the working tree (uncommitted, per the Decision
+log) and `scripts/precommit.sh` is clean (211 Elixir tests, worker tests). Each phase heading below carries a status
 block naming what was delivered, where the implementation deliberately
 narrowed or diverged from this plan, and which planned guardrail tests were
 not written. Those blocks are the audit's starting point; the production
@@ -640,6 +640,91 @@ the reasons enumerated in `PipelineChain`; no visual narrow-screen pass.*
 Per-article history row; empty-state copy; disabled-reason coverage audit;
 keyboard-accessible menus/dialogs and focus return; narrow-screen chains
 and tabs; dead-helper cleanup.
+
+### Audit 02 reconciliation (implementation audit, 2026-09-15)
+
+Every finding in `planning/audit/02-ui-processing-implementation.md` was
+addressed in the working tree (still uncommitted). Findings stay in the
+audit doc for Astra to verify and remove. Maintained tests replace the
+probes; the probe files are left untouched as the audit's record.
+
+| Finding | What changed | Where it is pinned |
+| --- | --- | --- |
+| IMP-01 | Item-step outcome changes refresh every batch holding that item step (`batch_ids_for_item_steps/1`), not only the attempt's originating batch. A finished batch is never reopened; its open members are settled from item-step state when it finishes. | `processing_cancel_test` "completing a shared execution settles every batch…", "…never reopened by later independent work" |
+| IMP-02 | A failed member whose automatic retry is still permitted is not finalized (it counts as queued in the batch); `settle_failed_members/1` finalizes when the budget is exhausted or no live consumer remains. A manual retry after settlement is new, unattributed work. | "a permitted automatic retry keeps its member and batch active", "an exhausted retry budget settles the member as failed" |
+| IMP-03 | `update_attempt_item_steps/2` never touches a cancelled row; `skip_article_steps/3` no longer converts cancelled to skipped. | "claiming shared work does not resurrect…", "no-content does not convert an operator's cancellation" |
+| IMP-04 | Downstream candidates come from **all** members of the batch, whatever their own state; unstarted members and retry-pending failures are withdrawn; running members finish. | "cancellation cascades below a running member" |
+| IMP-05 | Recovery and automatic retry partition an attempt's consumers into withdrawn (open member of a cancelled batch) and live; only live demand keeps or re-queues the execution. `retry_attempt/2` retries live consumers only and stays with a batch only while that batch is running. | "recovery keeps a running execution that another batch still demands", "recovery cancels…nobody demands", "an explicit retry of a cancelled batch's execution…" |
+| IMP-06 | `start_feed_batch/4` resolves the full selection and inserts the run **and all members in one transaction** under a per-feed/step advisory lock (re-checking the one-active-batch rule inside it); dispatch happens after commit; enrollment walks open members and re-checks each one; `request_item_step/3` refuses a cancelled batch. Recovery enrolls from members only; there is no re-selection. Not done: deterministic concurrency barriers — the interleavings are serialized by the transaction and by per-member checks, but no barrier tests exist. | "late enrollment cannot create work after cancellation"; `processing_batch_test` "batch enrollment survives…", "recovers durable batch enrollment…" |
+| IMP-07 | Removal checks the definition's own item steps (`pending`/`queued`/`running`) and an active batch for the feed/step. `blocked` is deliberately excluded: every bookkeeping row for an unsatisfied prerequisite is blocked, so it cannot mean requested work. | "a step definition cannot be removed while its items are served by another feed's attempt" |
+| IMP-08 | Picker option and chain-menu action **Run on cancelled items**; `pending` and `cancelled` in coverage counts and label; per-step cascade counts in the Cancel flash; `cancelled` link state. | `processing_audit_test` IMP-08 |
+| IMP-09 | Ingestion resolution matches by stable id when present, else URL, never by an absent value; `resolve_failures/2` refuses empty criteria; the call is rescued so diagnostics cannot fail ingestion. | `attention_test` "a feed entry without a GUID is ingested…" |
+| IMP-10 | `close_run_as_failed/2` re-validates run kind, stage timeout, and owner liveness; owner identity is pid **plus boot id** (`Newspaper.Runtime.boot_id/0`); `run_liveness/2` is the single classifier used by Attention. | `attention_test` stuck-run tests |
+| IMP-11 | `tab=queue` is spelled out whenever any context is set; a Filters bar with Clear appears on every tab; legacy tab-less context links still open History. | `processing_audit_test` IMP-11 |
+| IMP-12 | Articles keeps the set of expanded histories (bounded to the current page), reloads them on refresh, and coalesces processing events (300 ms). | `processing_audit_test` IMP-12 |
+| IMP-13 | `Operations.AttentionCounter` computes the count from aggregate queries after a debounced burst and on a 30 s clock, broadcasting only on change; `NewspaperWeb.AttentionHook` (a `live_session` on_mount) assigns it reactively to every LiveView; the nav never queries. | `processing_audit_test` IMP-13 |
+| IMP-14 | Menus close on outside click, Escape, and on choosing an action via `JS.remove_attribute/2` (`phx-click-away`, `phx-window-keydown`); the earlier claim of "existing dismissal wiring" did not match app.js, which has no such hook. Browser-level verification is still outstanding. | not browser-tested |
+| IMP-15 | Queued next is bounded per stage in SQL and ordered by dispatch priority (foreground before bulk, then arrival); extraction shows one queue per website with true per-website totals; the serial stage shows its true remainder; waiting counts separate blocked item steps from website-held executions; the extraction estimate is withheld while every website with work is in backoff; running operations are queried by status. | `processing_audit_test` IMP-15 |
+| IMP-16 | New immutable `pipeline_batch_attempts` lineage (batch × attempt) recorded whenever an attempt is created for or joined by an open member; batch attempt lists and History's batch filter read it. | "batch history lists executions the batch joined…" |
+| IMP-17 | Entry retries run under the task supervisor as a `retry_entry_failures` run; ingestion failures are grouped per source with one refetch; each record is re-read afterwards and reported as repaired / still_failed / entry_missing / target_missing; the UI reports background work, never a repair. | `attention_test` "a successful refetch that no longer carries the entry is not a repair"; `processing_audit_test` IMP-17 |
+| IMP-18 | `Attention.count/1` is aggregate-only and shared through the counter; Queue loads at most 200 rows per stage; the per-viewer 300 ms coalescer remains for detail lists (bounded), which is the remaining compromise. No allocation benchmark was run. | — |
+| IMP-19 | Attention items carry article title, guid, id, attempt id, and links to the article and to History in context; groups link to History for their feed; held counts link to the waiting articles. | `processing_audit_test` IMP-19 |
+| IMP-20 | The backfill lives in `Processing.MembershipBackfill` (executed by the migration): same-feed, same-step evidence only; outcome from item-step state; running batches additionally claim live same-feed demand started after them; lineage backfilled; already-repaired entry failures resolved. | `membership_backfill_test` |
+| IMP-21 | Re-render records a `generated_feed_item_render_failed` failure per item (resolved by a later successful render of that item); Attention lists them under the feed with **Refresh RSS output**. | `attention_test` "re-render failures are attributable…" |
+| IMP-22 | The chain toggle is a server-rendered `role="switch"` button whose displayed state is always the saved state. | `processing_audit_test` IMP-22 |
+
+Probe status after the changes: 14 of 17 pass unchanged. The three that
+still fail assert the old shape rather than the contract: IMP-15's probe
+expects the attempt as the stream's second child (there is now a website
+header row first), IMP-13's probe expects the badge to change on the
+LiveView's own event (it changes on the shared counter's broadcast), and
+IMP-20's probe runs the previous migration's SQL literally.
+
+### Audit 02, second round (2026-09-15)
+
+Astra's follow-up left nine reproductions under eight IDs plus IMP-18. All
+are addressed in the working tree; findings stay in the audit doc for
+Astra to verify. Maintained tests: `processing_reconciliation_test.exs`
+(domain) and the "(round 2)" cases in `processing_audit_test.exs` (UI).
+
+| Finding | What changed | Pinned by |
+| --- | --- | --- |
+| IMP-06A | `request_item_step/3` now does its writes in one transaction that holds the feed/step demand lock **shared** and a `FOR SHARE` row lock on the batch run, re-checking cancellation and running status under those locks (`:batch_cancelled` / `:batch_finished` / `:batch_not_found`). Cancellation takes the run row `FOR UPDATE` for its whole transaction. Step removal and disabling take the demand lock **exclusively**, as batch creation already did. Dispatch to the queues is deferred until the request's transaction commits. Cancel-versus-claim needs no lock: both are single conditional updates. | "a request that passed the first cancellation check is refused under the demand lock" (telemetry barrier), "a finished batch refuses new demand at the write boundary" |
+| IMP-06B | Members carry `enrolled_at`; a selected member that enrollment has not reached counts as pending work regardless of its item step's old state, so a fast completion cannot finish the batch and settle the rest. Cancellation withdraws unenrolled members (cancelling unstarted item steps, leaving prior failures as failures). | "a fast first completion does not finish a batch whose remaining members are unenrolled" |
+| IMP-20 | `MembershipBackfill` reconstructs a finished batch's member outcome from its **latest batch-owned attempt's** status, never from the item step's current state; lineage holds batch-owned attempts only; participation is backfilled from every attempt an item step was created for or points at. Running batches claim only live same-feed demand that started after them and is unowned or their own — the explicit conservative policy is in the module doc. | "the upgrade keeps a finished batch's own outcome and lineage", "a running batch at upgrade claims only unowned or own live demand" |
+| IMP-02 | Automatic retries attach only to a batch with an **open member in a running run** (`open_running_batch_id/1`); explicit attribution is validated at the write boundary by the same running-batch check. | "automatic retries of independent work never join a completed batch" |
+| IMP-16 | New immutable `pipeline_item_step_attempts` participation (recorded whenever an item step is pointed at an attempt); feed-scoped history reads it instead of the mutable pointer. | "feed-scoped history keeps a shared execution after the item step moves on" |
+| IMP-15 | Queued next selects the top 5 per website with a SQL window (`row_number() OVER (PARTITION BY host …)`) over **all** queued extraction work, host totals are a SQL `GROUP BY`, waiting groups are aggregated in SQL before the limit. The website is computed in SQL with the same rules as `Content.site_host/1`. Note: Astra's probe changes only `canonical_url`, but articles carry `resolved_url` (set at creation) which the extraction URL prefers, so that probe cannot pass under any implementation; the maintained test sets both. | IMP-15 (round 2) with 201 items |
+| IMP-21 | `retry_one_entry/1` re-renders exactly the failed item for `generated_feed_item_render_failed` and resolves only that record on success (`:repaired` / `:still_failed` / `:target_missing`). | "a per-item re-render retry repairs exactly its item" |
+| IMP-19 | Articles gained a `held` filter that is the publication predicate itself (`publication_status = processing`, per feed); the chain's held count links to it and the list shows a clearable "Held from publication" badge. | IMP-19 (round 2) |
+| IMP-12 | Collapse updates the streamed row as well as the expanded set, so open/collapse/reopen works before any refresh. | IMP-12 (round 2) |
+| IMP-18 | Attention groups come from `GROUP BY` aggregates with no per-item rows; a group's items load on demand in pages of 100 and stay loaded across refreshes; group actions select their members at execution time. Queue rows use a light preload (article and batch only) with feed titles from participation; website counts are SQL aggregates. Still per viewer: the 300 ms coalescer and the bounded detail queries. No benchmark was run. | attention_test group_items cases |
+
+Probe status: 8 of 9 pass unchanged; the IMP-15 probe fails for the
+`resolved_url` reason above.
+
+### Audit 02, third round (2026-09-15)
+
+Astra accepted the second round (its corrected IMP-15 probe now passes) and
+left four cases under three IDs. All are addressed.
+
+| Finding | What changed | Pinned by |
+| --- | --- | --- |
+| IMP-06A (claim vs. cancel on independent connections) | Inside its transaction, cancellation now locks the candidates' attempts `FOR UPDATE` and drops every candidate whose attempt is no longer `queued`: a worker that claimed it after the snapshot keeps its item running and its member open, and the batch settles when that work finishes. The item-step write is guarded by status. In the other ordering a claim waits on the lock and then finds the attempt skipped. | `claim_cancellation_test.exs` — both orderings on independent PostgreSQL connections via `Sandbox.unboxed_run`, with the audit's telemetry barriers |
+| IMP-20A (legacy unowned retry frozen as failed) | The backfill's live-demand pass no longer requires attempt ownership and now **reopens** a member (outcome cleared) whose item step is live on an attempt that started after the batch; those attempts join the batch's lineage. | "the upgrade reopens a member whose legacy unowned retry is still live" |
+| IMP-20B (unrecoverable shared membership → false success) | Same relaxation: a running batch's same-feed live item steps are its demand whoever owns the execution, so a batch whose items joined another feed's attempt keeps them. A running batch that still has **no** members after backfill is closed as `failed` with an error summary saying the upgrade could not recover its membership and the batch should be started again; `resume_feed_batch/1` applies the same rule at runtime for legacy batches (new batches carry `members_snapshotted`). The trade-off (a manual foreground request on the batch's feed during the batch is claimed by it) is documented in `MembershipBackfill`. | "…keeps its demand", "…closed as failed, not succeeded", membership_backfill_test |
+| IMP-15 (bulk sorted by batch id) | Every projection orders by class (`batch_run_id IS NULL` first) then arrival, never by batch identity: the per-website window, `:priority` ordering, and `list_queued_attempts/1` used for restart reconstruction. | "queue projections keep arrival order within the bulk class" |
+
+### Audit 02, fourth round (2026-09-15)
+
+Two retry-window cases: the interval between a retryable rate-limit failure
+being saved and its next attempt being created.
+
+| Finding | What changed | Pinned by |
+| --- | --- | --- |
+| IMP-06C | Under the cancellation lock only a **running** attempt counts as an in-flight claim; a failed attempt awaiting its automatic retry is outstanding, unstarted demand and is withdrawn (item step and member cancelled). The scheduler then finds no live consumer and creates nothing; a shared surviving consumer still gets its retry, attributed to its own running batch. | `processing_reconciliation_test` IMP-06C cases |
+| IMP-20C | The backfill's reopen pass also reopens a running batch's member whose item step is `failed` on a retryable rate-limit attempt (the runtime's retry budget still decides whether a retry happens); finished batches and non-retryable failures stay terminal. | IMP-20C cases |
+| Coverage note | The reverse-order claim test now starts the claim while cancellation holds the attempt lock and asserts it is blocked, not merely rejected afterwards. | `claim_cancellation_test.exs` |
 
 ### Audit reconciliation map
 

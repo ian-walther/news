@@ -6,6 +6,7 @@ defmodule NewspaperWeb.AdminLive.ProcessingAttentionTest do
   alias Newspaper.Content
   alias Newspaper.Intake
   alias Newspaper.Operations
+  alias Newspaper.Operations.AttentionCounter
   alias Newspaper.Pipeline
   alias Newspaper.Processing
   alias Newspaper.Processing.BatchDispatcher
@@ -115,6 +116,7 @@ defmodule NewspaperWeb.AdminLive.ProcessingAttentionTest do
 
   defp refresh(view) do
     send(view.pid, :refresh_processing_data)
+    _ = AttentionCounter.refresh()
     _ = :sys.get_state(view.pid)
   end
 

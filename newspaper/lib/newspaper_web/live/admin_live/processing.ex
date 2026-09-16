@@ -26,6 +26,8 @@ defmodule NewspaperWeb.AdminLive.Processing do
   @stages ~w(all extraction digestion operations)
   @refresh_delay_ms 300
   @tick_ms 30_000
+  @queue_rows_per_host 5
+  @queue_rows_serial 50
 
   def mount(_params, _session, socket) do
     if connected?(socket) do
@@ -97,7 +99,7 @@ defmodule NewspaperWeb.AdminLive.Processing do
     end
   end
 
-  def handle_event("remove_step", %{"step-id" => step_id}, socket) do
+  def handle_event("remove_step", %{"step_id" => step_id}, socket) do
     step = Processing.get_step!(Format.parse_id(step_id))
 
     case Processing.delete_step(step) do
@@ -110,18 +112,23 @@ defmodule NewspaperWeb.AdminLive.Processing do
     end
   end
 
-  def handle_event("run_existing", %{"feed-id" => feed_id, "step-type" => step_type}, socket) do
+  def handle_event("run_existing", %{"feed_id" => feed_id, "step_type" => step_type}, socket) do
     start_batch(socket, Format.parse_id(feed_id), step_type, :not_requested)
   end
 
-  def handle_event("retry_failed", %{"feed-id" => feed_id, "step-type" => step_type}, socket) do
+  def handle_event("retry_failed", %{"feed_id" => feed_id, "step_type" => step_type}, socket) do
     start_batch(socket, Format.parse_id(feed_id), step_type, :failed)
+  end
+
+  def handle_event("run_cancelled", %{"feed_id" => feed_id, "step_type" => step_type}, socket) do
+    start_batch(socket, Format.parse_id(feed_id), step_type, :cancelled)
   end
 
   def handle_event("start_batch", %{"batch" => params}, socket) do
     selection =
       case params["selection"] do
         "failed" -> :failed
+        "cancelled" -> :cancelled
         _selection -> :not_requested
       end
 
@@ -136,13 +143,21 @@ defmodule NewspaperWeb.AdminLive.Processing do
   def handle_event("cancel_batch", %{"id" => id}, socket) do
     case Processing.cancel_feed_batch(Format.parse_id(id)) do
       {:ok, result} ->
-        cancelled = result.cancelled |> Map.values() |> Enum.sum()
+        # Per-step counts so the cascade is visible (audit IMP-08).
+        cancelled =
+          result.cancelled
+          |> Enum.sort_by(fn {step_type, _count} -> Registry.position_for(step_type) end)
+          |> Enum.map_join(", ", fn {step_type, count} ->
+            noun = step_type |> Registry.step_label() |> String.replace_prefix("Article ", "")
+            "#{count} #{String.downcase(noun)}"
+          end)
 
         message =
           case {cancelled, result.running} do
-            {0, 0} -> "Nothing left to cancel"
-            {n, 0} -> "Cancelled #{n} #{if n == 1, do: "item", else: "items"}"
-            {n, r} -> "Cancelled #{n}; #{r} running will finish"
+            {"", 0} -> "Nothing left to cancel"
+            {"", r} -> "Nothing to withdraw; #{r} running will finish"
+            {text, 0} -> "Cancelled #{text}"
+            {text, r} -> "Cancelled #{text}; #{r} running will finish"
           end
 
         {:noreply, socket |> put_flash(:info, message) |> refresh_now()}
@@ -163,6 +178,16 @@ defmodule NewspaperWeb.AdminLive.Processing do
       :error ->
         {:noreply, socket |> put_flash(:error, "That item is no longer listed") |> refresh_now()}
     end
+  end
+
+  def handle_event("expand_group", %{"id" => id}, socket) do
+    expanded = MapSet.put(socket.assigns.attention_expanded, id)
+    {:noreply, socket |> assign(:attention_expanded, expanded) |> refresh_now()}
+  end
+
+  def handle_event("collapse_group", %{"id" => id}, socket) do
+    expanded = MapSet.delete(socket.assigns.attention_expanded, id)
+    {:noreply, socket |> assign(:attention_expanded, expanded) |> refresh_now()}
   end
 
   def handle_event("retry_site_now", %{"host" => host}, socket) do
@@ -265,6 +290,41 @@ defmodule NewspaperWeb.AdminLive.Processing do
         </.link>
       </nav>
 
+      <div
+        :if={context?(@filters)}
+        id="processing-context"
+        class="-mt-3 mb-6 flex flex-wrap items-center justify-between gap-3 border-b border-base-300 pb-3"
+      >
+        <div class="flex flex-wrap items-center gap-2 text-sm">
+          <span class="font-medium">Filters</span>
+          <span :if={@filters.generated_feed_id} class="badge badge-outline">
+            Output feed #{@filters.generated_feed_id}
+          </span>
+          <span :if={@filters.stage != "all"} class="badge badge-outline">
+            {Format.status_label(@filters.stage)}
+          </span>
+          <span :if={@filters.article_id} class="badge badge-outline">
+            Article #{@filters.article_id}
+          </span>
+          <span :if={@filters.batch_run_id} class="badge badge-outline">
+            Batch #{@filters.batch_run_id}
+          </span>
+          <span
+            :if={@filters.tab in ["queue", "batches", "attention"]}
+            class="text-xs text-base-content/50"
+          >
+            · applied on Pipeline and History
+          </span>
+        </div>
+        <.link
+          id="clear-processing-context"
+          patch={processing_path(clear_context(@filters))}
+          class="btn btn-ghost btn-sm"
+        >
+          <.icon name="hero-x-mark" class="size-4" /> Clear
+        </.link>
+      </div>
+
       <%= case @filters.tab do %>
         <% "queue" -> %>
           <.queue_tab
@@ -274,6 +334,7 @@ defmodule NewspaperWeb.AdminLive.Processing do
             streams={@streams}
             running_count={@running_count}
             waiting_count={@waiting_count}
+            queue_rows_per_host={@queue_rows_per_host}
           />
         <% "batches" -> %>
           <.batches_tab
@@ -285,7 +346,7 @@ defmodule NewspaperWeb.AdminLive.Processing do
             filters={@filters}
           />
         <% "attention" -> %>
-          <.attention_tab groups={@attention_groups} />
+          <.attention_tab groups={@attention_groups} filters={@filters} items={@attention_items} />
         <% "pipeline" -> %>
           <.pipeline_tab pipeline={@pipeline} settings={@settings} filters={@filters} />
         <% "history" -> %>
@@ -316,7 +377,8 @@ defmodule NewspaperWeb.AdminLive.Processing do
   attr :article_stats, :map, required: true
   attr :streams, :map, required: true
   attr :running_count, :integer, required: true
-  attr :waiting_count, :integer, required: true
+  attr :waiting_count, :map, required: true
+  attr :queue_rows_per_host, :integer, required: true
 
   defp queue_tab(assigns) do
     ~H"""
@@ -377,6 +439,13 @@ defmodule NewspaperWeb.AdminLive.Processing do
               </div>
               <span class="text-sm tabular-nums text-base-content/55">{card.queued}</span>
             </div>
+            <p :if={card.step_type == "extraction"} class="mb-2 text-xs text-base-content/50">
+              Each website runs its own queue: new articles first, then backlog, in arrival order.
+              Up to {@queue_rows_per_host} shown per website.
+            </p>
+            <p :if={card.step_type != "extraction"} class="mb-2 text-xs text-base-content/50">
+              One queue: new articles first, then backlog, in arrival order.
+            </p>
             <div
               id={"queued-#{card.step_type}"}
               phx-update="stream"
@@ -402,7 +471,7 @@ defmodule NewspaperWeb.AdminLive.Processing do
         <div class="mb-3 flex items-baseline justify-between gap-3">
           <h2 class="text-lg font-semibold">Waiting</h2>
           <span class="text-xs text-base-content/45">
-            {@waiting_count} · delays and prerequisites
+            {@waiting_count.blocked} item steps on prerequisites · {@waiting_count.delayed} executions held by websites
           </span>
         </div>
         <div
@@ -695,6 +764,8 @@ defmodule NewspaperWeb.AdminLive.Processing do
   # --- Attention tab ----------------------------------------------------------
 
   attr :groups, :list, required: true
+  attr :filters, :map, required: true
+  attr :items, :map, required: true
 
   defp attention_tab(assigns) do
     ~H"""
@@ -729,30 +800,103 @@ defmodule NewspaperWeb.AdminLive.Processing do
             <p :if={group.detail} class="mt-2 truncate text-sm text-base-content/70">
               {group.detail}
             </p>
-            <p class="mt-1 text-xs text-base-content/50">{group.note}</p>
-            <details :if={group.items != []} class="mt-3 text-sm">
-              <summary class="cursor-pointer text-xs font-medium text-base-content/60 hover:text-base-content">
-                Show items
-              </summary>
-              <ul class="mt-2 divide-y divide-base-300 border-y border-base-300">
-                <li
-                  :for={item <- group.items}
-                  id={"attention-item-#{group.id}-#{item.id}"}
-                  class="flex items-center justify-between gap-3 py-2"
+            <p class="mt-1 text-xs text-base-content/50">
+              {group.note}
+              <.link
+                :if={group.feed_id}
+                id={"attention-group-history-#{group.id}"}
+                patch={
+                  processing_path(%{
+                    @filters
+                    | tab: "history",
+                      generated_feed_id: group.feed_id,
+                      stage:
+                        if(group.stage in ["extraction", "digestion"],
+                          do: group.stage,
+                          else: "all"
+                        )
+                  })
+                }
+                class="link ml-1"
+              >
+                History
+              </.link>
+            </p>
+            <div :if={group.items_key} class="mt-3 text-sm">
+              <button
+                :if={!Map.has_key?(@items, group.id)}
+                id={"attention-expand-#{group.id}"}
+                type="button"
+                class="text-xs font-medium text-base-content/60 hover:text-base-content"
+                phx-click="expand_group"
+                phx-value-id={group.id}
+              >
+                Show {group.count} {if group.count == 1, do: "item", else: "items"}
+              </button>
+              <div :if={page = @items[group.id]} id={"attention-items-#{group.id}"}>
+                <button
+                  type="button"
+                  class="text-xs font-medium text-base-content/60 hover:text-base-content"
+                  phx-click="collapse_group"
+                  phx-value-id={group.id}
                 >
-                  <span class="min-w-0 truncate text-base-content/75">{item.label}</span>
-                  <button
-                    :if={item.action_id}
-                    type="button"
-                    class="btn btn-ghost btn-xs shrink-0"
-                    phx-click="attention_action"
-                    phx-value-id={item.action_id}
+                  Hide items
+                </button>
+                <ul class="mt-2 divide-y divide-base-300 border-y border-base-300">
+                  <li
+                    :for={item <- page.items}
+                    id={"attention-item-#{group.id}-#{item.id}"}
+                    class="flex flex-wrap items-center justify-between gap-3 py-2"
                   >
-                    Re-run
-                  </button>
-                </li>
-              </ul>
-            </details>
+                    <div class="min-w-0 flex-1">
+                      <.link
+                        :if={item.article_guid}
+                        navigate={~p"/articles/#{item.article_guid}"}
+                        class="block truncate font-medium hover:underline"
+                      >
+                        {item.label}
+                      </.link>
+                      <span :if={!item.article_guid} class="block truncate font-medium">
+                        {item.label}
+                      </span>
+                      <span :if={item.detail} class="block truncate text-xs text-base-content/55">
+                        {item.detail}
+                      </span>
+                    </div>
+                    <div class="flex shrink-0 items-center gap-2">
+                      <.link
+                        :if={item.article_id}
+                        id={"attention-item-history-#{group.id}-#{item.id}"}
+                        patch={
+                          processing_path(%{
+                            @filters
+                            | tab: "history",
+                              article_id: item.article_id,
+                              generated_feed_id: item.feed_id,
+                              stage: item.stage || "all"
+                          })
+                        }
+                        class="link text-xs"
+                      >
+                        History
+                      </.link>
+                      <button
+                        :if={item.action_id}
+                        type="button"
+                        class="btn btn-ghost btn-xs"
+                        phx-click="attention_action"
+                        phx-value-id={item.action_id}
+                      >
+                        Re-run
+                      </button>
+                    </div>
+                  </li>
+                </ul>
+                <p :if={page.more?} class="mt-2 text-xs text-base-content/50">
+                  Showing {length(page.items)} of {page.total}; the group action covers all of them.
+                </p>
+              </div>
+            </div>
           </div>
           <div class="lg:text-right">
             <button
@@ -871,29 +1015,6 @@ defmodule NewspaperWeb.AdminLive.Processing do
               options={@output_options}
             />
           </.form>
-        </div>
-
-        <div
-          :if={@filters.article_id || @filters.batch_run_id}
-          id="processing-context"
-          class="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-base-300 pt-4"
-        >
-          <div class="flex flex-wrap items-center gap-2 text-sm">
-            <span class="font-medium">Focused context</span>
-            <span :if={@filters.article_id} class="badge badge-outline">
-              Article #{@filters.article_id}
-            </span>
-            <span :if={@filters.batch_run_id} class="badge badge-outline">
-              Batch #{@filters.batch_run_id}
-            </span>
-          </div>
-          <.link
-            id="clear-processing-context"
-            patch={processing_path(%{@filters | article_id: nil, batch_run_id: nil})}
-            class="btn btn-ghost btn-sm"
-          >
-            <.icon name="hero-x-mark" class="size-4" /> Clear
-          </.link>
         </div>
       </section>
 
@@ -1093,6 +1214,27 @@ defmodule NewspaperWeb.AdminLive.Processing do
   attr :id, :string, required: true
   attr :entry, :map, required: true
 
+  defp queue_row(%{entry: %{kind: :host_header}} = assigns) do
+    ~H"""
+    <div id={@id} class="flex items-center justify-between gap-3 bg-base-200/60 px-2 py-1.5 text-xs">
+      <span class="font-semibold">{@entry.host}</span>
+      <span class="tabular-nums text-base-content/60">
+        {@entry.total} queued{if @entry.total > @entry.shown,
+          do: " · showing #{@entry.shown}",
+          else: ""}
+      </span>
+    </div>
+    """
+  end
+
+  defp queue_row(%{entry: %{kind: :more}} = assigns) do
+    ~H"""
+    <p id={@id} class="py-2 text-center text-xs text-base-content/50">
+      and {@entry.remaining} more in arrival order
+    </p>
+    """
+  end
+
   defp queue_row(assigns) do
     ~H"""
     <article id={@id} class="grid grid-cols-[2.25rem_minmax(0,1fr)] gap-3 py-4">
@@ -1145,48 +1287,73 @@ defmodule NewspaperWeb.AdminLive.Processing do
     socket
     |> assign(:filters, filters)
     |> assign(:settings, Operations.get_settings())
-    |> assign(:attention_count, Attention.count())
     |> assign_tab_data(filters)
   end
 
   defp assign_tab_data(socket, %{tab: "queue"} = filters) do
     policies = Content.list_site_extraction_policies() |> Map.new(&{&1.site_host, &1})
     running_attempts = Processing.list_processing_attempts(["running"], limit: 250)
-    queued_attempts = Processing.list_processing_attempts(["queued"], limit: 5_000)
-    waiting_steps = Processing.list_waiting_item_steps(limit: 250)
+    waiting_groups = Processing.waiting_item_step_groups(100)
     attempt_counts = Processing.processing_attempt_counts()
     waiting_counts = Processing.waiting_item_step_counts()
+    host_counts = Processing.queued_extraction_host_counts()
 
-    running_operations =
-      Operations.list_processing_run_entries(limit: 100)
-      |> Enum.filter(&(&1.run.status == "running"))
+    # Bounded per website (extraction) or per stage, in dispatch order, with
+    # light rows and titles from participation (IMP-15/18).
+    queued_attempts =
+      Map.new(Registry.step_types(), fn
+        "extraction" ->
+          {"extraction",
+           Processing.list_queued_extraction_by_host(@queue_rows_per_host, preload: :light)}
+
+        step_type ->
+          {step_type,
+           Processing.list_processing_attempts(["queued"],
+             step_type: step_type,
+             limit: @queue_rows_serial,
+             order: :priority,
+             preload: :light
+           )}
+      end)
+
+    recent_attempts =
+      Processing.list_processing_attempts(["succeeded"], limit: 8, order: :desc, preload: :light)
+
+    titles =
+      ((Map.values(queued_attempts) |> List.flatten()) ++ recent_attempts)
+      |> Enum.map(& &1.id)
+      |> Processing.feed_titles_for_attempts()
+
+    queued_by_type =
+      Map.new(queued_attempts, fn {step_type, attempts} ->
+        total = attempt_counts |> Map.get(step_type, %{}) |> Map.get("queued", 0)
+
+        {step_type,
+         queue_entries(attempts, step_type, total, host_counts, filters, policies, titles)}
+      end)
+
+    running_operations = Operations.list_processing_run_entries(status: "running", limit: 100)
 
     running_work =
       Enum.map(running_attempts, &attempt_entry(&1, filters, policies)) ++
         Enum.map(running_operations, &operation_entry(&1, filters))
 
-    queued_by_type =
-      Map.new(Registry.step_types(), fn step_type ->
-        {step_type, queue_entries(queued_attempts, step_type, filters, policies)}
-      end)
+    delayed = delayed_site_entries(host_counts, running_attempts, policies)
+    waiting_work = delayed ++ blocked_entries(waiting_groups)
 
-    waiting_work =
-      delayed_site_entries(queued_by_type["extraction"] || [], running_attempts, policies) ++
-        blocked_entries(waiting_steps)
+    waiting_count = %{
+      blocked: waiting_counts |> Map.values() |> Enum.flat_map(&Map.values/1) |> Enum.sum(),
+      delayed: delayed |> Enum.map(& &1.count) |> Enum.sum()
+    }
 
-    waiting_count =
-      waiting_counts |> Map.values() |> Enum.flat_map(&Map.values/1) |> Enum.sum()
-
-    recent_completions =
-      Processing.list_processing_attempts(["succeeded"], limit: 8, order: :desc)
-      |> Enum.map(&attempt_entry(&1, filters, policies))
+    recent_completions = Enum.map(recent_attempts, &attempt_entry(&1, filters, policies, titles))
 
     stage_cards =
       Enum.map(Registry.step_types(), fn step_type ->
         stage_card_data(
           step_type,
           attempt_counts,
-          queued_by_type[step_type] || [],
+          host_counts,
           running_attempts,
           policies,
           socket.assigns.settings
@@ -1194,6 +1361,7 @@ defmodule NewspaperWeb.AdminLive.Processing do
       end)
 
     socket
+    |> assign(:queue_rows_per_host, @queue_rows_per_host)
     |> assign(:stage_cards, stage_cards)
     |> assign(:article_stats, Content.article_status_counts())
     |> assign(:running_count, length(running_work))
@@ -1203,7 +1371,7 @@ defmodule NewspaperWeb.AdminLive.Processing do
     |> stream(:recent_completions, recent_completions, reset: true)
     |> then(fn socket ->
       Enum.reduce(queued_by_type, socket, fn {step_type, entries}, socket ->
-        stream(socket, :"queued_#{step_type}", Enum.take(entries, 50), reset: true)
+        stream(socket, :"queued_#{step_type}", entries, reset: true)
       end)
     end)
   end
@@ -1230,30 +1398,39 @@ defmodule NewspaperWeb.AdminLive.Processing do
     |> stream(:batches, entries, reset: true)
   end
 
+  # Groups come from aggregates; a group's items load only when expanded
+  # and stay loaded across refreshes (audit IMP-18).
   defp assign_tab_data(socket, %{tab: "attention"} = _filters) do
     groups = Attention.groups()
+    expanded = Map.get(socket.assigns, :attention_expanded, MapSet.new())
+    live_ids = MapSet.new(groups, & &1.id)
+    expanded = MapSet.intersection(expanded, live_ids)
 
-    {groups, actions} =
-      Enum.map_reduce(groups, %{}, fn group, actions ->
-        actions = if group.action, do: Map.put(actions, group.id, group.action), else: actions
+    {items, item_actions} =
+      groups
+      |> Enum.filter(&MapSet.member?(expanded, &1.id))
+      |> Enum.map_reduce(%{}, fn group, actions ->
+        page = Attention.group_items(group)
 
-        {items, actions} =
-          Enum.map_reduce(group.items, actions, fn item, actions ->
-            case item_action(group, item) do
-              nil ->
-                {Map.put(item, :action_id, nil), actions}
-
-              action ->
-                action_id = "#{group.id}:#{item.id}"
-                {Map.put(item, :action_id, action_id), Map.put(actions, action_id, action)}
-            end
+        {rows, actions} =
+          Enum.map_reduce(page.items, actions, fn item, actions ->
+            action_id = "#{group.id}:#{item.id}"
+            {Map.put(item, :action_id, action_id), Map.put(actions, action_id, item.action)}
           end)
 
-        {%{group | items: items}, actions}
+        {{group.id, %{page | items: rows}}, actions}
       end)
+
+    actions =
+      groups
+      |> Enum.reject(&is_nil(&1.action))
+      |> Map.new(&{&1.id, &1.action})
+      |> Map.merge(item_actions)
 
     socket
     |> assign(:attention_groups, groups)
+    |> assign(:attention_expanded, expanded)
+    |> assign(:attention_items, Map.new(items))
     |> assign(:attention_actions, actions)
   end
 
@@ -1289,16 +1466,10 @@ defmodule NewspaperWeb.AdminLive.Processing do
     |> stream(:failures, Operations.list_failures(50), reset: true)
   end
 
-  defp item_action(%{kind: :step_failed, action: {:retry_items, feed_id, step_type, _ids}}, item),
-    do: {:retry_items, feed_id, step_type, [item.id]}
-
-  defp item_action(%{kind: :entry_failed}, item), do: {:retry_entries, [item.id]}
-  defp item_action(_group, _item), do: nil
-
   defp stage_card_data(
          step_type,
          attempt_counts,
-         queued_entries,
+         host_counts,
          running_attempts,
          policies,
          settings
@@ -1321,10 +1492,14 @@ defmodule NewspaperWeb.AdminLive.Processing do
 
     case step_type do
       "extraction" ->
-        hosts = host_entries(queued_entries, running_attempts, policies)
+        hosts = host_entries(host_counts, running_attempts, policies)
 
         held =
           hosts |> Enum.filter(&(&1.state == "backoff")) |> Enum.map(& &1.count) |> Enum.sum()
+
+        # No estimate while every website with queued work is in backoff.
+        all_backoff? =
+          queued > 0 and Enum.all?(hosts, &(&1.count == 0 or &1.state == "backoff"))
 
         %{base | hosts: hosts, held: held}
         |> Map.put(
@@ -1332,6 +1507,7 @@ defmodule NewspaperWeb.AdminLive.Processing do
           Format.stage_eta_label(%{
             queued: queued,
             paused: false,
+            backoff: all_backoff?,
             per_minute: throughput.per_minute
           })
         )
@@ -1360,7 +1536,9 @@ defmodule NewspaperWeb.AdminLive.Processing do
     end
   end
 
-  defp host_entries(queued_entries, running_attempts, policies) do
+  # One row per website with queued work or an active backoff, over every
+  # queued execution (not the displayed sample).
+  defp host_entries(queued_hosts, running_attempts, policies) do
     now = DateTime.utc_now()
 
     running_hosts =
@@ -1368,9 +1546,6 @@ defmodule NewspaperWeb.AdminLive.Processing do
       |> Enum.filter(&(&1.step_type == "extraction"))
       |> Enum.map(&attempt_host/1)
       |> MapSet.new()
-
-    queued_hosts =
-      queued_entries |> Enum.group_by(& &1.host) |> Map.new(fn {h, e} -> {h, length(e)} end)
 
     backoff_hosts =
       policies
@@ -1405,7 +1580,7 @@ defmodule NewspaperWeb.AdminLive.Processing do
 
       %{
         host: host,
-        slug: String.replace(host, ~r/[^a-z0-9]+/i, "-"),
+        slug: host_slug(host),
         policy_id: policy && policy.id,
         count: count,
         state: state,
@@ -1441,7 +1616,7 @@ defmodule NewspaperWeb.AdminLive.Processing do
     ]
   end
 
-  defp attempt_entry(attempt, filters, policies) do
+  defp attempt_entry(attempt, filters, policies, titles \\ nil) do
     host = attempt_host(attempt)
     policy = policies[host]
 
@@ -1451,7 +1626,8 @@ defmodule NewspaperWeb.AdminLive.Processing do
       attempt: attempt,
       filters: filters,
       host: host,
-      feed_titles: attempt_feed_titles(attempt),
+      feed_titles:
+        if(titles, do: Map.get(titles, attempt.id, []), else: attempt_feed_titles(attempt)),
       wait_label: wait_label(policy)
     }
   end
@@ -1466,58 +1642,81 @@ defmodule NewspaperWeb.AdminLive.Processing do
     }
   end
 
-  defp queue_entries(attempts, step_type, filters, policies) do
+  # Extraction: one queue per website, each in dispatch order, capped per
+  # website with the true per-website total. Other stages: one serial queue
+  # in dispatch order, capped with the true total (audit IMP-15).
+  defp queue_entries(attempts, "extraction", _total, host_counts, filters, policies, titles) do
     attempts
-    |> Enum.filter(&(&1.step_type == step_type))
-    |> case do
-      attempts when step_type == "extraction" ->
-        attempts
-        |> Enum.group_by(&attempt_host/1)
-        |> Enum.sort_by(fn {host, _attempts} -> host || "" end)
-        |> Enum.flat_map(fn {_host, attempts} ->
-          attempts
-          |> Enum.with_index(1)
-          |> Enum.map(fn {attempt, position} ->
-            attempt
-            |> attempt_entry(filters, policies)
-            |> Map.merge(%{id: "#{step_type}-#{attempt.id}", position: position})
-          end)
-        end)
+    |> Enum.group_by(&attempt_host/1)
+    |> Enum.sort_by(fn {host, _attempts} -> host || "" end)
+    |> Enum.flat_map(fn {host, host_attempts} ->
+      shown = Enum.take(host_attempts, @queue_rows_per_host)
 
-      attempts ->
-        attempts
+      header = %{
+        id: "host-#{host_slug(host)}",
+        kind: :host_header,
+        host: host || "Unknown website",
+        total: Map.get(host_counts, host, length(host_attempts)),
+        shown: length(shown)
+      }
+
+      rows =
+        shown
         |> Enum.with_index(1)
         |> Enum.map(fn {attempt, position} ->
           attempt
-          |> attempt_entry(filters, policies)
-          |> Map.merge(%{id: "#{step_type}-#{attempt.id}", position: position})
+          |> attempt_entry(filters, policies, titles)
+          |> Map.merge(%{id: "extraction-#{attempt.id}", position: position})
         end)
-    end
+
+      [header | rows]
+    end)
   end
 
-  defp delayed_site_entries(queued_extraction, running_attempts, policies) do
+  defp queue_entries(attempts, step_type, total, _host_counts, filters, policies, titles) do
+    shown = Enum.take(attempts, @queue_rows_serial)
+
+    rows =
+      shown
+      |> Enum.with_index(1)
+      |> Enum.map(fn {attempt, position} ->
+        attempt
+        |> attempt_entry(filters, policies, titles)
+        |> Map.merge(%{id: "#{step_type}-#{attempt.id}", position: position})
+      end)
+
+    if total > length(shown),
+      do: rows ++ [%{id: "more", kind: :more, remaining: total - length(shown)}],
+      else: rows
+  end
+
+  defp host_slug(nil), do: "unknown"
+  defp host_slug(host), do: String.replace(host, ~r/[^a-z0-9]+/i, "-")
+
+  # Executions held by a website: behind its running extraction, in backoff,
+  # or paced. Counted over every queued execution, not the displayed sample.
+  defp delayed_site_entries(host_counts, running_attempts, policies) do
     running_hosts =
       running_attempts
       |> Enum.filter(&(&1.step_type == "extraction"))
       |> Enum.map(&attempt_host/1)
       |> MapSet.new()
 
-    queued_extraction
-    |> Enum.group_by(& &1.host)
-    |> Enum.flat_map(fn {host, entries} ->
+    host_counts
+    |> Enum.flat_map(fn {host, count} ->
       policy = policies[host]
       wait_ms = if policy, do: Content.extraction_wait_ms(policy), else: 0
       running? = MapSet.member?(running_hosts, host)
 
       cond do
         running? ->
-          [site_waiting_entry(host, entries, "Waiting behind the active extraction")]
+          [site_waiting_entry(host, count, "Waiting behind the active extraction")]
 
         (wait_ms > 0 and policy) && Content.backoff_active?(policy, DateTime.utc_now()) ->
-          [site_waiting_entry(host, entries, "Backoff active for #{human_wait(wait_ms)}")]
+          [site_waiting_entry(host, count, "Backoff active for #{human_wait(wait_ms)}")]
 
         wait_ms > 0 ->
-          [site_waiting_entry(host, entries, "Website pacing delay for #{human_wait(wait_ms)}")]
+          [site_waiting_entry(host, count, "Website pacing delay for #{human_wait(wait_ms)}")]
 
         true ->
           []
@@ -1526,32 +1725,29 @@ defmodule NewspaperWeb.AdminLive.Processing do
     |> Enum.sort_by(& &1.subject)
   end
 
-  defp site_waiting_entry(host, entries, reason) do
+  defp site_waiting_entry(host, count, reason) do
     %{
-      id: "site-#{host}",
+      id: "site-#{host_slug(host)}",
       kind: :site_delay,
       stage: "extraction",
       subject: host || "Unknown website",
       reason: reason,
-      count: length(entries)
+      count: count
     }
   end
 
-  defp blocked_entries(item_steps) do
-    item_steps
-    |> Enum.group_by(fn item_step ->
-      {item_step.step_type, item_step.generated_feed_item.generated_feed.id}
-    end)
-    |> Enum.map(fn {{step_type, feed_id}, item_steps} ->
-      feed = List.first(item_steps).generated_feed_item.generated_feed
-
+  # Groups are aggregated in SQL before any limit, so every count is the
+  # true population (audit IMP-15).
+  defp blocked_entries(groups) do
+    groups
+    |> Enum.map(fn group ->
       %{
-        id: "blocked-#{step_type}-#{feed_id}",
+        id: "blocked-#{group.step_type}-#{group.feed_id}",
         kind: :prerequisite,
-        stage: step_type,
-        subject: feed.title,
-        reason: waiting_reason(step_type),
-        count: length(item_steps)
+        stage: group.step_type,
+        subject: group.feed_title,
+        reason: waiting_reason(group.step_type),
+        count: group.count
       }
     end)
     |> Enum.sort_by(&{&1.stage, &1.subject})
@@ -1629,17 +1825,28 @@ defmodule NewspaperWeb.AdminLive.Processing do
   defp selection_options,
     do: [
       {"Items never processed by this step", "not_requested"},
-      {"Items whose step failed", "failed"}
+      {"Items whose step failed", "failed"},
+      {"Items cancelled by an operator", "cancelled"}
     ]
 
   defp attention_error(:run_already_finished), do: "That run already finished"
   defp attention_error(:no_action), do: "Nothing to do for that item"
   defp attention_error(reason), do: Format.processing_error_message(reason)
 
+  defp context?(filters) do
+    filters.stage != "all" or not is_nil(filters.generated_feed_id) or
+      not is_nil(filters.article_id) or not is_nil(filters.batch_run_id)
+  end
+
+  defp clear_context(filters),
+    do: %{filters | stage: "all", generated_feed_id: nil, article_id: nil, batch_run_id: nil}
+
+  # Queue is only implicit when nothing else is set; with any context the
+  # tab is spelled out so a link never falls back to History (audit IMP-11).
   defp processing_path(filters) do
     params =
       %{
-        tab: if(filters.tab == "queue", do: nil, else: filters.tab),
+        tab: if(filters.tab == "queue" and not context?(filters), do: nil, else: filters.tab),
         stage: if(filters.stage == "all", do: nil, else: filters.stage),
         generated_feed_id: filters.generated_feed_id,
         article_id: filters.article_id,
