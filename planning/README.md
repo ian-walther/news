@@ -13,6 +13,9 @@ superseded direction rather than keeping progress logs here.
 - [`implementation-roadmap.md`](implementation-roadmap.md): ordered expansion
   phases and acceptance criteria.
 - [`open-questions.md`](open-questions.md): unresolved decisions only.
+- [`mcp-news-bridge.md`](mcp-news-bridge.md): interim authenticated MCP
+  server giving AI agents full-text article access until the Newspaper
+  generates its own edition.
 
 ## Architecture and Durable Contracts
 
