@@ -21,6 +21,7 @@ N150 Ubuntu Server
       direct HTML worker
       isolated headless Chromium worker
       headed worker connected to host Chrome
+    News MCP server image (the only publicly proxied port)
     Postgres, initially
 ```
 
@@ -40,8 +41,15 @@ that LAN through a VPN before accessing Newspaper.
   for operation and debugging.
 - nginx provides stable internal naming and routing, not a security boundary.
 
-Any future requirement for direct public access invalidates these assumptions
-and requires a separate security design before deployment.
+One service is the exception: the News MCP server container
+([`docs/mcp-server.md`](../docs/mcp-server.md)). The public reverse proxy
+forwards one hostname to its port and nothing else. It verifies OAuth tokens
+itself, and that is its entire security design; it is otherwise trusted like
+a LAN client of Newspaper. The rules above still hold for every Phoenix route.
+
+Any future requirement for direct public access to Newspaper itself
+invalidates these assumptions and requires a separate security design before
+deployment.
 
 ## Persistent Desktop Session
 

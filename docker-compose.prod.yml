@@ -29,6 +29,35 @@ services:
       start_period: 20s
     restart: unless-stopped
 
+  # OAuth-protected MCP server for AI agents (planning/mcp-news-bridge.md).
+  # This is the only service meant to be published outside the LAN. It reads
+  # the app's /internal/api/v1 over the compose network and holds no database
+  # credentials. Without an Auth0 API for MCP_PUBLIC_URL it refuses every call.
+  mcp:
+    build:
+      context: ./mcp
+      dockerfile: Dockerfile
+    depends_on:
+      app:
+        condition: service_healthy
+    environment:
+      NEWS_API_URL: http://app:${PORT:-4000}
+      MCP_HTTP_HOST: 0.0.0.0
+      MCP_HTTP_PORT: "3940"
+      MCP_HTTP_PATH: /mcp
+      MCP_AUTH_MODE: ${MCP_AUTH_MODE:-oidc}
+      MCP_PUBLIC_URL: ${MCP_PUBLIC_URL:?MCP_PUBLIC_URL is required}
+      MCP_OIDC_ISSUER: ${MCP_OIDC_ISSUER:-}
+      MCP_STATIC_TOKENS: ${MCP_STATIC_TOKENS:-}
+      MCP_ALLOWED_HOSTS: ${MCP_ALLOWED_HOSTS:-}
+      MCP_TRUST_PROXY: "true"
+      MCP_HTTP_RESPONSE_MODE: json
+      MCP_RESULT_STRUCTURED: ${MCP_RESULT_STRUCTURED:-true}
+      LOG_FORMAT: json
+    ports:
+      - "${MCP_PORT:-3940}:3940"
+    restart: unless-stopped
+
   postgres:
     image: postgres:17-alpine
     environment:

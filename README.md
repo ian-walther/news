@@ -43,6 +43,11 @@ provides a stable hostname and reverse-proxy entry point, not an additional
 authentication boundary. Any future public deployment would require a
 separate security design.
 
+The one exception is the News MCP server in `mcp/`, a separate container that
+gives AI agents OAuth-protected read access to extracted articles. It is the
+only service intended to be published outside the LAN. See
+[`docs/mcp-server.md`](docs/mcp-server.md).
+
 Bootstrap the remote git checkout and environment once after pushing this repo
 to GitHub:
 

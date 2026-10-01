@@ -7,3 +7,4 @@ cd "${ROOT_DIR}/newspaper"
 mix precommit
 
 "${ROOT_DIR}/scripts/test-workers.sh"
+"${ROOT_DIR}/scripts/test-mcp.sh"

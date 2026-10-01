@@ -31,8 +31,14 @@ defmodule NewspaperWeb.Router do
     get "/feeds/*path", FeedController, :show
   end
 
-  # Other scopes may use custom stacks.
-  # scope "/api", NewspaperWeb do
-  #   pipe_through :api
-  # end
+  # Read API for the News MCP server (planning/mcp-news-bridge.md). No
+  # authentication here: OAuth is enforced by the MCP server in front of it.
+  scope "/internal/api/v1", NewspaperWeb do
+    pipe_through :api
+
+    get "/feeds", BridgeController, :feeds
+    get "/articles", BridgeController, :articles
+    get "/articles/:guid", BridgeController, :article
+    get "/bundle", BridgeController, :bundle
+  end
 end

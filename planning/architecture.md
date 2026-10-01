@@ -24,6 +24,7 @@ Keep the repository root as the operator surface.
 news/
   newspaper/      Phoenix application
   workers/        external pipeline step implementations
+  mcp/            OAuth-protected MCP server for AI agents (own Dockerfile)
   planning/       forward-looking planning docs
   docs/           immutable source material and durable reference docs
   scripts/        repo-level operational helpers
@@ -219,11 +220,19 @@ Internet exposure. Network reachability is the authorization boundary.
 - Public port forwarding, public reverse-proxy exposure, and operation on an
   untrusted network are unsupported.
 
-If public access becomes a product requirement, treat it as a separate
-security architecture project covering authentication, authorization, TLS,
-session security, proxy trust, rate limiting, and exposure of administrative
-and hosted-article surfaces. Do not imply that the internal deployment model
-is suitable for public hosting without that work.
+The single exception is the News MCP server (`mcp/`,
+[`docs/mcp-server.md`](../docs/mcp-server.md)). It is a separate container,
+published through the public reverse proxy, that verifies OAuth tokens and
+exposes read-only article retrieval. OAuth on that one route is the whole
+security design for it: the Phoenix application's read API behind it is
+unauthenticated, and the MCP container is trusted like any LAN client. No
+Phoenix route is published.
+
+If public access to the application itself becomes a product requirement,
+treat it as a separate security architecture project covering authentication,
+authorization, TLS, session security, proxy trust, rate limiting, and exposure
+of administrative and hosted-article surfaces. Do not imply that the internal
+deployment model is suitable for public hosting without that work.
 
 ## Home Assistant And MQTT
 
