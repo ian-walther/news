@@ -9,8 +9,8 @@
 3. Prefer pipes when style is a tossup.
    Do not force the pipe operator into every call site, but when two styles are similarly clear, prefer the pipe operator for readability and flow.
 
-4. Run the full test suite before finishing any task.
-   Always run `scripts/test.sh` from the repo root, or `mix test` from `newspaper/`, before declaring work complete. Fix any failures introduced by the change before closing out.
+4. Run the full test suite for code and runtime changes.
+   Run `scripts/test.sh` from the repo root, or `mix test` from `newspaper/`, before declaring code, configuration, dependency, or infrastructure changes complete. Fix any failures introduced by the change before closing out. Documentation-only changes, including planning, audits, and `AGENTS.md`, do not require tests or `scripts/precommit.sh`; review the content, relevant links, and diff instead.
 
 5. Reproduce bugs with a failing test before fixing them.
    For bug fixes and regressions, first add or identify a test that fails because of the bug, confirm the failure, and only then add the fix. After the fix, rerun the focused test and the full suite to confirm the red-green cycle.
@@ -18,6 +18,7 @@
 
 6. Commit, push, and deploy completed work by default.
    After a task passes full verification, commit all task-related changes with a descriptive message, push the current branch, and deploy production without waiting for separate approval. This is standing authorization specific to this non-load-bearing side project. Never include unrelated working-tree changes, and skip any of these steps when the user explicitly asks to hold for review or not deploy.
+   Documentation-only changes should still be committed and pushed, but must not trigger a production deployment, rebuild, migration, or restart unless the user explicitly requests it. Mixed documentation and runtime changes follow the normal test and deployment workflow.
 
 7. Verify every production deployment.
    After deploying, confirm production is running the intended commit, inspect container health and recent logs, exercise relevant routes, and perform a feature-specific smoke test when practical. Resolve deployment failures before declaring the task complete.
@@ -32,7 +33,7 @@ This is a web application written using the Phoenix web framework.
 
 ## Project guidelines
 
-- Use `scripts/precommit.sh` when you are done with all changes and fix any pending issues
+- Use `scripts/precommit.sh` when you are done with code or runtime changes and fix any pending issues. Skip it for documentation-only changes.
 - Use the already included and available `:req` (`Req`) library for HTTP requests, **avoid** `:httpoison`, `:tesla`, and `:httpc`. Req is included by default and is the preferred HTTP client for Phoenix apps
 
 ### Phoenix v1.8 guidelines
