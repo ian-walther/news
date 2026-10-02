@@ -1,7 +1,7 @@
 # News MCP Bridge Review Handoff
 
-Use the [implementation audit](04-mcp-news-bridge-implementation.md) for the
-remaining retrieval-contract corrections and regression criteria. Keep the
+Use the [implementation review](04-mcp-news-bridge-implementation.md) for the
+retrieval-contract regression requirements and review boundary. Keep the
 [rollout plan](../mcp-news-bridge.md) as the authority for infrastructure
 acceptance and Ian's approval boundaries.
 
