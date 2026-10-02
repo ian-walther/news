@@ -34,6 +34,12 @@ These govern any further work on the bridge:
 
 ## Remaining work
 
+Before client rollout, address the retrieval-contract findings in the
+[implementation audit](audit/04-mcp-news-bridge-implementation.md), including
+cursor validation, whole-result budgets, timestamp precision, and MCP result
+metadata. These corrections do not require new product decisions or authorize
+identity-provider or public-network changes.
+
 ### 1. Identity provider (Ian approves each change)
 
 - Create an Auth0 API with identifier `https://news-mcp.ianwalther.com/mcp`,
