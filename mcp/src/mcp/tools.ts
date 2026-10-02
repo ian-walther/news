@@ -41,7 +41,7 @@ const since = z
   .max(64)
   .optional()
   .describe(
-    'Start of the window, inclusive. ISO-8601 with an explicit offset, e.g. 2026-10-01T06:00:00-04:00. Required unless a cursor is given.',
+    'Start of the window, inclusive. ISO-8601 with an explicit offset, e.g. 2026-10-01T06:00:00-04:00. Fractional seconds are used exactly, never rounded. Required unless a cursor is given.',
   );
 const until = z
   .string()
@@ -145,7 +145,7 @@ export function allTools(client: NewsClient, structured: boolean): ToolDefinitio
       config: {
         title: 'List articles in a window',
         description:
-          'Body-free index for a time window [since, until). Reports two sets: articles whose text first became available in the window ("readable"), and articles first seen in the window with their extraction state (extracted, pending, failed, no_content, not_requested), so missing content is visible. Use get_news_bundle for the text.',
+          'Body-free index for a time window [since, until). Reports two sets: articles whose text first became available in the window ("readable"), and articles first seen in the window with their extraction state (extracted, pending, failed, no_content, not_requested), so missing content is visible. Each line gives the article\'s publication, first-seen, first-extraction, and latest-extraction times. Use get_news_bundle for the text.',
         inputSchema: listArticlesInput,
         annotations: READ_ONLY,
       },

@@ -99,6 +99,7 @@ export function buildServer(options: BuildServerOptions): McpServer {
       if (!hasScope(principal, tool.scope)) {
         result = fail(
           new BridgeError('PERMISSION', `Tool '${tool.name}' requires scope ${tool.scope}`),
+          structured,
         );
         code = 'PERMISSION';
       } else {
@@ -122,7 +123,7 @@ export function buildServer(options: BuildServerOptions): McpServer {
           } else {
             logger.debug('tool returned error', facts);
           }
-          result = fail(bridge);
+          result = fail(bridge, structured);
           code = bridge.code;
         }
       }

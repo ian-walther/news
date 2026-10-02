@@ -1,6 +1,8 @@
 defmodule Newspaper.BridgeTest do
   use Newspaper.DataCase
 
+  import Newspaper.BridgeFixtures
+
   alias Newspaper.Bridge
   alias Newspaper.Bridge.Splitter
   alias Newspaper.Content.{Article, ArticleExtraction}
@@ -427,6 +429,303 @@ defmodule Newspaper.BridgeTest do
     end
   end
 
+  describe "cursor contents are untrusted (audit MCP-IMP-01, MCP-IMP-02)" do
+    setup do
+      %{articles: articles} = fixture!(4)
+
+      for article <- articles,
+          do: extract!(article, String.duplicate("Filler sentence here. ", 90), @in_window)
+
+      {:ok, bundle} = Bridge.bundle(%{"since" => @since, "until" => @until, "max_chars" => 2_000})
+      {:ok, index} = Bridge.index(%{"since" => @since, "until" => @until, "limit" => 2})
+      %{bundle_cursor: bundle.next_cursor, index_cursor: index.next_cursor}
+    end
+
+    test "an untouched cursor still continues", ctx do
+      assert {:ok, _page} = Bridge.bundle(%{"cursor" => ctx.bundle_cursor})
+      assert {:ok, _page} = Bridge.index(%{"cursor" => ctx.index_cursor})
+    end
+
+    test "sizes inherited from a cursor obey the configured limits", ctx do
+      for size <- [400_000, 320_001, 1_999, 0, -5] do
+        cursor = tamper(ctx.bundle_cursor, &Map.put(&1, "size", size))
+        assert {:error, {:invalid_cursor, message}} = Bridge.bundle(%{"cursor" => cursor})
+        assert message =~ "max_chars"
+      end
+
+      for size <- [301, 0, -1] do
+        cursor = tamper(ctx.index_cursor, &Map.put(&1, "size", size))
+        assert {:error, {:invalid_cursor, message}} = Bridge.index(%{"cursor" => cursor})
+        assert message =~ "limit"
+      end
+    end
+
+    test "a cursor issued before a limit was lowered is refused", ctx do
+      previous = Application.get_env(:newspaper, :bridge, [])
+      on_exit(fn -> Application.put_env(:newspaper, :bridge, previous) end)
+
+      Application.put_env(:newspaper, :bridge,
+        min_chars: 500,
+        max_chars: 1_500,
+        max_index_limit: 1
+      )
+
+      assert {:error, {:invalid_cursor, _}} = Bridge.bundle(%{"cursor" => ctx.bundle_cursor})
+      assert {:error, {:invalid_cursor, _}} = Bridge.index(%{"cursor" => ctx.index_cursor})
+    end
+
+    test "malformed fields are refused as invalid cursors and never raise", ctx do
+      bundle_changes = [
+        &Map.put(&1, "feeds", "not-a-list"),
+        &Map.put(&1, "feeds", ["x"]),
+        &Map.put(&1, "feeds", [0]),
+        &Map.put(&1, "since", 42),
+        &Map.put(&1, "until", "yesterday"),
+        &Map.delete(&1, "since"),
+        &Map.put(&1, "size", "big"),
+        &Map.put(&1, "pos", "start"),
+        &Map.delete(&1, "pos"),
+        &Map.put(&1, "pos", %{}),
+        &put_in(&1, ["pos", "t"], "noon"),
+        &put_in(&1, ["pos", "a"], "one"),
+        &put_in(&1, ["pos", "a"], 0),
+        &put_in(&1, ["pos", "o"], -1),
+        &put_in(&1, ["pos", "p"], 0),
+        &put_in(&1, ["pos", "f"], "feed"),
+        &Map.put(&1, "v", 99),
+        &Map.put(&1, "k", "index")
+      ]
+
+      for change <- bundle_changes do
+        assert {:error, {:invalid_cursor, _}} =
+                 Bridge.bundle(%{"cursor" => tamper(ctx.bundle_cursor, change)})
+      end
+
+      index_changes = [
+        &Map.put(&1, "pos", %{}),
+        &Map.put(&1, "pos", %{"t" => "yesterday", "a" => 0}),
+        &Map.put(&1, "pos", %{"t" => "2026-09-30T06:00:00Z"}),
+        &Map.put(&1, "pos", %{"t" => 5, "a" => 5}),
+        &Map.put(&1, "pos", %{"t" => "2026-09-30T06:00:00Z", "a" => "x"}),
+        &Map.put(&1, "feeds", %{"a" => 1}),
+        &Map.put(&1, "since", nil)
+      ]
+
+      for change <- index_changes do
+        assert {:error, {:invalid_cursor, _}} =
+                 Bridge.index(%{"cursor" => tamper(ctx.index_cursor, change)})
+      end
+
+      for junk <- [
+            "",
+            "%%%",
+            Base.url_encode64("[1,2]", padding: false),
+            Base.url_encode64("null", padding: false)
+          ] do
+        assert match?(
+                 {:error, {code, _}} when code in [:invalid_cursor, :invalid_parameter],
+                 Bridge.bundle(%{"cursor" => junk})
+               )
+      end
+    end
+  end
+
+  describe "the budget bounds every response shape (audit MCP-IMP-03)" do
+    test "an empty window whose framing cannot fit fails instead of exceeding the budget" do
+      %{source: source} = fixture!(1)
+
+      feeds =
+        for number <- 1..12 do
+          {:ok, feed} =
+            Publishing.create_generated_feed(%{
+              "title" => String.duplicate("Cars ", 40) <> "#{number}",
+              "input_feed_ids" => [source.id]
+            })
+
+          feed
+        end
+
+      params = %{"since" => @since, "until" => @until, "feeds" => Enum.map(feeds, & &1.id)}
+
+      assert {:error, {:budget_too_small, message}} =
+               Bridge.bundle(Map.put(params, "max_chars", 2_000))
+
+      assert message =~ "larger max_chars"
+
+      assert {:ok, page} = Bridge.bundle(Map.put(params, "max_chars", 8_000))
+      assert page.chars == String.length(page.text)
+      assert page.chars <= 8_000
+      assert page.next_cursor == nil
+    end
+
+    test "every successful page is within budget, including terminal and exhausted ones" do
+      %{articles: articles} = fixture!(5)
+
+      for article <- articles,
+          do: extract!(article, String.duplicate("Some body text here. ", 100), @in_window)
+
+      assert {:ok, first} =
+               Bridge.bundle(%{"since" => @since, "until" => @until, "max_chars" => 2_000})
+
+      assert first.next_cursor
+
+      # Everything left is deleted or shortened between pages (live read).
+      [_first | rest] = articles
+      [shortened | deleted] = rest
+
+      Repo.delete_all(
+        from e in ArticleExtraction, where: e.article_id in ^Enum.map(deleted, & &1.id)
+      )
+
+      reextract!(shortened, "Now very short.", @in_window)
+
+      pages =
+        Stream.unfold(first.next_cursor, fn
+          nil ->
+            nil
+
+          cursor ->
+            {:ok, page} = Bridge.bundle(%{"cursor" => cursor})
+            {page, page.next_cursor}
+        end)
+        |> Enum.to_list()
+
+      for page <- [first | pages] do
+        assert page.chars == String.length(page.text)
+        assert page.chars <= 2_000
+      end
+
+      assert List.last(pages).text =~ "[End of bundle.]"
+    end
+
+    test "a filter matching no article and an empty window stay within budget" do
+      %{feeds: [feed]} = fixture!(1, feeds: ["Quiet"])
+
+      for params <- [
+            %{
+              "since" => @since,
+              "until" => @until,
+              "feeds" => "#{feed.id}",
+              "max_chars" => 2_000
+            },
+            %{"since" => @since, "until" => @until, "max_chars" => 2_000}
+          ] do
+        assert {:ok, page} = Bridge.bundle(params)
+        assert page.chars == String.length(page.text)
+        assert page.chars <= 2_000
+      end
+    end
+  end
+
+  describe "fractional-second bounds keep their meaning (audit MCP-IMP-04)" do
+    setup do
+      %{articles: [article]} = fixture!(1)
+      extract!(article, "Extracted exactly at noon.", ~U[2026-09-30 12:00:00Z])
+      %{article: article}
+    end
+
+    test "since is inclusive and until exclusive at sub-second precision", %{article: article} do
+      assert bundle_guids(%{"since" => "2026-09-30T12:00:00.500Z", "until" => @until}) == []
+
+      assert bundle_guids(%{"since" => "2026-09-30T12:00:00.000Z", "until" => @until}) == [
+               article.guid
+             ]
+
+      assert bundle_guids(%{"since" => @since, "until" => "2026-09-30T12:00:00.500Z"}) == [
+               article.guid
+             ]
+
+      assert bundle_guids(%{"since" => @since, "until" => "2026-09-30T12:00:00Z"}) == []
+
+      # The same instants written with another offset select the same articles.
+      assert bundle_guids(%{"since" => "2026-09-30T08:00:00.500-04:00", "until" => @until}) == []
+
+      assert bundle_guids(%{"since" => @since, "until" => "2026-09-30T08:00:00.500-04:00"}) == [
+               article.guid
+             ]
+
+      assert {:ok, index} =
+               Bridge.index(%{"since" => "2026-09-30T12:00:00.500Z", "until" => @until})
+
+      assert index.totals.readable == 0
+    end
+
+    test "precision finer than a microsecond is refused rather than rounded" do
+      for {name, params} <- [
+            {"since", %{"since" => "2026-09-30T12:00:00.0000005Z", "until" => @until}},
+            {"until", %{"since" => @since, "until" => "2026-09-30T12:00:00.0000005Z"}}
+          ] do
+        assert {:error, {:invalid_parameter, message}} = Bridge.bundle(params)
+        assert message =~ name
+        assert message =~ "microsecond"
+        assert {:error, {:invalid_parameter, _}} = Bridge.index(params)
+      end
+
+      assert bundle_guids(%{"since" => "2026-09-30T12:00:00.000001Z", "until" => @until}) == []
+    end
+
+    test "cursors carry fractional bounds and distinguish them from a different instant" do
+      %{articles: more} = fixture!(4, source: "Ars")
+
+      for article <- more,
+          do: extract!(article, String.duplicate("Body sentence. ", 120), @in_window)
+
+      params = %{"since" => @since, "until" => "2026-09-30T23:59:59.250Z", "max_chars" => 2_000}
+      assert {:ok, first} = Bridge.bundle(params)
+      assert first.window.until == "2026-09-30T23:59:59.250Z"
+      assert first.next_cursor
+
+      assert {:ok, second} = Bridge.bundle(%{"cursor" => first.next_cursor})
+      assert second.window.until == "2026-09-30T23:59:59.250Z"
+
+      assert {:ok, _same} =
+               Bridge.bundle(%{
+                 "cursor" => first.next_cursor,
+                 "until" => "2026-09-30T19:59:59.250-04:00"
+               })
+
+      assert {:error, {:cursor_parameter_mismatch, _}} =
+               Bridge.bundle(%{
+                 "cursor" => first.next_cursor,
+                 "until" => "2026-09-30T23:59:59.750Z"
+               })
+
+      assert {:error, {:cursor_parameter_mismatch, _}} =
+               Bridge.bundle(%{"cursor" => first.next_cursor, "until" => "2026-09-30T23:59:59Z"})
+    end
+  end
+
+  describe "timestamp metadata reaches the reader (audit MCP-IMP-05)" do
+    test "the index, bundle, and article texts carry first-seen and both extraction times" do
+      %{articles: [article]} = fixture!(1)
+      set_published!(article, ~U[2026-09-30 06:01:00Z])
+      set_first_seen!(article, ~U[2026-09-30 12:00:11Z])
+      extract!(article, "Body.", ~U[2026-09-30 12:00:30Z])
+      reextract!(article, "Body, extracted again.", ~U[2026-09-30 12:00:42Z])
+
+      assert {:ok, index} = Bridge.index(%{"since" => @since, "until" => @until})
+
+      for time <- [
+            "2026-09-30T06:01:00Z",
+            "2026-09-30T12:00:11Z",
+            "2026-09-30T12:00:30Z",
+            "2026-09-30T12:00:42Z"
+          ] do
+        assert index.text =~ time
+      end
+
+      refute index.text =~ "Body, extracted again."
+
+      assert {:ok, bundle} = Bridge.bundle(%{"since" => @since, "until" => @until})
+      assert bundle.text =~ "First extracted: 2026-09-30T12:00:30Z"
+      assert bundle.text =~ "Latest extraction: 2026-09-30T12:00:42Z"
+
+      assert {:ok, one} = Bridge.article(article.guid, %{})
+      assert one.text =~ "First extracted: 2026-09-30T12:00:30Z"
+      assert one.text =~ "Latest extraction: 2026-09-30T12:00:42Z"
+    end
+  end
+
   # --- helpers ---------------------------------------------------------------
 
   defp split_all("", _limit), do: []
@@ -474,79 +773,5 @@ defmodule Newspaper.BridgeTest do
     [block, _after] = String.split(block, "\n===== END #{guid} =====\n", parts: 2)
     [_header, body] = String.split(block, "\n\n", parts: 2)
     body
-  end
-
-  defp fixture!(count, opts \\ []) do
-    name = Keyword.get(opts, :source, "The Autopian")
-    slug = name |> String.downcase() |> String.replace(~r/[^a-z]+/, "")
-
-    {:ok, source} = Intake.create_input_feed(%{name: name, url: "https://#{slug}.example/feed/"})
-
-    for index <- 1..count do
-      {:ok, _raw} =
-        Intake.upsert_raw_item(source, %{
-          feed_guid: "#{slug}-#{index}",
-          url: "https://#{slug}.example/story-#{index}/",
-          title: "#{name} story #{index}",
-          published_at: DateTime.add(~U[2026-09-30 06:00:00Z], index, :minute),
-          discovered_at: ~U[2026-09-30 07:00:00Z]
-        })
-    end
-
-    {:ok, _run} = Pipeline.process_input_feed(source.id, "test")
-
-    feeds =
-      for title <- Keyword.get(opts, :feeds, []) do
-        {:ok, feed} =
-          Publishing.create_generated_feed(%{"title" => title, "input_feed_ids" => [source.id]})
-
-        {:ok, _run} = Pipeline.backfill_output_feed(feed.id, "test")
-        feed
-      end
-
-    articles =
-      Article
-      |> where([a], like(a.canonical_url, ^"https://#{slug}.example/%"))
-      |> order_by([a], asc: a.published_at)
-      |> Repo.all()
-
-    %{source: source, articles: articles, feeds: feeds}
-  end
-
-  defp extract!(article, text, at) do
-    Repo.insert!(%ArticleExtraction{
-      article_id: article.id,
-      implementation_key: "extraction.simple_html",
-      content_html: "<p>html</p>",
-      content_text: text,
-      extracted_at: at,
-      inserted_at: at,
-      updated_at: at
-    })
-
-    set_status!(article, "succeeded")
-  end
-
-  # The same in-place update the extractor performs on a later success.
-  defp reextract!(article, text, at) do
-    ArticleExtraction
-    |> Repo.get_by!(article_id: article.id)
-    |> ArticleExtraction.changeset(%{content_text: text, extracted_at: at})
-    |> Repo.update!()
-  end
-
-  defp set_status!(article, status) do
-    Article
-    |> Repo.get!(article.id)
-    |> Article.changeset(%{extraction_status: status})
-    |> Repo.update!()
-  end
-
-  defp set_published!(article, at) do
-    Article |> Repo.get!(article.id) |> Article.changeset(%{published_at: at}) |> Repo.update!()
-  end
-
-  defp set_first_seen!(article, at) do
-    Repo.update_all(from(a in Article, where: a.id == ^article.id), set: [inserted_at: at])
   end
 end

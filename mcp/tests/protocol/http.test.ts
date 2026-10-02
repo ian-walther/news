@@ -147,6 +147,63 @@ describe('HTTP transport (auth none, loopback)', () => {
     expect(text(res)).toContain('cursor: CURSOR-2');
   });
 
+  for (const modern of [false, true]) {
+    it(`keeps text-only mode text-only for ${modern ? 'modern' : 'legacy'} error results`, async () => {
+      harness = createHarness({ MCP_RESULT_STRUCTURED: 'false' });
+      const fake = harness.fake;
+      const client = await connect(harness, { modern });
+      const upstream = (status: number, code: string, message: string) => () =>
+        Response.json({ error: { code, message } }, { status });
+      const window = { since: '2026-09-30T00:00:00Z' };
+      const cases = [
+        {
+          intercept: undefined,
+          call: { name: 'get_article', arguments: { guid: 'art_nope' } },
+          code: 'NOT_FOUND',
+        },
+        {
+          intercept: upstream(400, 'invalid_parameter', 'since must be earlier than until'),
+          call: { name: 'list_articles', arguments: { ...window, until: '2026-09-29T00:00:00Z' } },
+          code: 'INVALID_PARAMETER',
+        },
+        {
+          intercept: upstream(422, 'budget_too_small', 'max_chars is too small'),
+          call: { name: 'get_news_bundle', arguments: { ...window, max_chars: 2000 } },
+          code: 'BUDGET_TOO_SMALL',
+        },
+        {
+          intercept: upstream(400, 'invalid_cursor', 'The cursor is malformed'),
+          call: { name: 'get_news_bundle', arguments: { cursor: 'garbage' } },
+          code: 'INVALID_CURSOR',
+        },
+        {
+          intercept: () => new Response('down', { status: 503 }),
+          call: { name: 'list_feeds', arguments: {} },
+          code: 'UPSTREAM_UNAVAILABLE',
+        },
+      ];
+      for (const { intercept, call, code } of cases) {
+        fake.intercept = intercept;
+        const res = await client.callTool(call);
+        expect(res.isError, code).toBe(true);
+        expect(res, code).not.toHaveProperty('structuredContent');
+        // The typed error is still there for the model, as text.
+        const payload = JSON.parse(text(res)) as { error: { code: string; message: string } };
+        expect(payload.error.code).toBe(code);
+        expect(payload.error.message).not.toBe('');
+      }
+
+      fake.intercept = undefined;
+      const rejected = await client.callTool({
+        name: 'get_article',
+        arguments: { guid: '../../etc/passwd' },
+      });
+      expect(rejected.isError).toBe(true);
+      expect(rejected).not.toHaveProperty('structuredContent');
+      expect(text(rejected)).not.toBe('');
+    });
+  }
+
   it('exposes a health endpoint without article content', async () => {
     harness = createHarness({}, { healthCacheMs: 0 });
     const res = await harness.fetch('http://127.0.0.1:3940/healthz');

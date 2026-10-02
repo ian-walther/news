@@ -46,23 +46,30 @@ One scope, `news.read`. All tools are read-only.
 | Tool | Returns |
 | --- | --- |
 | `list_feeds` | Output feeds (ids for scoping) and input sources with last fetch status and time |
-| `list_articles` | Body-free index for a window: the readable set and the coverage set |
+| `list_articles` | Body-free index for a window: the readable set and the coverage set, each line with the article's publication, first-seen, first-extraction, and latest-extraction times |
 | `get_news_bundle` | Full article text for a window, in pages |
 | `get_article` | One article's full text by guid, with `offset` |
 
-Results are one Markdown text block. Structured content carries only the
-cursor and counts, never a second copy of the text; `MCP_RESULT_STRUCTURED=false`
-turns it off for a client that mishandles it. The cursor is always printed in
-the text as well.
+Results are one Markdown text block, and everything an agent needs is in
+it. Structured content carries only the cursor and counts, never a second
+copy of the text; `MCP_RESULT_STRUCTURED=false` turns it off for a client
+that mishandles it, for successful results and errors alike. The cursor is
+always printed in the text, and an error's text is its
+`{"error":{"code","message"}}` payload.
 
 ## Windows
 
 - `since` and `until` are ISO-8601 with an explicit offset. The interval is
   half-open: `[since, until)`. `until` defaults to the time of the first call.
+- A bound is used at exactly the precision given, down to the microsecond,
+  and is never rounded: stored times are whole seconds, so `12:00:00.500`
+  falls after an article stored at `12:00:00`. More than six fractional
+  digits is rejected with `INVALID_PARAMETER`.
 - **Readable set**: articles whose *first* successful extraction falls in the
   window (`article_extractions.inserted_at`). Re-extracting an old article
   does not make it new. Publication time and latest extraction time are
-  metadata.
+  metadata: every article header prints `Published`, `First extracted`, and
+  `Latest extraction`.
 - **Coverage set** (index only): articles first seen in the window, with
   their extraction state: `extracted`, `pending`, `failed`, `no_content`,
   `not_requested`. It shows what has no text yet. Reading it starts no work.
@@ -76,8 +83,9 @@ the text as well.
   article in several selected feeds appears once, under the first, with all
   its feeds named.
 - `max_chars` (default 80,000; allowed 2,000–320,000; out-of-range values are
-  rejected) bounds the whole returned text, including headers, framing, and
-  the continuation line. Characters are Elixir `String.length/1` units.
+  rejected) bounds the whole returned text of every successful result,
+  including headers, framing, the closing or continuation line, and the line
+  an empty page carries. Characters are Elixir `String.length/1` units.
 - Whole articles per page. An article that cannot fit an empty page is
   delivered alone, in parts labelled "Part k of n", split at a paragraph,
   sentence, or whitespace boundary, or hard-split inside an oversized
@@ -86,8 +94,14 @@ the text as well.
   resolved window, feed selection, and budget. **Call again with only the
   cursor**: omitted parameters are inherited, and an explicit parameter that
   conflicts with the cursor is refused. The same applies to index paging.
-- If an article's header leaves no room for any of its text, the call fails
-  with `BUDGET_TOO_SMALL`: start a new request with a larger budget.
+- Cursors are unsigned, so their contents are validated like any other
+  argument. A cursor that is malformed, carries a field of the wrong type or
+  range, or carries a budget or page size outside the limits now configured
+  fails with `INVALID_CURSOR`.
+- If the required framing (the window and feed line, an article's header,
+  the closing line) leaves no room for content, the call fails with
+  `BUDGET_TOO_SMALL`, whether or not the page has any article: start a new
+  request with a larger budget. Nothing is truncated to make a page fit.
 
 ## Live-read limitations
 
@@ -100,6 +114,19 @@ Every call reads current data. Nothing is snapshotted.
 - Adjacent daily windows are not guaranteed exactly-once delivery. The agent
   owns its own checkpoint and should advance it only after a complete run.
 
+## Tests
+
+`scripts/test.sh` runs everything. Three layers cover the bridge:
+
+- `newspaper/test/newspaper/bridge_test.exs` and the controller test cover
+  selection, paging, budgets, and cursor validation in the application.
+- `mcp/tests/` covers the MCP server's auth, transport, and result shapes in
+  both protocol eras against a stand-in for the read API.
+- `newspaper/test/newspaper_web/mcp_bridge_integration_test.exs` builds the
+  `mcp/` package, runs it under Node against the application's real read
+  API, and calls it over MCP in structured and text-only modes. It needs
+  Node and installs `mcp/node_modules` when missing.
+
 ## Configuration
 
 Set in `.env.prod`; see `docker-compose.prod.yml` and `mcp/.env.example`.
@@ -111,7 +138,7 @@ Set in `.env.prod`; see `docker-compose.prod.yml` and `mcp/.env.example`.
 | `MCP_AUTH_MODE` | `oidc` (default) or `static` for LAN smoke tests with `MCP_STATIC_TOKENS`. |
 | `MCP_ALLOWED_HOSTS` | Extra Host names, such as a LAN name. |
 | `MCP_PORT` | Host port for the container (default 3940). |
-| `MCP_RESULT_STRUCTURED` | `false` for text-only tool results. |
+| `MCP_RESULT_STRUCTURED` | `false` for text-only tool results, including errors. |
 
 With `oidc` mode and no matching Auth0 API, the server starts healthy and
 refuses every request. `GET /healthz` needs no token and reports whether the

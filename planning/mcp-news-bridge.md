@@ -34,11 +34,22 @@ These govern any further work on the bridge:
 
 ## Remaining work
 
-Before client rollout, address the retrieval-contract findings in the
-[implementation audit](audit/04-mcp-news-bridge-implementation.md), including
-cursor validation, whole-result budgets, timestamp precision, and MCP result
-metadata. These corrections do not require new product decisions or authorize
-identity-provider or public-network changes.
+Before client rollout, Astra verifies the corrections for the
+[implementation audit](audit/04-mcp-news-bridge-implementation.md) and clears
+its findings. Each finding has maintained tests named for it:
+
+| Finding | Where to verify |
+| --- | --- |
+| MCP-IMP-01 cursor-inherited sizes | `bridge_test.exs` "cursor contents are untrusted"; `bridge_controller_test.exs`; integration test |
+| MCP-IMP-02 malformed cursor fields | Same three; decoding is total in `Newspaper.Bridge.Cursor` |
+| MCP-IMP-03 budget on every response shape | `bridge_test.exs` "the budget bounds every response shape"; controller and integration tests |
+| MCP-IMP-04 fractional-second bounds | `bridge_test.exs` "fractional-second bounds keep their meaning"; integration test |
+| MCP-IMP-05 timestamp metadata | `bridge_test.exs` "timestamp metadata reaches the reader"; integration test, both result modes |
+| MCP-IMP-06 text-only errors | `mcp/tests/protocol/http.test.ts`, both eras; integration test |
+
+The integration test is
+`newspaper/test/newspaper_web/mcp_bridge_integration_test.exs`: the built MCP
+server against the real read API.
 
 ### 1. Identity provider (Ian approves each change)
 

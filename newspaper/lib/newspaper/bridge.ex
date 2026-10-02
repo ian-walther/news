@@ -9,11 +9,16 @@ defmodule Newspaper.Bridge do
   Every call is a live read. Nothing is snapshotted between calls, so text,
   metadata, and feed membership can change while a caller is paging.
 
-  Windows are half-open `[since, until)`. The readable set is articles whose
-  **first** successful extraction falls in the window
+  Windows are half-open `[since, until)`. Bounds keep the precision they are
+  given, down to the microsecond; stored times are whole seconds, so a
+  fractional bound simply falls between two of them. The readable set is
+  articles whose **first** successful extraction falls in the window
   (`article_extractions.inserted_at`, which re-extraction never rewrites).
   The coverage set is articles first seen in the window, whatever their
   extraction state.
+
+  The size budget bounds every successful result, whatever its shape. Cursors
+  are unsigned, so everything in one is validated as an untrusted argument.
 
   Sizes are Elixir `String.length/1` characters. All splitting happens here.
   """
@@ -172,18 +177,17 @@ defmodule Newspaper.Bridge do
     )
     |> where(
       [article: a, extraction: e],
-      (e.inserted_at >= ^request.since and e.inserted_at < ^request.until) or
-        (a.inserted_at >= ^request.since and a.inserted_at < ^request.until)
+      (e.inserted_at >= type(^request.since, :utc_datetime_usec) and
+         e.inserted_at < type(^request.until, :utc_datetime_usec)) or
+        (a.inserted_at >= type(^request.since, :utc_datetime_usec) and
+           a.inserted_at < type(^request.until, :utc_datetime_usec))
     )
     |> scope_feeds(request.feeds)
   end
 
   defp after_index_position(query, nil), do: query
 
-  defp after_index_position(query, %{"t" => time, "a" => id}) do
-    {:ok, time, _offset} = DateTime.from_iso8601(time)
-    time = DateTime.truncate(time, :second)
-
+  defp after_index_position(query, %{"t" => %DateTime{} = time, "a" => id}) do
     where(
       query,
       [article: a],
@@ -192,7 +196,7 @@ defmodule Newspaper.Bridge do
         a.published_at,
         a.inserted_at,
         a.id,
-        type(^time, :utc_datetime),
+        type(^time, :utc_datetime_usec),
         ^id
       )
     )
@@ -210,7 +214,11 @@ defmodule Newspaper.Bridge do
         as: :extraction,
         on: e.article_id == a.id
       )
-      |> where([article: a], a.inserted_at >= ^request.since and a.inserted_at < ^request.until)
+      |> where(
+        [article: a],
+        a.inserted_at >= type(^request.since, :utc_datetime_usec) and
+          a.inserted_at < type(^request.until, :utc_datetime_usec)
+      )
       |> scope_feeds(request.feeds)
       |> select([article: a, extraction: e], %{
         extraction_status: a.extraction_status,
@@ -246,7 +254,10 @@ defmodule Newspaper.Bridge do
           "- #{article.guid}",
           article.extraction_state,
           flags,
-          iso(article.published_at) || "no publication time",
+          "published #{iso(article.published_at) || "unknown"}",
+          "first seen #{iso(article.first_seen_at)}",
+          "first extracted #{iso(article.first_extracted_at) || "never"}",
+          "latest extraction #{iso(article.last_extracted_at) || "never"}",
           one_line(article.outlet) || "unknown outlet",
           one_line(article.title) || "Untitled",
           if(article.text_chars, do: "#{article.text_chars} chars", else: "no text"),
@@ -266,7 +277,8 @@ defmodule Newspaper.Bridge do
       "Readable (first extracted in the window): #{totals.readable}. " <>
         "First seen in the window: #{totals.first_seen}" <>
         if(states == "", do: ".", else: " (#{states})."),
-      "Columns: guid | extraction state | sets | published | outlet | title | text length | feeds | url",
+      "Columns: guid | extraction state | sets | published | first seen | first extracted | " <>
+        "latest extraction | outlet | title | text length | feeds | url",
       "",
       lines,
       "",
@@ -303,23 +315,32 @@ defmodule Newspaper.Bridge do
             else: end_footer()
 
         body =
-          if entries == [],
-            do: "No articles were first extracted in this window.\n",
-            else: Enum.join(blocks)
+          cond do
+            entries == [] -> "No articles were first extracted in this window.\n"
+            blocks == [] -> "No further articles remain in this window.\n"
+            true -> Enum.join(blocks)
+          end
 
         text = preamble <> body <> footer
+        chars = String.length(text)
 
-        {:ok,
-         %{
-           window: window(request),
-           feeds: request.feeds,
-           max_chars: request.size,
-           chars: String.length(text),
-           articles: delivered,
-           remaining_articles: remaining,
-           next_cursor: next_cursor,
-           text: text
-         }}
+        # The bound covers the text actually returned: preamble, body or
+        # empty-result line, and the real footer.
+        if chars > request.size do
+          budget_too_small()
+        else
+          {:ok,
+           %{
+             window: window(request),
+             feeds: request.feeds,
+             max_chars: request.size,
+             chars: chars,
+             articles: delivered,
+             remaining_articles: remaining,
+             next_cursor: next_cursor,
+             text: text
+           }}
+        end
       end
     end
   end
@@ -354,8 +375,9 @@ defmodule Newspaper.Bridge do
   end
 
   defp fill_part(entry, rest, text, length, offset, part, page_room) do
-    probe = part_header(entry, length, 99_999, 99_999, length, length)
-    available = page_room - String.length(probe) - String.length(end_marker(entry))
+    available =
+      page_room - String.length(widest_part_header(entry, length)) -
+        String.length(end_marker(entry))
 
     if available < 1 do
       budget_too_small()
@@ -383,7 +405,8 @@ defmodule Newspaper.Bridge do
   defp budget_too_small do
     {:error,
      {:budget_too_small,
-      "max_chars is too small to carry this article's header with any of its text. " <>
+      "max_chars is too small for this response's required framing (the window and feed " <>
+        "line, an article header, and the closing line) plus any article text. " <>
         "Start a new request with a larger max_chars; a cursor issued for the smaller budget cannot be reused."}}
   end
 
@@ -418,7 +441,8 @@ defmodule Newspaper.Bridge do
     )
     |> where(
       [extraction: e],
-      e.inserted_at >= ^request.since and e.inserted_at < ^request.until
+      e.inserted_at >= type(^request.since, :utc_datetime_usec) and
+        e.inserted_at < type(^request.until, :utc_datetime_usec)
     )
     |> scope_feeds(request.feeds)
   end
@@ -489,6 +513,11 @@ defmodule Newspaper.Bridge do
     )
   end
 
+  # No part of this article can have a longer header: it has at most one part
+  # per character, and no range within it is wider than its length.
+  defp widest_part_header(entry, length),
+    do: part_header(entry, length, length, length, length, length)
+
   defp article_header(entry, length, part_line) do
     [
       "\n===== ARTICLE #{entry.guid} =====",
@@ -497,6 +526,7 @@ defmodule Newspaper.Bridge do
       entry.author && "Author: #{one_line(entry.author)}",
       "Published: #{iso(entry.published_at) || "unknown"}",
       "First extracted: #{iso(entry.first_extracted_at)}",
+      "Latest extraction: #{iso(entry.last_extracted_at)}",
       "URL: #{entry.url || "unknown"}",
       "Feeds: #{feed_names(entry.feed_names)}",
       "Length: #{length} characters",
@@ -520,14 +550,7 @@ defmodule Newspaper.Bridge do
   # The continuation line is reserved at its largest possible size so the
   # declared budget is never exceeded whatever position the page ends on.
   defp footer_reserve(request) do
-    probe =
-      Cursor.encode("bundle", request, %{
-        "f" => 9_999_999_999,
-        "t" => 99_999_999_999,
-        "a" => 9_999_999_999_999,
-        "o" => 9_999_999_999,
-        "p" => 99_999
-      })
+    probe = Cursor.encode("bundle", request, Cursor.widest_position("bundle"))
 
     max(String.length(continue_footer(9_999_999, probe)), String.length(end_footer()))
   end
@@ -551,10 +574,10 @@ defmodule Newspaper.Bridge do
       text = article_text(entry.id)
       length = String.length(text)
       footer_room = String.length(article_footer(9_999_999_999))
-      probe = part_header(entry, length, 99_999, 99_999, length, length)
 
       available =
-        max_chars - String.length(@untrusted_notice) - 1 - String.length(probe) -
+        max_chars - String.length(@untrusted_notice) - 1 -
+          String.length(widest_part_header(entry, length)) -
           String.length(end_marker(entry)) - footer_room
 
       cond do
@@ -669,12 +692,7 @@ defmodule Newspaper.Bridge do
   defp decode_cursor(kind, token) do
     case Cursor.decode(kind, token) do
       {:ok, cursor} ->
-        {:ok,
-         %{
-           cursor
-           | since: DateTime.truncate(cursor.since, :second),
-             until: DateTime.truncate(cursor.until, :second)
-         }}
+        {:ok, cursor}
 
       :error ->
         {:error, {:invalid_cursor, "The cursor is malformed or was issued by a different tool"}}
@@ -701,12 +719,20 @@ defmodule Newspaper.Bridge do
     end
   end
 
+  # A bound is used exactly as given. Anything finer than the runtime can
+  # represent is refused, never rounded into a different window.
   defp parse_time(name, value) do
-    case DateTime.from_iso8601(value) do
-      {:ok, time, _offset} ->
-        {:ok, DateTime.truncate(time, :second)}
+    with true <- is_binary(value),
+         true <- Cursor.representable_precision?(value),
+         {:ok, time, _offset} <- DateTime.from_iso8601(value) do
+      {:ok, time}
+    else
+      false when is_binary(value) ->
+        {:error,
+         {:invalid_parameter,
+          "#{name} has finer than microsecond precision; use at most six fractional digits"}}
 
-      {:error, _reason} ->
+      _invalid ->
         {:error,
          {:invalid_parameter,
           "#{name} must be an ISO-8601 time with an explicit offset, such as 2026-10-01T06:00:00-04:00"}}
@@ -781,18 +807,34 @@ defmodule Newspaper.Bridge do
         "index" -> {limits.default_index_limit, 1, limits.max_index_limit}
       end
 
-    case {present(params[name]), cursor} do
-      {nil, nil} ->
-        {:ok, default}
+    # A cursor's size is an untrusted argument like any other, and may also
+    # predate a limit that has since been lowered.
+    with :ok <- ensure_cursor_size(cursor, name, min, max) do
+      case {present(params[name]), cursor} do
+        {nil, nil} ->
+          {:ok, default}
 
-      {nil, cursor} ->
-        {:ok, cursor.size}
+        {nil, cursor} ->
+          {:ok, cursor.size}
 
-      {_value, cursor} ->
-        with {:ok, size} <- integer_param(params, name, default, min, max) do
-          if is_nil(cursor) or size == cursor.size, do: {:ok, size}, else: mismatch(name)
-        end
+        {_value, cursor} ->
+          with {:ok, size} <- integer_param(params, name, default, min, max) do
+            if is_nil(cursor) or size == cursor.size, do: {:ok, size}, else: mismatch(name)
+          end
+      end
     end
+  end
+
+  defp ensure_cursor_size(nil, _name, _min, _max), do: :ok
+
+  defp ensure_cursor_size(%{size: size}, _name, min, max) when size >= min and size <= max,
+    do: :ok
+
+  defp ensure_cursor_size(%{size: size}, name, min, max) do
+    {:error,
+     {:invalid_cursor,
+      "This cursor carries #{name} #{size}, outside the allowed range #{min}-#{max}. " <>
+        "Start a new request without the cursor."}}
   end
 
   defp integer_param(params, name, default, min, max) do

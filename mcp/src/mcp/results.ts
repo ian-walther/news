@@ -3,7 +3,8 @@
  * the News application produced, unchanged. Structured content carries only
  * the small continuation facts (cursor, counts), never a second copy of the
  * article text, and can be switched off with MCP_RESULT_STRUCTURED=false for
- * clients that mishandle it. The cursor is always present in the text too.
+ * clients that mishandle it. The switch covers successes and errors alike:
+ * the cursor and the typed error are always present in the text too.
  */
 import type { CallToolResult } from '@modelcontextprotocol/server';
 import { BridgeError } from '../errors.js';
@@ -23,12 +24,12 @@ export function textResult(
   };
 }
 
-export function fail(err: unknown, context?: string): CallToolResult {
+export function fail(err: unknown, includeStructured: boolean, context?: string): CallToolResult {
   const bridge = BridgeError.from(err, context);
   const payload: ToolErrorPayload = { error: { code: bridge.code, message: bridge.message } };
   return {
     content: [{ type: 'text', text: JSON.stringify(payload) }],
-    structuredContent: payload,
+    ...(includeStructured ? { structuredContent: payload } : {}),
     isError: true,
   };
 }
