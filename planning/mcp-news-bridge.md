@@ -41,13 +41,18 @@ real-client or deployment checks.
 
 ### 1. Identity provider (Ian approves each change)
 
+`mcp/scripts/auth0-setup.mjs` makes the two tenant changes below and nothing
+else. It takes a 24-hour Management API token in the environment and supports
+`AUTH0_DRY_RUN=1`.
+
 - Create an Auth0 API with identifier `https://news-mcp.ianwalther.com/mcp`,
   RS256, RBAC on, permissions in the access token, permission `news.read`.
   Grant `news.read` to Ian's user only.
 - **Audience selection.** The tenant's default audience is the Trilium API,
-  and MCP clients do not send `audience`. Enable and test Auth0's Resource
-  Parameter Compatibility Profile so the OAuth `resource` parameter selects
-  this API. Verify, from Claude and from ChatGPT: first authorization and
+  and MCP clients do not send `audience`. Set the tenant's
+  `resource_parameter_profile` to `compatibility` (Auth0's Resource Parameter
+  Compatibility Profile) so the OAuth `resource` parameter selects
+  this API, and test it. Verify, from Claude and from ChatGPT: first authorization and
   token refresh; a Trilium token is rejected here and a News token is
   rejected at Trilium; the existing Trilium connector still works. Do not
   change the tenant default audience and do not accept the Trilium audience
