@@ -56,10 +56,15 @@ For Claude and for ChatGPT, record in `docs/mcp-server.md`:
 - a normal read from the existing Trilium connector still working;
 - practical index and text-page capacities beyond the conservative prompt
   settings, without assuming the server's maximum fits a client;
-- one heavy weekday retrieved end to end, with the returned guids checked
-  against `list_articles`;
-- what the runtime does with context across pages. This is observed, not
-  promised.
+- complete Claude's full-day retrieval and compare its returned GUIDs with
+  `list_articles`, preserving the approved per-tool permission policy;
+- complete a full-day model-reading check, not only a transport loop. Each
+  page's article text must reach model context before factual notes are
+  written. Verify note coverage against the readable index, and investigate
+  client stalls or explicit limits without assuming a backend failure;
+- establish a practical recovery or smaller-work-unit strategy when a
+  reading run stops, and observe context retention across the complete run
+  rather than promising it from successful transport checks.
 
 ### 2. First scheduled job
 

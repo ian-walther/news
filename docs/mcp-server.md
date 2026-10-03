@@ -220,10 +220,70 @@ and [Claude](https://claude.ai/chat/49f45edb-6625-49ff-a194-e32fdf6c2699).
 
 Start with 20 index entries and 20,000 text characters per page. These are
 conservative client prompt settings, not new server defaults or measured
-maximum capacities. Structured results remain enabled. Token refresh after
-expiry, full-day GUID reconciliation, and context retention across a whole
-day remain separate acceptance checks; a successful login does not prove
-them.
+maximum capacities. Structured results remain enabled. Successful login,
+complete transport retrieval, and model reading/retention are separate
+checks; none proves the others.
+
+### Full-day transport verification (2026-10-02)
+
+The same September 30 window was retrieved completely through the
+production read API, following cursor-only continuations. Its 9 index pages
+contained 162 entries: 161 readable articles and 1 coverage-only failed
+entry. The readable bodies totaled 745,643 grapheme clusters.
+
+| Text-page budget | Pages | Split articles | Largest returned page |
+| --- | --- | --- | --- |
+| 20,000 | 53 | 2 | 19,926 |
+| 80,000 | 11 | 0 | 79,260 |
+| 320,000 | 3 | 0 | 318,884 |
+
+All three runs matched the readable index exactly, without missing or
+duplicate articles, repeated cursors, incomplete parts, or oversized pages.
+Concatenated bodies were identical across budgets and matched all 161
+individual article reads exactly. This exercises production data, not just
+fixture counts. Seven index lengths differed from bundle lengths because
+Postgres `char_length` counts code points while Elixir `String.length`
+counts grapheme clusters; the text itself was identical.
+
+ChatGPT also completed the public MCP transport path at 20,000 and 80,000
+characters: 53 and 11 pages respectively, with 161 distinct GUIDs and a
+final remaining count of zero. Its emitted GUID list was independently
+compared with the direct-API baseline using count, uniqueness, and a
+fingerprint of the sorted GUIDs (FNV-1a 64-bit, ASCII newline separator,
+no trailing newline): `e73d0cb82c6d1239`.
+
+An auxiliary ChatGPT reconciliation pass hit its execution wrapper's
+per-script tool-call limit; bounded batches recovered. This was not a News
+API error or a failed primary pagination sequence. More importantly, the
+transport test deliberately printed only metadata from the tool runner
+into model context. Full bodies reached the runner, but the model did not
+read them. These successful runs therefore do **not** establish that an
+80,000-character page is safe to emit into model context, or that the model
+can summarize a whole day. A daily-brief workflow must expose the article
+text to the model and retain per-page factual notes before advancing.
+
+### Full-text model reading check (2026-10-02)
+
+A [fresh ChatGPT conversation](https://chatgpt.com/c/6ac05e04-4368-83e9-8a45-78f623f41ae3)
+was explicitly required to emit each complete 20,000-character page into
+model context and record a body-specific factual note for every article
+before continuing. It produced details not present in the index titles.
+The last visible analysis output contained 21 stored notes; its last two
+article GUIDs matched page 14 of the independently verified bundle.
+
+The client then remained at the same visible step for several minutes,
+showing "Our systems are thinking a bit more about this request before
+responding." The attempt was manually stopped. No explicit News API error,
+tool-result truncation, or context-limit error was displayed at that point.
+Browser-control commands subsequently timed out while requesting a
+checkpoint, so the underlying client cause was not established. This is an
+**inconclusive full-reading test**, not a confirmed model context ceiling
+and not a complete day's reading. Transport success must not be used to
+upgrade this result to a pass.
+
+Claude's separate full-day run remains partial at per-tool approval prompts.
+Its permission defaults were not changed. Neither that pause nor the
+ChatGPT UI stall is evidence of a pagination failure in the News API.
 
 ## Reference prompt
 
@@ -243,6 +303,9 @@ You write my daily newspaper from the News connector.
    your notes before requesting the next: for every article, the facts,
    numbers, names, and quotes worth keeping, with its URL. Then call again
    with only the cursor. Stop when the result says "End of bundle".
+   If using a programmatic tool runner, emit the full text of one page into
+   model context before taking notes. A loop that downloads bodies but
+   prints only GUIDs does not count as reading the articles.
 3. Track article GUIDs, including all parts of split articles, and compare
    the completed bundle with the readable index. If a client truncates a
    result or a tool/context limit prevents completion, report the missing
