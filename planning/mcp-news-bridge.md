@@ -3,8 +3,8 @@
 The bridge itself is built and documented in
 [`docs/mcp-server.md`](../docs/mcp-server.md): an OAuth-protected MCP server
 (`mcp/`) over a Phoenix read API (`Newspaper.Bridge`), returning full article
-text for a time window in bounded pages. This document holds only what is
-left before Ian's agents can use it.
+text for a time window in bounded pages. This document records why it is
+parked and what a resumption would need.
 
 ## Roles
 
@@ -32,47 +32,22 @@ These govern any further work on the bridge:
   identity, or the Newspaper domain. It is removed when Ian no longer wants
   external-agent retrieval; there is no expiry date.
 
-## Remaining work
+## Status: parked (2026-10-03)
 
-Keep the [implementation review's regression requirements and verification
-boundary](audit/04-mcp-news-bridge-implementation.md) separate from the
-remaining rollout acceptance below. A functional review does not replace
-real-client or deployment checks.
+The bridge is deployed, routed, and connected to Claude and ChatGPT, and the
+full-day retrieval works at the transport level (see the client observations
+in `docs/mcp-server.md`). The daily run itself does not: a weekday's full
+text is more than either client digests in one job. No further rollout work
+is planned until the design is reworked.
 
-### 1. Remaining client acceptance
+## When resumed
 
-Use the production routing and identity configuration documented in
-[`docs/mcp-server.md`](../docs/mcp-server.md#production-routing-and-identity)
-and the recorded bounded client checks in its client-observations section.
-Preserve existing callback URLs and do not store credentials in the repo.
-
-Keep rollout verification to ordinary client authorization, refresh, and
-read operations. Adversarial authorization testing and cross-service token
-probes are outside this rollout's scope.
-
-For Claude and for ChatGPT, record in `docs/mcp-server.md`:
-
-- token refresh after the access token expires;
-- a normal read from the existing Trilium connector still working;
-- practical index and text-page capacities beyond the conservative prompt
-  settings, without assuming the server's maximum fits a client;
-- complete Claude's full-day retrieval and compare its returned GUIDs with
-  `list_articles`, preserving the approved per-tool permission policy;
-- complete a full-day model-reading check, not only a transport loop. Each
-  page's article text must reach model context before factual notes are
-  written. Verify note coverage against the readable index, and investigate
-  client stalls or explicit limits without assuming a backend failure;
-- establish a practical recovery or smaller-work-unit strategy when a
-  reading run stops, and observe context retention across the complete run
-  rather than promising it from successful transport checks.
-
-### 2. First scheduled job
-
-- Run the reference prompt from `docs/mcp-server.md` as a scheduled agent on
-  one client and adjust the prompt from what is learned. Prompt quality is not
-  a server acceptance criterion.
-- Choose the client, schedule, and editorial preferences with Ian before
-  creating the job.
+Rework the bridge to pass less information per run before any client work
+resumes. Candidates, undecided: smaller work units (per feed or per
+sub-window runs that each produce a partial result), a body-free first pass
+with selective `get_article` reads, or server-side reduction, which would
+revisit the "retrieval only" standing decision. Ian decides which; the
+sizing basis below is the input.
 
 ## Sizing basis (production, 2026-10-01)
 

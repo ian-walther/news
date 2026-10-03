@@ -1,9 +1,15 @@
 # News MCP Server
 
+**Status (2026-10-03): deployed and connected, but not in use.** A weekday's
+full text is more than Claude or ChatGPT digests in one job, so the daily
+newspaper run was shelved; see
+[`planning/mcp-news-bridge.md`](../planning/mcp-news-bridge.md). The server
+stays up and the contract below stays accurate.
+
 An OAuth-protected Model Context Protocol server that gives Ian's AI agents
 read access to the full text of extracted articles. It exists so an agent can
 write a daily newspaper from the day's articles until the application
-generates its own edition. Plan and remaining rollout work:
+generates its own edition. Plan and status:
 [`planning/mcp-news-bridge.md`](../planning/mcp-news-bridge.md).
 
 ## Boundary

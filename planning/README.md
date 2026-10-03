@@ -14,8 +14,9 @@ superseded direction rather than keeping progress logs here.
   phases and acceptance criteria.
 - [`open-questions.md`](open-questions.md): unresolved decisions only.
 - [`mcp-news-bridge.md`](mcp-news-bridge.md): interim authenticated MCP
-  server giving AI agents full-text article access until the Newspaper
-  generates its own edition.
+  server giving AI agents full-text article access; parked since 2026-10-03
+  because a day's text exceeds what the agents digest, with the rework
+  options for a resumption.
 
 ## Architecture and Durable Contracts
 
