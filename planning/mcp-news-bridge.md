@@ -39,55 +39,35 @@ boundary](audit/04-mcp-news-bridge-implementation.md) separate from the
 remaining rollout acceptance below. A functional review does not replace
 real-client or deployment checks.
 
-### 1. Identity provider (Ian approves each change)
+### 1. Remaining client acceptance
 
-`mcp/scripts/auth0-setup.mjs` makes the two tenant changes below and nothing
-else. It takes a 24-hour Management API token in the environment and supports
-`AUTH0_DRY_RUN=1`.
+Use the production routing and identity configuration documented in
+[`docs/mcp-server.md`](../docs/mcp-server.md#production-routing-and-identity)
+and the recorded bounded client checks in its client-observations section.
+Preserve existing callback URLs and do not store credentials in the repo.
 
-- Create an Auth0 API with identifier `https://news-mcp.ianwalther.com/mcp`,
-  RS256, RBAC on, permissions in the access token, permission `news.read`.
-  Grant `news.read` to Ian's user only.
-- **Audience selection.** The tenant's default audience is the Trilium API,
-  and MCP clients do not send `audience`. Set the tenant's
-  `resource_parameter_profile` to `compatibility` (Auth0's Resource Parameter
-  Compatibility Profile) so the OAuth `resource` parameter selects
-  this API, and test it. Verify, from Claude and from ChatGPT: first authorization and
-  token refresh; a Trilium token is rejected here and a News token is
-  rejected at Trilium; the existing Trilium connector still works. Do not
-  change the tenant default audience and do not accept the Trilium audience
-  here. A second Auth0 tenant is the fallback if the profile cannot do this.
-- Add the connector callback URLs for Claude and ChatGPT to the first-party
-  application, as was done for the Trilium server.
-
-### 2. Public route (Ian approves each change)
-
-- OPNsense: add `news-mcp.ianwalther.com` to the shared certificate, and an
-  nginx HTTP server, location, and upstream to the N150 on the MCP port, with
-  proxy buffering off and bot protection off, mirroring the Trilium MCP
-  entries. Only that port is proxied; no Phoenix route.
-- Smoke test from outside: `/healthz` answers, an unauthenticated `POST /mcp`
-  answers 401 with the protected-resource metadata URL, and the metadata
-  document names the Auth0 tenant.
-
-### 3. Client integration, recorded per client
+Keep rollout verification to ordinary client authorization, refresh, and
+read operations. Adversarial authorization testing and cross-service token
+probes are outside this rollout's scope.
 
 For Claude and for ChatGPT, record in `docs/mcp-server.md`:
 
-- connector authorization and token refresh working;
-- the largest `max_chars` the client accepts in one result;
-- whether the client continues correctly from the cursor, and whether it
-  needs `MCP_RESULT_STRUCTURED=false`;
+- token refresh after the access token expires;
+- a normal read from the existing Trilium connector still working;
+- practical index and text-page capacities beyond the conservative prompt
+  settings, without assuming the server's maximum fits a client;
 - one heavy weekday retrieved end to end, with the returned guids checked
   against `list_articles`;
 - what the runtime does with context across pages. This is observed, not
   promised.
 
-### 4. First scheduled job
+### 2. First scheduled job
 
 - Run the reference prompt from `docs/mcp-server.md` as a scheduled agent on
   one client and adjust the prompt from what is learned. Prompt quality is not
   a server acceptance criterion.
+- Choose the client, schedule, and editorial preferences with Ian before
+  creating the job.
 
 ## Sizing basis (production, 2026-10-01)
 
