@@ -86,8 +86,10 @@ defmodule NewspaperWeb.BridgeControllerTest do
   end
 
   test "maps errors to explicit statuses and codes", %{conn: conn} do
-    missing = conn |> get("/internal/api/v1/bundle") |> json_response(400)
-    assert missing["error"]["code"] == "invalid_parameter"
+    assert conn |> get("/internal/api/v1/bundle") |> json_response(200)
+
+    invalid = conn |> get("/internal/api/v1/bundle?since=yesterday") |> json_response(400)
+    assert invalid["error"]["code"] == "invalid_parameter"
 
     cursor = conn |> get("/internal/api/v1/bundle?cursor=garbage") |> json_response(400)
     assert cursor["error"]["code"] == "invalid_cursor"

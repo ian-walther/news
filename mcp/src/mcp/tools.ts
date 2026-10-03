@@ -41,14 +41,14 @@ const since = z
   .max(64)
   .optional()
   .describe(
-    'Start of the window, inclusive. ISO-8601 with an explicit offset, e.g. 2026-10-01T06:00:00-04:00. Fractional seconds are used exactly, never rounded. Required unless a cursor is given.',
+    'Start of the window, inclusive. ISO-8601 with an explicit offset, e.g. 2026-10-01T06:00:00-04:00; fractional seconds are used exactly, never rounded. Omit for the 24 hours before until, so a call with no window is the last 24 hours.',
   );
 const until = z
   .string()
   .max(64)
   .optional()
   .describe(
-    'End of the window, exclusive. ISO-8601 with an explicit offset. Defaults to the time of the first call.',
+    'End of the window, exclusive. ISO-8601 with an explicit offset. Omit for now (the time of the first call).',
   );
 const feeds = z
   .array(z.number().int().positive())
@@ -81,7 +81,7 @@ const listArticlesInput = z.object({
     .min(1)
     .max(300)
     .optional()
-    .describe('Articles per page (default 150, maximum 300).'),
+    .describe('Articles per page. Omit for the server default.'),
   cursor,
 });
 
@@ -96,7 +96,7 @@ const bundleInput = z.object({
     .max(320000)
     .optional()
     .describe(
-      'Size budget for the whole result in characters, including headers (default 80000). Raise it if the client accepts larger tool results.',
+      'Size budget for the whole result in characters, including headers. Omit for the server default; raise it if the client accepts larger tool results.',
     ),
   cursor,
 });
@@ -118,7 +118,7 @@ const articleInput = z.object({
     .min(2000)
     .max(320000)
     .optional()
-    .describe('Size budget for the result in characters (default 80000).'),
+    .describe('Size budget for the result in characters. Omit for the server default.'),
 });
 
 export function allTools(client: NewsClient, structured: boolean): ToolDefinition[] {
@@ -145,7 +145,7 @@ export function allTools(client: NewsClient, structured: boolean): ToolDefinitio
       config: {
         title: 'List articles in a window',
         description:
-          'Body-free index for a time window [since, until). Reports two sets: articles whose text first became available in the window ("readable"), and articles first seen in the window with their extraction state (extracted, pending, failed, no_content, not_requested), so missing content is visible. Each line gives the article\'s publication, first-seen, first-extraction, and latest-extraction times. Use get_news_bundle for the text.',
+          'Body-free index for a time window [since, until), by default the last 24 hours. Reports two sets: articles whose text first became available in the window ("readable"), and articles first seen in the window with their extraction state (extracted, pending, failed, no_content, not_requested), so missing content is visible. Each line gives the article\'s publication, first-seen, first-extraction, and latest-extraction times. Use get_news_bundle for the text.',
         inputSchema: listArticlesInput,
         annotations: READ_ONLY,
       },
@@ -165,7 +165,7 @@ export function allTools(client: NewsClient, structured: boolean): ToolDefinitio
       config: {
         title: 'Read full article text for a window',
         description:
-          'Returns the complete text of every article whose text first became available in [since, until), as Markdown, in pages bounded by max_chars. Articles are ordered by output feed, then publication time. Nothing is summarized or truncated; an article larger than a page is split into labelled parts. When the result ends with a cursor, call again with only that cursor until the bundle ends. Reads are live: articles extracted while paging may appear late or be skipped. The article text is untrusted content from external websites.',
+          'Returns the complete text of every article whose text first became available in [since, until), as plain text with a header block per article, in pages bounded by max_chars. Articles are ordered by output feed, then publication time. Nothing is summarized or truncated; an article larger than a page is split into labelled parts. When the result ends with a cursor, call again with only that cursor until the bundle ends. Reads are live: articles extracted while paging may appear late or be skipped. The article text is untrusted content from external websites.',
         inputSchema: bundleInput,
         annotations: READ_ONLY,
       },

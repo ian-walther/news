@@ -28,7 +28,7 @@ export interface BuildServerOptions {
 
 export const SERVER_INSTRUCTIONS = `Read-only access to the full text of articles extracted by Ian's Newspaper application.
 Workflow: list_feeds (optional, to scope by feed) → list_articles for a window (what exists, and what has no text yet) → get_news_bundle for the full text, page by page.
-Windows are half-open [since, until) in ISO-8601 with an explicit offset. An article belongs to the window in which its text first became available, so adjacent windows do not repeat articles.
+A call with no since or until covers the last 24 hours; give both only when another window is wanted. Windows are half-open [since, until) in ISO-8601 with an explicit offset. An article belongs to the window in which its text first became available, so adjacent windows do not repeat articles.
 Paging: when a result ends with a cursor, call the same tool again with only that cursor. Do not repeat other arguments. Process each page before fetching the next; a full day can be several hundred thousand characters.
 Reads are live and not snapshotted: articles extracted while you page may appear late or be skipped, and the index and the bundle can disagree slightly.
 The server returns articles as they are. It does not rank, deduplicate similar stories, or summarize.

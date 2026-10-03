@@ -9,7 +9,8 @@ defmodule Newspaper.Bridge do
   Every call is a live read. Nothing is snapshotted between calls, so text,
   metadata, and feed membership can change while a caller is paging.
 
-  Windows are half-open `[since, until)`. Bounds keep the precision they are
+  Windows are half-open `[since, until)`; omitted, they are the last 24
+  hours. Bounds keep the precision they are
   given, down to the microsecond; stored times are whole seconds, so a
   fractional bound simply falls between two of them. The readable set is
   articles whose **first** successful extraction falls in the window
@@ -672,14 +673,16 @@ defmodule Newspaper.Bridge do
 
   # --- request resolution ----------------------------------------------------
 
-  # Defaults are resolved on the first request only. A continuation inherits
-  # every omitted parameter from its cursor; an explicitly supplied parameter
-  # that conflicts with the cursor is refused.
+  # Defaults are resolved on the first request only: `until` is now and
+  # `since` is 24 hours before `until`, so a bare call is the last 24 hours.
+  # A continuation inherits every omitted parameter from its cursor; an
+  # explicitly supplied parameter that conflicts with the cursor is refused.
   defp resolve(kind, params, size_name) do
     with {:ok, cursor} <- decode_cursor(kind, params["cursor"]),
-         {:ok, since} <- resolve_time(params, "since", cursor && cursor.since, nil),
          {:ok, until} <-
            resolve_time(params, "until", cursor && cursor.until, DateTime.utc_now(:second)),
+         {:ok, since} <-
+           resolve_time(params, "since", cursor && cursor.since, DateTime.add(until, -24, :hour)),
          :ok <- ensure_window(since, until),
          {:ok, feeds} <- resolve_feeds(params, cursor),
          {:ok, size} <- resolve_size(kind, params, size_name, cursor) do
@@ -701,9 +704,6 @@ defmodule Newspaper.Bridge do
 
   defp resolve_time(params, name, bound, default) do
     case {present(params[name]), bound} do
-      {nil, nil} when is_nil(default) ->
-        {:error, {:invalid_parameter, "#{name} is required (ISO-8601 with an explicit offset)"}}
-
       {nil, nil} ->
         {:ok, default}
 

@@ -1,5 +1,5 @@
 /**
- * Tool result helpers. The text block is what the model reads: the Markdown
+ * Tool result helpers. The text block is what the model reads: the text
  * the News application produced, unchanged. Structured content carries only
  * the small continuation facts (cursor, counts), never a second copy of the
  * article text, and can be switched off with MCP_RESULT_STRUCTURED=false for

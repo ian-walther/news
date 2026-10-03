@@ -86,10 +86,31 @@ defmodule Newspaper.BridgeTest do
                Bridge.bundle(%{"since" => "2026-09-30T00:00:00"})
 
       assert message =~ "explicit offset"
-      assert {:error, {:invalid_parameter, _}} = Bridge.bundle(%{})
 
       assert {:error, {:invalid_parameter, _}} =
                Bridge.bundle(%{"since" => @until, "until" => @since})
+    end
+
+    test "a bare call is the last 24 hours, and an omitted since is 24 hours before until" do
+      %{articles: [recent, old, late]} = fixture!(3)
+      now = DateTime.utc_now(:second)
+      extract!(recent, "Recent.", DateTime.add(now, -23, :hour))
+      extract!(old, "Old.", DateTime.add(now, -25, :hour))
+      extract!(late, "Late.", DateTime.add(now, 1, :minute))
+
+      assert {:ok, bundle} = Bridge.bundle(%{})
+      assert Enum.map(bundle.articles, & &1.guid) == [recent.guid]
+      {:ok, since, _} = DateTime.from_iso8601(bundle.window.since)
+      {:ok, until, _} = DateTime.from_iso8601(bundle.window.until)
+      assert DateTime.diff(until, since, :hour) == 24
+      assert DateTime.diff(DateTime.utc_now(), until, :second) in 0..5
+
+      # The cursor keeps the resolved window, so paging does not drift with the clock.
+      assert {:ok, index} = Bridge.index(%{"limit" => 1})
+      assert index.totals.readable == 1
+
+      assert {:ok, index} = Bridge.index(%{"until" => "2026-09-30T12:00:00Z"})
+      assert index.window.since == "2026-09-29T12:00:00Z"
     end
   end
 
@@ -517,7 +538,6 @@ defmodule Newspaper.BridgeTest do
       end
 
       for junk <- [
-            "",
             "%%%",
             Base.url_encode64("[1,2]", padding: false),
             Base.url_encode64("null", padding: false)

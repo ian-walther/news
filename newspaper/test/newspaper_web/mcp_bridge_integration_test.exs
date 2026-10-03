@@ -231,7 +231,7 @@ defmodule NewspaperWeb.McpBridgeIntegrationTest do
     failures = [
       {"NOT_FOUND", "get_article", %{guid: "art_missing"}},
       {"INVALID_PARAMETER", "list_articles", %{since: @until, until: @since}},
-      {"INVALID_PARAMETER", "get_news_bundle", %{}},
+      {"INVALID_PARAMETER", "get_news_bundle", %{since: "yesterday"}},
       {"INVALID_CURSOR", "get_news_bundle", %{cursor: "garbage"}}
     ]
 
